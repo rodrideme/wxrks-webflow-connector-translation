@@ -252,21 +252,28 @@ async function getLastSync() {
   return rows[0] ? rows[0].value : null;
 }
 
-// TEMPORARY: captures the raw payload of the most recent incoming wxrks
-// webhook call, for inspecting real event shapes. Remove once done.
+// TEMPORARY: captures the raw payloads of recent incoming wxrks webhook
+// calls, for inspecting real event shapes. Keeps a ring buffer (not just the
+// last one) since validation pings sent when adding a new webhook were
+// overwriting real events we hadn't looked at yet. Remove once done.
+const DEBUG_WEBHOOK_HISTORY_LIMIT = 20;
+
 async function setDebugWebhookPayload(payload) {
-  const value = { ...payload, receivedAt: new Date().toISOString() };
+  const entry = { ...payload, receivedAt: new Date().toISOString() };
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookHistory'`);
+  const history = rows[0] ? rows[0].value : [];
+  const updated = [entry, ...history].slice(0, DEBUG_WEBHOOK_HISTORY_LIMIT);
   await db.query(
-    `INSERT INTO app_state (key, value) VALUES ('debugWebhookPayload', $1)
+    `INSERT INTO app_state (key, value) VALUES ('debugWebhookHistory', $1)
      ON CONFLICT (key) DO UPDATE SET value = $1`,
-    [JSON.stringify(value)]
+    [JSON.stringify(updated)]
   );
-  return value;
+  return entry;
 }
 
 async function getDebugWebhookPayload() {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookPayload'`);
-  return rows[0] ? rows[0].value : null;
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookHistory'`);
+  return rows[0] ? rows[0].value : [];
 }
 
 module.exports = {

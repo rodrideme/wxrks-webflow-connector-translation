@@ -100,13 +100,15 @@ router.post("/wxrks", async (req, res) => {
   }
 });
 
-// TEMPORARY: inspect the most recent raw webhook payload wxrks actually
-// sent, to design real handling for event types beyond "Project Translation
-// Finished". Remove once done.
+// TEMPORARY: inspect recent raw webhook payloads wxrks actually sent, to
+// design real handling for event types beyond "Project Translation
+// Finished". Returns a list (most recent first) since a single-slot capture
+// was getting overwritten by validation pings before we could inspect real
+// events. Remove once done.
 router.get("/wxrks/debug-last", async (req, res) => {
   try {
-    const payload = await store.getDebugWebhookPayload();
-    res.json(payload || { message: "No webhook received yet" });
+    const history = await store.getDebugWebhookPayload();
+    res.json(history.length > 0 ? { history } : { message: "No webhook received yet" });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
