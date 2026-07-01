@@ -16,6 +16,12 @@ const router = express.Router();
  * Expected payload shape (per wxrks docs): { event, project: { uuid } }
  */
 router.post("/wxrks", async (req, res) => {
+  // TEMPORARY: capture the raw payload for every event type so we can see
+  // real shapes (e.g. "Work Unit Translation File Ready") before building
+  // handling for them. Remove once the per-work-unit handler is written.
+  await store.setDebugWebhookPayload({ headers: req.headers, body: req.body }).catch(() => {});
+  console.log("wxrks webhook payload:", JSON.stringify(req.body, null, 2));
+
   const event = req.body?.event;
   const wxrksProjectUUID = req.body?.project?.uuid || req.body?.projectUuid;
 
@@ -89,6 +95,18 @@ router.post("/wxrks", async (req, res) => {
     await store.updateProjectMapping(wxrksProjectUUID, { status: "completed" });
 
     res.json({ wxrksProjectUUID, resultsByItem });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// TEMPORARY: inspect the most recent raw webhook payload wxrks actually
+// sent, to design real handling for event types beyond "Project Translation
+// Finished". Remove once done.
+router.get("/wxrks/debug-last", async (req, res) => {
+  try {
+    const payload = await store.getDebugWebhookPayload();
+    res.json(payload || { message: "No webhook received yet" });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

@@ -252,6 +252,23 @@ async function getLastSync() {
   return rows[0] ? rows[0].value : null;
 }
 
+// TEMPORARY: captures the raw payload of the most recent incoming wxrks
+// webhook call, for inspecting real event shapes. Remove once done.
+async function setDebugWebhookPayload(payload) {
+  const value = { ...payload, receivedAt: new Date().toISOString() };
+  await db.query(
+    `INSERT INTO app_state (key, value) VALUES ('debugWebhookPayload', $1)
+     ON CONFLICT (key) DO UPDATE SET value = $1`,
+    [JSON.stringify(value)]
+  );
+  return value;
+}
+
+async function getDebugWebhookPayload() {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookPayload'`);
+  return rows[0] ? rows[0].value : null;
+}
+
 module.exports = {
   createProjectMapping,
   addItemToProjectMapping,
@@ -267,6 +284,8 @@ module.exports = {
   setFieldExclusions,
   setLastSync,
   getLastSync,
+  setDebugWebhookPayload,
+  getDebugWebhookPayload,
   createSyncJob,
   getSyncJob,
   updateSyncJob,
