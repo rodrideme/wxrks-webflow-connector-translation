@@ -1,0 +1,40 @@
+databases:
+  - name: webflow-translation-sync-db
+    plan: free
+    databaseName: webflow_translation_sync
+    user: webflow_translation_sync
+
+services:
+  - type: web
+    name: webflow-translation-sync
+    runtime: node
+    plan: free
+    buildCommand: npm run install:all && npm run client:build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: webflow-translation-sync-db
+          property: connectionString
+      - key: WEBFLOW_API_TOKEN
+        sync: false
+      - key: WEBFLOW_SITE_ID
+        sync: false
+      - key: WXRKS_API_URL
+        value: https://app.wxrks.com/api/v3
+      - key: WXRKS_ACCESS_KEY
+        sync: false
+      - key: WXRKS_SECRET
+        sync: false
+      - key: WXRKS_API_TOKEN
+        sync: false
+      - key: WXRKS_ORG_UNIT_UUID
+        sync: false
+      - key: APP_BASE_URL
+        sync: false # set to the public Render URL (e.g. https://webflow-translation-sync.onrender.com) after first deploy
+      - key: SOURCE_LOCALE
+        value: en
+      - key: AUTO_PUBLISH
+        value: "false"
