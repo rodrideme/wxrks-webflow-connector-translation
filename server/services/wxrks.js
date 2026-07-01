@@ -326,19 +326,31 @@ async function getProjectResources(projectUuid) {
  * one resource + one locale) with entries laid out as `{locale}/{filename}`.
  * Since we filter to exactly one resource, there's exactly one entry.
  */
-async function downloadResourceTranslation(projectUuid, resourceId, locale) {
-  const { data } = await request({
-    method: "GET",
-    url: `/project/${projectUuid}/download?resources=${encodeURIComponent(resourceId)}&locales=${encodeURIComponent(locale)}`,
-    responseType: "arraybuffer",
-  });
+/**
+ * Retries on an empty ZIP -- observed live: the work-unit-DELIVERED webhook
+ * can fire a moment before the translated file is actually downloadable
+ * (eventually consistent, same as project status transitions), so an
+ * immediate download right after the webhook can race it.
+ */
+async function downloadResourceTranslation(projectUuid, resourceId, locale, { retries = 4, retryDelayMs = 3000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const { data } = await request({
+      method: "GET",
+      url: `/project/${projectUuid}/download?resources=${encodeURIComponent(resourceId)}&locales=${encodeURIComponent(locale)}`,
+      responseType: "arraybuffer",
+    });
 
-  const zip = new AdmZip(Buffer.from(data));
-  const entries = zip.getEntries().filter((e) => !e.isDirectory);
-  if (entries.length === 0) {
-    throw new Error(`wxrks download for resource ${resourceId} (${locale}) contained no files`);
+    const zip = new AdmZip(Buffer.from(data));
+    const entries = zip.getEntries().filter((e) => !e.isDirectory);
+    if (entries.length > 0) {
+      return JSON.parse(entries[0].getData().toString("utf-8"));
+    }
+
+    if (attempt >= retries) {
+      throw new Error(`wxrks download for resource ${resourceId} (${locale}) contained no files`);
+    }
+    await sleep(retryDelayMs);
   }
-  return JSON.parse(entries[0].getData().toString("utf-8"));
 }
 
 module.exports = {
