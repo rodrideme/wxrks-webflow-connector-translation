@@ -17,7 +17,19 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+// RENDER_GIT_COMMIT is set automatically by Render for git-deployed services;
+// falls back to a local git lookup for dev. Lets us verify which commit is
+// actually live instead of inferring it from deploy logs/timestamps.
+const deployedCommit = (() => {
+  if (process.env.RENDER_GIT_COMMIT) return process.env.RENDER_GIT_COMMIT;
+  try {
+    return require("child_process").execSync("git rev-parse HEAD").toString().trim();
+  } catch {
+    return "unknown";
+  }
+})();
+
+app.get("/api/health", (req, res) => res.json({ status: "ok", commit: deployedCommit }));
 
 app.use("/api/collections", collectionsRouter);
 app.get("/api/backlog", collectionsRouter.backlogHandler);
