@@ -17,9 +17,13 @@ const router = express.Router();
  *   {
  *     event_type: "WORK_UNIT_STATUS_CHANGE", new_status: "DELIVERED",
  *     previous_status: "TRANSLATED", project_uuid, org_unit_uuid,
- *     project_file_id (== our resourceId), project_file_name,
- *     source_locale, target_locale, is_last_workflow, ...
+ *     project_file_id, project_file_name, source_locale, target_locale,
+ *     is_last_workflow, ...
  *   }
+ * Note: `project_file_id` is NOT the same id as the `resourceId` returned by
+ * our own resource-creation call (confirmed against the real
+ * `/project/:uuid/resource/simple` list) -- match on `project_file_name`
+ * instead, since we control that filename ourselves at upload time.
  * wxrks also POSTs a one-time { event_type: "WEBHOOK_VALIDATION" } ping when
  * a webhook is registered, expecting a 200 back to activate it.
  */
@@ -34,7 +38,7 @@ router.post("/wxrks", async (req, res) => {
     event_type: eventType,
     new_status: newStatus,
     project_uuid: wxrksProjectUUID,
-    project_file_id: resourceId,
+    project_file_name: fileName,
     target_locale: locale,
   } = req.body || {};
 
@@ -44,8 +48,8 @@ router.post("/wxrks", async (req, res) => {
   if (eventType !== "WORK_UNIT_STATUS_CHANGE" || newStatus !== "DELIVERED") {
     return res.status(200).json({ ignored: true, reason: `unhandled event: ${eventType}${newStatus ? ` (${newStatus})` : ""}` });
   }
-  if (!wxrksProjectUUID || !resourceId || !locale) {
-    return res.status(400).json({ error: "Missing project_uuid, project_file_id, or target_locale in webhook payload" });
+  if (!wxrksProjectUUID || !fileName || !locale) {
+    return res.status(400).json({ error: "Missing project_uuid, project_file_name, or target_locale in webhook payload" });
   }
 
   const mapping = await store.getProjectMapping(wxrksProjectUUID);
@@ -53,12 +57,12 @@ router.post("/wxrks", async (req, res) => {
     return res.status(404).json({ error: `No mapping found for wxrks project ${wxrksProjectUUID}` });
   }
 
-  const batchItem = mapping.items.find((i) => i.resourceId === resourceId);
+  const batchItem = mapping.items.find((i) => i.resourceFileName === fileName);
   if (!batchItem) {
-    return res.status(404).json({ error: `No item found for resource ${resourceId} in project ${wxrksProjectUUID}` });
+    return res.status(404).json({ error: `No item found for file ${fileName} in project ${wxrksProjectUUID}` });
   }
 
-  const { webflowCollectionId, webflowItemId, fieldKeys, wordCount } = batchItem;
+  const { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount } = batchItem;
 
   try {
     const { autoPublish } = await store.getSettings();

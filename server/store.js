@@ -81,7 +81,10 @@ async function createProjectMapping(wxrksProjectUUID, mapping) {
  * incrementally as a bulk/batch sync processes each item, so a mid-run
  * cancellation still leaves an accurate record of what was actually synced.
  */
-async function addItemToProjectMapping(wxrksProjectUUID, { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount }) {
+async function addItemToProjectMapping(
+  wxrksProjectUUID,
+  { webflowCollectionId, webflowItemId, resourceId, resourceFileName, fieldKeys, wordCount }
+) {
   const existing = await getProjectMapping(wxrksProjectUUID);
   if (!existing) return undefined;
 
@@ -91,7 +94,10 @@ async function addItemToProjectMapping(wxrksProjectUUID, { webflowCollectionId, 
 
   return updateProjectMapping(wxrksProjectUUID, {
     collectionIds,
-    items: [...existing.items, { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount }],
+    items: [
+      ...existing.items,
+      { webflowCollectionId, webflowItemId, resourceId, resourceFileName, fieldKeys, wordCount },
+    ],
   });
 }
 

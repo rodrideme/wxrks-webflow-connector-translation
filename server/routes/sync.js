@@ -37,6 +37,7 @@ async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales,
     webflowCollectionId: collection.id,
     webflowItemId: item.id,
     resourceId: resource.resourceId,
+    resourceFileName: filename,
     fieldKeys,
     wordCount,
   });
