@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import api from "../services/api.js";
+import StatusBadge from "../components/StatusBadge.jsx";
 
 const POLL_INTERVAL_MS = 1500;
 
 // Fixed for now -- there's no UI to configure this yet, just to show it.
 const WORKFLOW_STEPS = ["TRANSLATION"];
+
+function formatDate(iso) {
+  return iso ? new Date(iso).toLocaleDateString() : "—";
+}
+
+const tabClass = (active) =>
+  "rounded-md px-4 py-2 text-sm font-medium transition-colors " +
+  (active ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50");
 
 export default function SyncPanel() {
   const [mode, setMode] = useState("full");
@@ -57,6 +66,10 @@ export default function SyncPanel() {
     setSelectedItemIds((prev) =>
       prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]
     );
+  }
+
+  function toggleAllItems() {
+    setSelectedItemIds((prev) => (prev.length === items.length ? [] : items.map((it) => it.id)));
   }
 
   async function previewFullSync() {
@@ -135,48 +148,54 @@ export default function SyncPanel() {
 
   return (
     <div>
-      <h1>Sync Panel</h1>
+      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Sync Panel</h1>
 
       {settings && (
-        <section className="card settings-summary">
-          <h2>Current settings</h2>
-          <ul>
+        <section className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-5">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Current settings</h2>
+          <ul className="space-y-1.5 text-sm text-slate-700">
             <li>
-              Org unit:{" "}
-              {settings.orgUnitUUID ? orgUnitName(settings.orgUnitUUID) : <em>not set — configure in Settings</em>}
+              <span className="font-medium text-slate-500">Org unit:</span>{" "}
+              {settings.orgUnitUUID ? (
+                orgUnitName(settings.orgUnitUUID)
+              ) : (
+                <em className="text-slate-400">not set — configure in Settings</em>
+              )}
             </li>
             <li>
-              Translation memories:{" "}
+              <span className="font-medium text-slate-500">Translation memories:</span>{" "}
               {orgUnitResources
                 ? orgUnitResources.translationMemories.map((tm) => tm.name).join(", ") || "none"
                 : "—"}
             </li>
             <li>
-              Target languages:{" "}
+              <span className="font-medium text-slate-500">Target languages:</span>{" "}
               {settings.targetLocales.length > 0 ? (
                 settings.targetLocales.join(", ")
               ) : (
-                <em>not set — configure in Settings</em>
+                <em className="text-slate-400">not set — configure in Settings</em>
               )}
             </li>
-            <li>Workflow steps: {WORKFLOW_STEPS.join(" → ")}</li>
+            <li>
+              <span className="font-medium text-slate-500">Workflow steps:</span> {WORKFLOW_STEPS.join(" → ")}
+            </li>
           </ul>
         </section>
       )}
 
-      <div className="tabs">
-        <button className={mode === "full" ? "tab active" : "tab"} onClick={() => setMode("full")}>
+      <div className="mb-5 flex gap-2">
+        <button className={tabClass(mode === "full")} onClick={() => setMode("full")}>
           Full Sync
         </button>
-        <button className={mode === "item" ? "tab active" : "tab"} onClick={() => setMode("item")}>
+        <button className={tabClass(mode === "item")} onClick={() => setMode("item")}>
           Item Sync
         </button>
       </div>
 
       {mode === "full" && (
-        <section className="card">
-          <h2>Full Sync</h2>
-          <label>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Full Sync</h2>
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
             Translate items updated since:
             <input
               type="date"
@@ -185,22 +204,30 @@ export default function SyncPanel() {
                 setTranslateFromDate(e.target.value);
                 setPreview(null);
               }}
+              className="w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </label>
-          <p className="hint">Leave blank to sync all items in all collections.</p>
+          <p className="mt-1 text-xs text-slate-500">Leave blank to sync all items in all collections.</p>
 
-          <button onClick={previewFullSync} disabled={previewing || job?.status === "running"}>
-            {previewing ? "Checking..." : "Preview"}
-          </button>{" "}
-          <button
-            onClick={launchFullSync}
-            disabled={!preview || preview.totalItems === 0 || job?.status === "running"}
-          >
-            Launch Full Sync
-          </button>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={previewFullSync}
+              disabled={previewing || job?.status === "running"}
+              className="rounded-md border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {previewing ? "Checking..." : "Preview"}
+            </button>
+            <button
+              onClick={launchFullSync}
+              disabled={!preview || preview.totalItems === 0 || job?.status === "running"}
+              className="rounded-md bg-brand-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Launch Full Sync
+            </button>
+          </div>
 
           {preview && (
-            <div className="preview-box">
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               {preview.totalItems === 0 ? (
                 <p>No items match this filter — nothing to sync.</p>
               ) : (
@@ -210,34 +237,34 @@ export default function SyncPanel() {
                     <strong>{preview.totalItems}</strong> item(s) across{" "}
                     {Object.keys(preview.byCollection).length} collection(s):
                   </p>
-                  <ul>
+                  <ul className="mt-2 list-inside list-disc space-y-0.5">
                     {Object.entries(preview.byCollection).map(([name, count]) => (
                       <li key={name}>
                         {name}: {count}
                       </li>
                     ))}
                   </ul>
-                  <p>
+                  <p className="mt-2">
                     Estimated words to translate: <strong>{preview.estimatedWordCount?.toLocaleString()}</strong>
                   </p>
                 </>
               )}
-              <p className="hint">Change the date and preview again to refresh this count.</p>
+              <p className="mt-2 text-xs text-slate-500">Change the date and preview again to refresh this count.</p>
             </div>
           )}
 
           {job && (
-            <div className="progress-box">
-              <div className="progress-bar-track">
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
                 <div
-                  className="progress-bar-fill"
+                  className="h-full bg-green-600 transition-all duration-300"
                   style={{ width: `${job.total ? Math.round((job.processed / job.total) * 100) : 0}%` }}
                 />
               </div>
-              <p>
+              <p className="text-sm text-slate-700">
                 {job.processed} / {job.total} processed — <strong>{job.status}</strong>
               </p>
-              <ul>
+              <ul className="mt-2 space-y-1 text-sm text-slate-600">
                 {job.wxrksProjectUUID && <li>wxrks project: {job.wxrksProjectUUID}</li>}
                 {job.orgUnitUUID && <li>Org unit: {orgUnitName(job.orgUnitUUID)}</li>}
                 {job.targetLocales?.length > 0 && <li>Target locales: {job.targetLocales.join(", ")}</li>}
@@ -247,9 +274,18 @@ export default function SyncPanel() {
                   </li>
                 )}
               </ul>
-              {job.status === "running" && <button onClick={cancelFullSync}>Cancel</button>}
+              {job.status === "running" && (
+                <button
+                  onClick={cancelFullSync}
+                  className="mt-3 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                >
+                  Cancel
+                </button>
+              )}
               {job.status !== "running" && job.results.length > 0 && (
-                <pre>{JSON.stringify(job.results, null, 2)}</pre>
+                <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+                  {JSON.stringify(job.results, null, 2)}
+                </pre>
               )}
             </div>
           )}
@@ -257,11 +293,15 @@ export default function SyncPanel() {
       )}
 
       {mode === "item" && (
-        <section className="card">
-          <h2>Item Sync</h2>
-          <label>
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Item Sync</h2>
+          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
             Collection:
-            <select value={selectedCollectionId} onChange={(e) => setSelectedCollectionId(e.target.value)}>
+            <select
+              value={selectedCollectionId}
+              onChange={(e) => setSelectedCollectionId(e.target.value)}
+              className="w-72 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
               <option value="">Select a collection</option>
               {collections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -272,41 +312,91 @@ export default function SyncPanel() {
           </label>
 
           {items.length > 0 && (
-            <ul className="item-checklist">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={selectedItemIds.includes(item.id)}
-                      onChange={() => toggleItem(item.id)}
-                    />
-                    {item.name}
-                  </label>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-4 max-h-96 overflow-auto rounded-md border border-slate-200">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedItemIds.length === items.length}
+                        onChange={toggleAllItems}
+                        className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                      />
+                    </th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Date published</th>
+                    <th className="px-3 py-2">Status</th>
+                    {settings?.targetLocales.map((locale) => (
+                      <th key={locale} className="px-3 py-2">
+                        {locale}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {items.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.includes(item.id)}
+                          onChange={() => toggleItem(item.id)}
+                          className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-slate-900">{item.name}</td>
+                      <td className="px-3 py-2 text-slate-600">{formatDate(item.lastPublished)}</td>
+                      <td className="px-3 py-2">
+                        {item.isArchived ? (
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                            Archived
+                          </span>
+                        ) : item.isDraft ? (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                            Draft
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                            Published
+                          </span>
+                        )}
+                      </td>
+                      {settings?.targetLocales.map((locale) => (
+                        <td key={locale} className="px-3 py-2">
+                          <StatusBadge status={item.localeStatus?.[locale]} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {selectedItemIds.length > 0 && (
-            <p className="hint">
+            <p className="mt-3 text-sm text-slate-600">
               This will create <strong>one wxrks project</strong> containing{" "}
               <strong>{selectedItemIds.length}</strong> item(s).
             </p>
           )}
 
-          <button onClick={launchItemSync} disabled={running || selectedItemIds.length === 0}>
+          <button
+            onClick={launchItemSync}
+            disabled={running || selectedItemIds.length === 0}
+            className="mt-4 rounded-md bg-brand-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             {running ? "Running..." : "Launch Item Sync"}
           </button>
         </section>
       )}
 
-      {error && <p className="error">Error: {error}</p>}
+      {error && <p className="mt-4 text-sm font-medium text-red-600">Error: {error}</p>}
 
       {result && (
-        <section className="card">
-          <h2>Result</h2>
-          <ul>
+        <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Result</h2>
+          <ul className="space-y-1 text-sm text-slate-700">
             <li>wxrks project: {result.wxrksProjectUUID}</li>
             <li>Org unit: {orgUnitName(result.orgUnitUUID)}</li>
             <li>Target locales: {result.targetLocales?.join(", ")}</li>
@@ -315,7 +405,9 @@ export default function SyncPanel() {
             </li>
             <li>Estimated words: {result.estimatedWordCount?.toLocaleString()}</li>
           </ul>
-          <pre>{JSON.stringify(result.results, null, 2)}</pre>
+          <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+            {JSON.stringify(result.results, null, 2)}
+          </pre>
         </section>
       )}
     </div>

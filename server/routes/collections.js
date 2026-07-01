@@ -94,6 +94,9 @@ router.get("/:id/items", async (req, res) => {
         id: sourceItem.id,
         name: sourceItem.fieldData?.name || sourceItem.fieldData?.slug || sourceItem.id,
         lastUpdated: sourceItem.lastUpdated,
+        lastPublished: sourceItem.lastPublished,
+        isArchived: sourceItem.isArchived,
+        isDraft: sourceItem.isDraft,
         localeStatus,
       };
     });

@@ -7,9 +7,9 @@ import History from "./pages/History.jsx";
 
 export default function App() {
   return (
-    <div className="app">
+    <div className="min-h-screen">
       <NavBar />
-      <main className="app-content">
+      <main className="mx-auto max-w-5xl px-6 py-8">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/sync" element={<SyncPanel />} />

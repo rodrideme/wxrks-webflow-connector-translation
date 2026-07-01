@@ -148,26 +148,29 @@ export default function Settings() {
     }
   }
 
-  if (!settings) return <p>Loading settings...</p>;
+  if (!settings) return <p className="text-slate-600">Loading settings...</p>;
 
   return (
     <div>
-      <h1>Settings</h1>
+      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Settings</h1>
 
-      <div className="settings-layout">
-        <nav className="settings-nav">
+      <div className="flex items-start gap-8">
+        <nav className="flex w-40 shrink-0 flex-col gap-1">
           {SECTIONS.map((s) => (
             <button
               key={s.id}
-              className={"settings-nav-link" + (section === s.id ? " active" : "")}
               onClick={() => setSection(s.id)}
+              className={
+                "rounded-md px-3 py-2 text-left text-sm font-medium transition-colors " +
+                (section === s.id ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100")
+              }
             >
               {s.label}
             </button>
           ))}
         </nav>
 
-        <div className="settings-content">
+        <div className="min-w-0 flex-1">
           {section === "general" && (
             <SettingsGeneral
               settings={settings}
@@ -195,11 +198,15 @@ export default function Settings() {
 
           {section === "keys" && <SettingsKeys settings={settings} />}
 
-          {error && <p className="error">Error: {error}</p>}
-          {saved && <p className="success">Settings saved.</p>}
+          {error && <p className="mt-4 text-sm font-medium text-red-600">Error: {error}</p>}
+          {saved && <p className="mt-4 text-sm font-medium text-green-700">Settings saved.</p>}
 
           {section !== "keys" && (
-            <button onClick={save} disabled={saving}>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="mt-4 rounded-md bg-brand-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
               {saving ? "Saving..." : "Save settings"}
             </button>
           )}

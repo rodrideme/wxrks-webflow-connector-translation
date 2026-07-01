@@ -6,6 +6,13 @@ function buildPreviewName(pattern) {
   return `${name}.json`;
 }
 
+const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
+const labelClass = "flex flex-col gap-1 text-sm font-medium text-slate-700";
+const selectClass =
+  "w-72 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
+const hintClass = "text-xs text-slate-500";
+const linkButtonClass = "text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline";
+
 export default function SettingsGeneral({
   settings,
   orgUnits,
@@ -20,11 +27,11 @@ export default function SettingsGeneral({
 }) {
   return (
     <>
-      <section className="card">
-        <h2>wxrks org unit</h2>
-        <label>
+      <section className={cardClass}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">wxrks org unit</h2>
+        <label className={labelClass}>
           Org unit:
-          <select value={settings.orgUnitUUID || ""} onChange={(e) => selectOrgUnit(e.target.value)}>
+          <select value={settings.orgUnitUUID || ""} onChange={(e) => selectOrgUnit(e.target.value)} className={selectClass}>
             <option value="">Select an org unit</option>
             {orgUnits.map((o) => (
               <option key={o.uuid} value={o.uuid}>
@@ -33,26 +40,26 @@ export default function SettingsGeneral({
             ))}
           </select>
         </label>
-        <p className="hint">Projects and work units are created under this org unit in wxrks.</p>
+        <p className={`mt-1 ${hintClass}`}>Projects and work units are created under this org unit in wxrks.</p>
 
         {settings.orgUnitUUID && (
-          <div>
-            {orgUnitResourcesLoading && <p className="hint">Loading translation memories &amp; glossaries...</p>}
+          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+            {orgUnitResourcesLoading && <p className={hintClass}>Loading translation memories &amp; glossaries...</p>}
             {orgUnitResources && (
               <>
-                <p>
-                  <strong>Translation memories:</strong>{" "}
+                <p className="text-slate-700">
+                  <strong className="text-slate-900">Translation memories:</strong>{" "}
                   {orgUnitResources.translationMemories.length === 0
                     ? "none bound to this org unit"
                     : orgUnitResources.translationMemories.map((tm) => tm.name).join(", ")}
                 </p>
-                <p>
-                  <strong>Glossaries:</strong>{" "}
+                <p className="mt-1 text-slate-700">
+                  <strong className="text-slate-900">Glossaries:</strong>{" "}
                   {orgUnitResources.glossaries.length === 0
                     ? "none bound to this org unit"
                     : orgUnitResources.glossaries.map((g) => g.name).join(", ")}
                 </p>
-                <p className="hint">
+                <p className={`mt-2 ${hintClass}`}>
                   Read-only — wxrks attaches these to each project automatically based on the org unit.
                 </p>
               </>
@@ -61,82 +68,87 @@ export default function SettingsGeneral({
         )}
       </section>
 
-      <section className="card">
-        <h2>Locales</h2>
-        <p>
+      <section className={cardClass}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Locales</h2>
+        <p className="text-sm text-slate-700">
           Source locale (fixed by your Webflow site config):{" "}
-          <strong>{webflowLocales?.primary?.displayName || settings.sourceLocale}</strong>
+          <strong className="text-slate-900">{webflowLocales?.primary?.displayName || settings.sourceLocale}</strong>
         </p>
 
-        <fieldset>
-          <legend>Target locales</legend>
+        <fieldset className="mt-4">
+          <legend className="mb-1 text-sm font-semibold text-slate-900">Target locales</legend>
           {webflowLocales?.secondary?.length > 0 && (
-            <p>
-              <button type="button" className="link-button" onClick={checkAllTargetLocales}>
+            <p className="mb-2">
+              <button type="button" className={linkButtonClass} onClick={checkAllTargetLocales}>
                 Check all
               </button>{" "}
               ·{" "}
-              <button type="button" className="link-button" onClick={uncheckAllTargetLocales}>
+              <button type="button" className={linkButtonClass} onClick={uncheckAllTargetLocales}>
                 Uncheck all
               </button>
             </p>
           )}
-          {(webflowLocales?.secondary || []).map((locale) => (
-            <label key={locale.tag} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={settings.targetLocales.includes(locale.tag)}
-                onChange={() => toggleTargetLocale(locale.tag)}
-              />
-              {locale.displayName} ({locale.tag})
-            </label>
-          ))}
-          {!webflowLocales && <p className="hint">Could not load Webflow's configured locales.</p>}
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {(webflowLocales?.secondary || []).map((locale) => (
+              <label key={locale.tag} className="inline-flex items-center gap-1.5 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={settings.targetLocales.includes(locale.tag)}
+                  onChange={() => toggleTargetLocale(locale.tag)}
+                  className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                />
+                {locale.displayName} ({locale.tag})
+              </label>
+            ))}
+          </div>
+          {!webflowLocales && <p className={hintClass}>Could not load Webflow's configured locales.</p>}
         </fieldset>
-        <p className="hint">
+        <p className={`mt-3 ${hintClass}`}>
           Only locales actually enabled on your Webflow site are shown here — Webflow silently falls back
           to the primary locale for anything else, so free-typed codes aren't offered.
         </p>
       </section>
 
-      <section className="card">
-        <h2>Work unit naming</h2>
-        <label>
+      <section className={cardClass}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Work unit naming</h2>
+        <label className={labelClass}>
           Pattern:
           <input
             type="text"
             value={settings.workUnitNamePattern}
             onChange={(e) => markDirty({ workUnitNamePattern: e.target.value })}
-            style={{ width: "320px", marginLeft: "0.5rem" }}
+            className="w-80 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </label>
-        <p className="hint">
-          Placeholders: <code>{"{collection}"}</code>, <code>{"{entry}"}</code>.
-          Preview: <strong>{buildPreviewName(settings.workUnitNamePattern)}</strong>
+        <p className={`mt-2 ${hintClass}`}>
+          Placeholders: <code className="rounded bg-slate-100 px-1 py-0.5">{"{collection}"}</code>,{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5">{"{entry}"}</code>. Preview:{" "}
+          <strong className="text-slate-900">{buildPreviewName(settings.workUnitNamePattern)}</strong>
         </p>
-        <p className="hint">
+        <p className={`mt-1 ${hintClass}`}>
           This becomes the wxrks resource/work-unit name — one per Webflow entry (all its translatable
-          fields bundled together). Keep <code>{"{entry}"}</code> in the pattern so names stay unique
-          within a project.
+          fields bundled together). Keep <code className="rounded bg-slate-100 px-1 py-0.5">{"{entry}"}</code> in the
+          pattern so names stay unique within a project.
         </p>
       </section>
 
-      <section className="card">
-        <h2>Automation</h2>
-        <label className="checkbox-label">
+      <section className={cardClass}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Automation</h2>
+        <label className="flex items-center gap-1.5 text-sm text-slate-700">
           <input
             type="checkbox"
             checked={settings.autoApprove}
             onChange={(e) => markDirty({ autoApprove: e.target.checked })}
+            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
           />
           Auto-approve wxrks projects (skip manual approval so translation starts immediately)
         </label>
-        <br />
-        <label className="checkbox-label">
+        <label className="mt-2 flex items-center gap-1.5 text-sm text-slate-700">
           <input
             type="checkbox"
             checked={settings.autoPublish}
             onChange={(e) => markDirty({ autoPublish: e.target.checked })}
+            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
           />
           Auto-publish translated Webflow items (otherwise leave as Draft)
         </label>
