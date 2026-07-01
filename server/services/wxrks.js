@@ -1,6 +1,5 @@
 const axios = require("axios");
 const FormData = require("form-data");
-const AdmZip = require("adm-zip");
 
 const WXRKS_API_URL = process.env.WXRKS_API_URL || "https://app.wxrks.com/api/v3";
 
@@ -316,38 +315,39 @@ async function getProjectResources(projectUuid) {
 }
 
 /**
- * Downloads translated file content for a single resource + locale.
- * Since our resources are uploaded as single-field JSON files, the response
- * for a single (resource, locale) filter is expected to be that same JSON
- * shape with the translated value substituted in.
+ * GET /project/:uuid/work-unit/:workUnitUuid/translation -- the real,
+ * reliable per-work-unit retrieval endpoint (confirmed against a prior
+ * working n8n automation, and live-tested). Returns a presigned
+ * `translatedFileUrl` (plain S3 URL, no wxrks auth needed) once
+ * `translationStatus` is "TRANSLATED". This replaced an earlier attempt
+ * using `/project/:uuid/download?resources=...&locales=...`, which returned
+ * an empty ZIP shortly after the DELIVERED webhook fired -- that endpoint is
+ * for ad-hoc bulk downloads, not the eventually-consistent per-work-unit
+ * signal the webhook is telling us about.
  */
+async function getWorkUnitTranslation(projectUuid, workUnitUuid) {
+  const { data } = await request({
+    method: "GET",
+    url: `/project/${projectUuid}/work-unit/${workUnitUuid}/translation`,
+  });
+  return data;
+}
+
 /**
- * The download endpoint always returns a ZIP archive (even filtered down to
- * one resource + one locale) with entries laid out as `{locale}/{filename}`.
- * Since we filter to exactly one resource, there's exactly one entry.
+ * Polls getWorkUnitTranslation until translationStatus is "TRANSLATED", then
+ * fetches the translated JSON content from the presigned translatedFileUrl.
  */
-/**
- * Retries on an empty ZIP -- observed live: the work-unit-DELIVERED webhook
- * can fire a moment before the translated file is actually downloadable
- * (eventually consistent, same as project status transitions), so an
- * immediate download right after the webhook can race it.
- */
-async function downloadResourceTranslation(projectUuid, resourceId, locale, { retries = 4, retryDelayMs = 3000 } = {}) {
+async function waitForWorkUnitTranslation(projectUuid, workUnitUuid, { retries = 5, retryDelayMs = 3000 } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const { data } = await request({
-      method: "GET",
-      url: `/project/${projectUuid}/download?resources=${encodeURIComponent(resourceId)}&locales=${encodeURIComponent(locale)}`,
-      responseType: "arraybuffer",
-    });
-
-    const zip = new AdmZip(Buffer.from(data));
-    const entries = zip.getEntries().filter((e) => !e.isDirectory);
-    if (entries.length > 0) {
-      return JSON.parse(entries[0].getData().toString("utf-8"));
+    const info = await getWorkUnitTranslation(projectUuid, workUnitUuid);
+    if (info.translationStatus === "TRANSLATED" && info.translatedFileUrl) {
+      const { data } = await axios.get(info.translatedFileUrl);
+      return data;
     }
-
     if (attempt >= retries) {
-      throw new Error(`wxrks download for resource ${resourceId} (${locale}) contained no files`);
+      throw new Error(
+        `wxrks work unit ${workUnitUuid} translation not ready after ${retries} retries (status: ${info.translationStatus})`
+      );
     }
     await sleep(retryDelayMs);
   }
@@ -368,5 +368,6 @@ module.exports = {
   uploadResourceContent,
   createWorkUnitsBulk,
   getProjectResources,
-  downloadResourceTranslation,
+  getWorkUnitTranslation,
+  waitForWorkUnitTranslation,
 };

@@ -15,7 +15,7 @@ const router = express.Router();
  *
  * Real payload shape (confirmed via live webhook capture, not wxrks docs):
  *   {
- *     event_type: "WORK_UNIT_STATUS_CHANGE", new_status: "DELIVERED",
+ *     id, event_type: "WORK_UNIT_STATUS_CHANGE", new_status: "DELIVERED",
  *     previous_status: "TRANSLATED", project_uuid, org_unit_uuid,
  *     project_file_id, project_file_name, source_locale, target_locale,
  *     is_last_workflow, ...
@@ -24,6 +24,14 @@ const router = express.Router();
  * our own resource-creation call (confirmed against the real
  * `/project/:uuid/resource/simple` list) -- match on `project_file_name`
  * instead, since we control that filename ourselves at upload time.
+ * The top-level `id` field is the *work unit* uuid (confirmed against
+ * `/project/:uuid/work-unit`), which is what
+ * `/project/:uuid/work-unit/:workUnitUuid/translation` needs to return a
+ * presigned translatedFileUrl -- the reliable per-work-unit retrieval path
+ * (see wxrks.waitForWorkUnitTranslation). An earlier attempt using
+ * `/project/:uuid/download?resources=...&locales=...` intermittently
+ * returned an empty ZIP right after DELIVERED fired; that endpoint is for
+ * ad-hoc bulk downloads, not this signal.
  * wxrks also POSTs a one-time { event_type: "WEBHOOK_VALIDATION" } ping when
  * a webhook is registered, expecting a 200 back to activate it.
  */
@@ -35,6 +43,7 @@ router.post("/wxrks", async (req, res) => {
   console.log("wxrks webhook payload:", JSON.stringify(req.body, null, 2));
 
   const {
+    id: workUnitUuid,
     event_type: eventType,
     new_status: newStatus,
     project_uuid: wxrksProjectUUID,
@@ -48,8 +57,10 @@ router.post("/wxrks", async (req, res) => {
   if (eventType !== "WORK_UNIT_STATUS_CHANGE" || newStatus !== "DELIVERED") {
     return res.status(200).json({ ignored: true, reason: `unhandled event: ${eventType}${newStatus ? ` (${newStatus})` : ""}` });
   }
-  if (!wxrksProjectUUID || !fileName || !locale) {
-    return res.status(400).json({ error: "Missing project_uuid, project_file_name, or target_locale in webhook payload" });
+  if (!wxrksProjectUUID || !fileName || !locale || !workUnitUuid) {
+    return res
+      .status(400)
+      .json({ error: "Missing id, project_uuid, project_file_name, or target_locale in webhook payload" });
   }
 
   const mapping = await store.getProjectMapping(wxrksProjectUUID);
@@ -62,11 +73,11 @@ router.post("/wxrks", async (req, res) => {
     return res.status(404).json({ error: `No item found for file ${fileName} in project ${wxrksProjectUUID}` });
   }
 
-  const { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount } = batchItem;
+  const { webflowCollectionId, webflowItemId, fieldKeys, wordCount } = batchItem;
 
   try {
     const { autoPublish } = await store.getSettings();
-    const translation = await wxrks.downloadResourceTranslation(wxrksProjectUUID, resourceId, locale);
+    const translation = await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid);
 
     const fieldData = {};
     for (const fieldKey of fieldKeys) {
@@ -108,7 +119,7 @@ router.post("/wxrks", async (req, res) => {
       await store.updateProjectMapping(wxrksProjectUUID, { status: "completed" });
     }
 
-    res.json({ wxrksProjectUUID, resourceId, resultsByLocale });
+    res.json({ wxrksProjectUUID, workUnitUuid, resultsByLocale });
   } catch (err) {
     res.status(502).json({ error: err.response?.data?.message || err.message });
   }
