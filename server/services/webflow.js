@@ -40,11 +40,33 @@ async function getSiteLocales() {
   const primary = data?.locales?.primary;
   const secondary = data?.locales?.secondary || [];
   return {
-    primary: primary && { tag: primary.tag, displayName: primary.displayName },
+    // cmsLocaleId included alongside tag: item webhook payloads identify a
+    // locale by cmsLocaleId, not by tag, so Auto Sync's loop-prevention
+    // filter needs this to compare against.
+    primary: primary && { tag: primary.tag, displayName: primary.displayName, cmsLocaleId: primary.cmsLocaleId },
     secondary: secondary
       .filter((l) => l.enabled)
-      .map((l) => ({ tag: l.tag, displayName: l.displayName })),
+      .map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId })),
   };
+}
+
+/**
+ * Webhook management (Auto Sync). POST /sites/:site_id/webhooks requires the
+ * token to have sites:write scope -- confirm this account's
+ * WEBFLOW_API_TOKEN actually has it before relying on this in production.
+ */
+async function registerWebhook(triggerType, url) {
+  const { data } = await client().post(`/sites/${siteId()}/webhooks`, { triggerType, url });
+  return data;
+}
+
+async function listWebhooks() {
+  const { data } = await client().get(`/sites/${siteId()}/webhooks`);
+  return data?.webhooks || [];
+}
+
+async function deleteWebhook(webhookId) {
+  await client().delete(`/sites/${siteId()}/webhooks/${webhookId}`);
 }
 
 async function getCollection(collectionId) {
@@ -234,4 +256,7 @@ module.exports = {
   buildResourceFileName,
   countWords,
   DEFAULT_WORK_UNIT_NAME_PATTERN,
+  registerWebhook,
+  listWebhooks,
+  deleteWebhook,
 };

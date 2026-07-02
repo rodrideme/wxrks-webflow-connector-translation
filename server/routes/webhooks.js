@@ -125,11 +125,23 @@ router.post("/wxrks", async (req, res) => {
   }
 });
 
-// TEMPORARY: inspect recent raw webhook payloads wxrks actually sent, to
-// design real handling for event types beyond "Project Translation
-// Finished". Returns a list (most recent first) since a single-slot capture
-// was getting overwritten by validation pings before we could inspect real
-// events. Remove once done.
+// TEMPORARY: capture-only endpoint for live-testing what a real Webflow
+// `collection_item_changed` webhook payload looks like -- specifically to
+// confirm whether `cmsLocaleId` actually distinguishes the primary locale
+// from a secondary locale (a read-only GET on the same item showed the same
+// cmsLocaleId for both, which would break Auto Sync's loop-prevention filter
+// if the real webhook payload behaves the same way). Remove this route and
+// the temporary webhook registration once verified.
+router.post("/webflow-debug", async (req, res) => {
+  await store.setDebugWebhookPayload({ headers: req.headers, body: req.body }).catch(() => {});
+  console.log("webflow debug webhook payload:", JSON.stringify(req.body, null, 2));
+  res.status(200).json({ received: true });
+});
+
+// TEMPORARY: inspect recent raw webhook payloads (wxrks and, temporarily,
+// the webflow-debug capture above) -- shared ring buffer. Returns a list
+// (most recent first) since a single-slot capture was getting overwritten by
+// validation pings before we could inspect real events. Remove once done.
 router.get("/wxrks/debug-last", async (req, res) => {
   try {
     const history = await store.getDebugWebhookPayload();
