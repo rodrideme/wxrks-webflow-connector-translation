@@ -51,9 +51,11 @@ async function getSiteLocales() {
 }
 
 /**
- * Webhook management (Auto Sync). POST /sites/:site_id/webhooks requires the
- * token to have sites:write scope -- confirm this account's
- * WEBFLOW_API_TOKEN actually has it before relying on this in production.
+ * Webhook management (Auto Sync). Registration/listing are scoped under the
+ * site (confirmed live), but delete is NOT nested under /sites/:id/webhooks/
+ * -- it's a top-level /webhooks/:id route (confirmed live; the nested path
+ * 404s). Registration confirmed live to only need whatever scope this
+ * account's WEBFLOW_API_TOKEN already has (worked without any token change).
  */
 async function registerWebhook(triggerType, url) {
   const { data } = await client().post(`/sites/${siteId()}/webhooks`, { triggerType, url });
@@ -66,7 +68,7 @@ async function listWebhooks() {
 }
 
 async function deleteWebhook(webhookId) {
-  await client().delete(`/sites/${siteId()}/webhooks/${webhookId}`);
+  await client().delete(`/webhooks/${webhookId}`);
 }
 
 async function getCollection(collectionId) {
