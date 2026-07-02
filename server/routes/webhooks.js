@@ -2,6 +2,10 @@ const express = require("express");
 const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
+const autoSyncSelfWrites = require("../services/autoSyncSelfWrites");
+const autoSyncWebhook = require("../services/autoSyncWebhook");
+const { evaluateAutoSyncRules } = require("../services/autoSyncRules");
+const autoSyncQueue = require("../services/autoSyncQueue");
 
 const router = express.Router();
 
@@ -90,6 +94,12 @@ router.post("/wxrks", async (req, res) => {
       resultsByLocale = [{ locale, error: "Downloaded translation had no matching fields" }];
     } else {
       await webflow.patchItemLocale(webflowCollectionId, webflowItemId, locale, fieldData);
+      // Auto Sync loop-prevention: a live test proved the inbound Webflow
+      // webhook's cmsLocaleId can't tell us which locale this write landed
+      // on, so instead we mark that we JUST wrote this item at all -- the
+      // Auto Sync webhook checks this before reacting to any
+      // collection_item_changed/published event for the same item.
+      autoSyncSelfWrites.markSelfWrite(webflowCollectionId, webflowItemId);
       if (autoPublish) {
         await webflow.publishItems(webflowCollectionId, [webflowItemId]);
       }
@@ -122,6 +132,74 @@ router.post("/wxrks", async (req, res) => {
     res.json({ wxrksProjectUUID, workUnitUuid, resultsByLocale });
   } catch (err) {
     res.status(502).json({ error: err.response?.data?.message || err.message });
+  }
+});
+
+/**
+ * POST /api/webhooks/webflow
+ * Fired by Webflow on "collection_item_published". Live-verified payload
+ * shape: { payload: { id, siteId, workspaceId, collectionId, cmsLocaleId,
+ * isDraft, isArchived, lastPublished, lastUpdated, createdOn, fieldData },
+ * triggerType }.
+ *
+ * IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
+ * edited (live-tested: it reports the primary locale's id even when only a
+ * secondary locale's field changed) -- do not use it for loop-prevention.
+ * Instead this route checks autoSyncSelfWrites (a blanket per-item cooldown
+ * marked by the /wxrks handler above whenever it pushes a translation back),
+ * and always re-fetches the item fresh via the primary locale rather than
+ * trusting payload.fieldData for content.
+ */
+router.post("/webflow", async (req, res) => {
+  const settings = await store.getSettings();
+  const { signingSecret } = settings.autoSync.webhook;
+
+  const verified = autoSyncWebhook.verifySignature({
+    rawBody: req.rawBody,
+    signature: req.headers["x-webflow-signature"],
+    timestamp: req.headers["x-webflow-timestamp"],
+    signingSecret,
+  });
+  if (!verified) {
+    return res.status(401).json({ error: "Invalid or missing Webflow webhook signature" });
+  }
+
+  // Liveness signal for reconciliation's deactivation inference -- recorded
+  // for any verified request, regardless of whether it ends up qualifying.
+  await store.updateAutoSyncWebhookState({ lastEventAt: new Date().toISOString() });
+
+  if (!settings.autoSync.enabled) {
+    return res.status(200).json({ ignored: true, reason: "Auto Sync is disabled" });
+  }
+
+  const { payload, triggerType } = req.body || {};
+  if (triggerType !== autoSyncWebhook.TRIGGER_TYPE || !payload) {
+    return res.status(200).json({ ignored: true, reason: `unhandled trigger: ${triggerType}` });
+  }
+
+  const { id: itemId, collectionId, isDraft, isArchived } = payload;
+  if (isDraft || isArchived) {
+    return res.status(200).json({ ignored: true, reason: "draft or archived" });
+  }
+  if (autoSyncSelfWrites.isRecentSelfWrite(collectionId, itemId)) {
+    return res.status(200).json({ ignored: true, reason: "recent self-write (translation push-back echo)" });
+  }
+
+  try {
+    const collection = await webflow.getCollection(collectionId);
+    const locales = await webflow.getSiteLocales();
+    // Always re-fetch fresh primary-locale content rather than trusting
+    // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
+    const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
+
+    const qualifies = evaluateAutoSyncRules(settings, collection, item);
+    if (qualifies) {
+      autoSyncQueue.enqueue({ collection, item });
+    }
+
+    res.json({ received: true, qualified: qualifies });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
 });
 

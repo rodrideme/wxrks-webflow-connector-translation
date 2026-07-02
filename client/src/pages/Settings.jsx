@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../services/api.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
 import SettingsCollections from "./settings/SettingsCollections.jsx";
+import SettingsAutoSync from "./settings/SettingsAutoSync.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 
 function baseLang(code) {
@@ -11,6 +12,7 @@ function baseLang(code) {
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "collections", label: "Collections" },
+  { id: "autosync", label: "Auto Sync" },
   { id: "keys", label: "Keys" },
 ];
 
@@ -125,6 +127,39 @@ export default function Settings() {
     markDirty({ allCollectionsEnabled: false, enabledCollectionIds: [] });
   }
 
+  // Separate from the manual-sync collection toggles above -- a collection
+  // can be enabled for manual sync, Auto Sync, both, or neither.
+  function toggleAutoSyncCollection(collectionId) {
+    const { autoSync } = settings;
+    if (autoSync.allCollectionsEnabled) {
+      const allIds = collections.map((c) => c.id);
+      markDirty({
+        autoSync: {
+          ...autoSync,
+          allCollectionsEnabled: false,
+          enabledCollectionIds: allIds.filter((id) => id !== collectionId),
+        },
+      });
+      return;
+    }
+    const enabledCollectionIds = autoSync.enabledCollectionIds.includes(collectionId)
+      ? autoSync.enabledCollectionIds.filter((id) => id !== collectionId)
+      : [...autoSync.enabledCollectionIds, collectionId];
+    markDirty({ autoSync: { ...autoSync, enabledCollectionIds } });
+  }
+
+  function isAutoSyncCollectionEnabled(collectionId) {
+    return settings.autoSync.allCollectionsEnabled || settings.autoSync.enabledCollectionIds.includes(collectionId);
+  }
+
+  function checkAllAutoSyncCollections() {
+    markDirty({ autoSync: { ...settings.autoSync, allCollectionsEnabled: true, enabledCollectionIds: [] } });
+  }
+
+  function uncheckAllAutoSyncCollections() {
+    markDirty({ autoSync: { ...settings.autoSync, allCollectionsEnabled: false, enabledCollectionIds: [] } });
+  }
+
   async function save() {
     setSaving(true);
     setError(null);
@@ -138,6 +173,7 @@ export default function Settings() {
         allCollectionsEnabled: settings.allCollectionsEnabled,
         enabledCollectionIds: settings.enabledCollectionIds,
         workUnitNamePattern: settings.workUnitNamePattern,
+        autoSync: settings.autoSync,
       });
       setSettings((prev) => ({ ...prev, ...updated }));
       setSaved(true);
@@ -193,8 +229,23 @@ export default function Settings() {
               toggleCollection={toggleCollection}
               checkAllCollections={checkAllCollections}
               uncheckAllCollections={uncheckAllCollections}
+              isAutoSyncCollectionEnabled={isAutoSyncCollectionEnabled}
+              toggleAutoSyncCollection={toggleAutoSyncCollection}
+              checkAllAutoSyncCollections={checkAllAutoSyncCollections}
+              uncheckAllAutoSyncCollections={uncheckAllAutoSyncCollections}
+              autoSyncFieldConditions={settings.autoSync.fieldConditions}
+              onAutoSyncFieldConditionsSaved={(collectionId, conditions) =>
+                markDirty({
+                  autoSync: {
+                    ...settings.autoSync,
+                    fieldConditions: { ...settings.autoSync.fieldConditions, [collectionId]: conditions },
+                  },
+                })
+              }
             />
           )}
+
+          {section === "autosync" && <SettingsAutoSync settings={settings} markDirty={markDirty} />}
 
           {section === "keys" && <SettingsKeys settings={settings} />}
 

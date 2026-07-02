@@ -1,5 +1,8 @@
 const express = require("express");
 const store = require("../store");
+const autoSyncWebhook = require("../services/autoSyncWebhook");
+const autoSyncQueue = require("../services/autoSyncQueue");
+const autoSyncReconciliation = require("../services/autoSyncReconciliation");
 
 const router = express.Router();
 
@@ -36,8 +39,14 @@ router.get("/", async (req, res) => {
 
 /**
  * PUT /api/settings
- * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, enabledCollectionIds? }
+ * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, enabledCollectionIds?, autoSync? }
  * Env-backed connection secrets are not editable here — they're deploy-time config.
+ *
+ * `autoSync` is sent as a full object by the client (same pattern as the
+ * rest of settings) but its `webhook` sub-object is server-owned bookkeeping
+ * (see store.updateAutoSyncWebhookState) -- it's intentionally NOT
+ * overwritten here even if the client's copy is stale, since background
+ * webhook lifecycle code can update it concurrently with a settings save.
  */
 router.put("/", async (req, res) => {
   const {
@@ -49,6 +58,7 @@ router.put("/", async (req, res) => {
     allCollectionsEnabled,
     enabledCollectionIds,
     workUnitNamePattern,
+    autoSync,
   } = req.body || {};
   const patch = {};
   if (sourceLocale !== undefined) patch.sourceLocale = sourceLocale;
@@ -61,8 +71,52 @@ router.put("/", async (req, res) => {
   if (workUnitNamePattern !== undefined) patch.workUnitNamePattern = workUnitNamePattern;
 
   try {
+    const before = await store.getSettings();
+
+    if (autoSync !== undefined) {
+      // Never let a client PUT clobber the server-owned webhook bookkeeping.
+      patch.autoSync = { ...autoSync, webhook: before.autoSync.webhook };
+    }
+
     const updated = await store.updateSettings(patch);
-    res.json(updated);
+
+    if (autoSync !== undefined) {
+      const wasEnabled = before.autoSync.enabled;
+      const nowEnabled = updated.autoSync.enabled;
+
+      if (!wasEnabled && nowEnabled) {
+        await autoSyncWebhook.ensureWebhookRegistered();
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushesPerDay);
+        autoSyncReconciliation.startReconciliationLoop();
+      } else if (wasEnabled && !nowEnabled) {
+        await autoSyncWebhook.teardownWebhook();
+        autoSyncQueue.stopFlushLoop();
+        autoSyncReconciliation.stopReconciliationLoop();
+      } else if (nowEnabled && before.autoSync.flushesPerDay !== updated.autoSync.flushesPerDay) {
+        // Flush-schedule edit takes effect immediately, no restart needed.
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushesPerDay);
+      }
+    }
+
+    res.json(await store.getSettings()); // re-fetch: webhook state may have changed above
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/settings/autosync/reregister-webhook
+ * Manual recovery action for the Sync Panel's Auto Sync tab, surfaced when
+ * reconciliation infers the Webflow webhook was silently deactivated.
+ * Deliberately not automatic (see autoSyncReconciliation.js) -- a
+ * repeatedly-failing target URL re-registering itself in a loop is worse
+ * than surfacing the problem once and letting a human confirm the URL is
+ * reachable before retrying.
+ */
+router.post("/autosync/reregister-webhook", async (req, res) => {
+  try {
+    await autoSyncWebhook.ensureWebhookRegistered();
+    res.json(await store.getSettings());
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

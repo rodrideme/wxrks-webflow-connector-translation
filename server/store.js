@@ -28,6 +28,41 @@ const DEFAULT_SETTINGS = {
   // unit file name (wxrks has no separate "name" field -- it derives the
   // work unit name from the uploaded file name).
   workUnitNamePattern: DEFAULT_WORK_UNIT_NAME_PATTERN,
+  // Auto Sync: automatically translate content when it's published, based on
+  // a 3-level rule tree (master enable -> per-collection allow-list ->
+  // optional per-field conditions). Separate from allCollectionsEnabled/
+  // enabledCollectionIds above -- a collection can be enabled for manual
+  // sync, auto sync, both, or neither.
+  autoSync: {
+    enabled: false,
+    flushesPerDay: 2, // fixed-interval flush window = 24/flushesPerDay hours
+    allCollectionsEnabled: false,
+    enabledCollectionIds: [],
+    // { [collectionId]: AutoSyncCondition[] }, ALL conditions must match (AND)
+    fieldConditions: {},
+    // Webflow webhook lifecycle bookkeeping -- not directly user-edited, but
+    // persisted here (singleton state like the rest of settings) rather than
+    // a new table. Written via updateAutoSyncWebhookState, not updateSettings,
+    // since it's mutated by server-side background code (registration,
+    // reconciliation) as well as the Settings save path.
+    webhook: {
+      webflowWebhookId: null,
+      signingSecret: null,
+      registeredAt: null,
+      lastEventAt: null,
+      status: "not_registered", // "not_registered" | "active" | "deactivated" | "error"
+      lastError: null,
+    },
+  },
+  // Reconciliation checkpoint + per-item dedup bookkeeping for Auto Sync.
+  // Sibling of `autoSync` (not nested inside it) so it survives autoSync
+  // being disabled/re-enabled without special-casing -- it's operational
+  // bookkeeping, not a user-facing setting.
+  autoSyncReconciliation: {
+    lastCheckpoint: null, // ISO date string
+    // { [collectionId]: { [itemId]: isoTimestampOfLastAutoSync } }
+    lastSyncedAt: {},
+  },
 };
 
 // jobId -> { id, mode, total, processed, results: [], status, cancelled, startedAt }
@@ -159,12 +194,31 @@ async function listActiveProjects() {
   return rows.map(mappingRowToObject);
 }
 
+function mergeSettings(stored) {
+  // A plain top-level spread is enough for flat fields, but `autoSync` (and
+  // its own `webhook` sub-object) are nested -- a stored row that only ever
+  // had a partial `autoSync` written (e.g. before `webhook` existed) would
+  // otherwise lose those nested defaults entirely instead of falling back to
+  // them.
+  const merged = { ...DEFAULT_SETTINGS, ...stored };
+  merged.autoSync = {
+    ...DEFAULT_SETTINGS.autoSync,
+    ...(stored.autoSync || {}),
+    webhook: { ...DEFAULT_SETTINGS.autoSync.webhook, ...(stored.autoSync?.webhook || {}) },
+  };
+  merged.autoSyncReconciliation = {
+    ...DEFAULT_SETTINGS.autoSyncReconciliation,
+    ...(stored.autoSyncReconciliation || {}),
+  };
+  return merged;
+}
+
 async function getSettings() {
   const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'settings'`);
   // Merge over defaults so a settings field added after a row was first
   // written (e.g. allCollectionsEnabled) still gets a sane value instead of
   // undefined for existing installs.
-  if (rows[0]) return { ...DEFAULT_SETTINGS, ...rows[0].value };
+  if (rows[0]) return mergeSettings(rows[0].value);
 
   await db.query(`INSERT INTO app_state (key, value) VALUES ('settings', $1) ON CONFLICT (key) DO NOTHING`, [
     JSON.stringify(DEFAULT_SETTINGS),
@@ -199,6 +253,61 @@ async function setFieldExclusions(collectionId, excludedFields) {
   const fieldExclusions = { ...settings.fieldExclusions, [collectionId]: excludedFields };
   await updateSettings({ fieldExclusions });
   return excludedFields;
+}
+
+// Pure helper, mirrors isCollectionEnabled but for the separate Auto Sync
+// collection allow-list (a collection can be manual-sync-only, auto-sync-
+// only, both, or neither).
+function isAutoSyncCollectionEnabled(settings, collectionId) {
+  return settings.autoSync.allCollectionsEnabled || settings.autoSync.enabledCollectionIds.includes(collectionId);
+}
+
+async function setAutoSyncFieldConditions(collectionId, conditions) {
+  const settings = await getSettings();
+  const fieldConditions = { ...settings.autoSync.fieldConditions, [collectionId]: conditions };
+  await updateSettings({ autoSync: { ...settings.autoSync, fieldConditions } });
+  return conditions;
+}
+
+/**
+ * Read-modify-write onto the freshly-read current settings, used only by
+ * server-side webhook lifecycle code (registration, reconciliation's
+ * deactivation inference) -- kept separate from the general updateSettings()
+ * PUT path so a client Settings save racing a server-side webhook-status
+ * update can't clobber it (the client always resends the full `autoSync`
+ * object it has locally, which could be stale for this specific
+ * sub-object).
+ */
+async function updateAutoSyncWebhookState(patch) {
+  const settings = await getSettings();
+  const webhook = { ...settings.autoSync.webhook, ...patch };
+  await updateSettings({ autoSync: { ...settings.autoSync, webhook } });
+  return webhook;
+}
+
+/**
+ * True if this exact (collection, item) publish has already been
+ * auto-synced -- prevents the live webhook and reconciliation's gap-catch-up
+ * scan from double-syncing the same publish.
+ */
+function isAlreadyAutoSynced(settings, collectionId, itemId, lastPublishedIso) {
+  const lastSyncedAt = settings.autoSyncReconciliation.lastSyncedAt?.[collectionId]?.[itemId];
+  if (!lastSyncedAt || !lastPublishedIso) return false;
+  return new Date(lastPublishedIso) <= new Date(lastSyncedAt);
+}
+
+async function markAutoSynced(collectionId, itemId, lastPublishedIso) {
+  const settings = await getSettings();
+  const lastSyncedAt = {
+    ...settings.autoSyncReconciliation.lastSyncedAt,
+    [collectionId]: {
+      ...(settings.autoSyncReconciliation.lastSyncedAt[collectionId] || {}),
+      [itemId]: lastPublishedIso,
+    },
+  };
+  await updateSettings({
+    autoSyncReconciliation: { ...settings.autoSyncReconciliation, lastSyncedAt },
+  });
 }
 
 function createSyncJob(job) {
@@ -295,6 +404,11 @@ module.exports = {
   isCollectionEnabled,
   getFieldExclusions,
   setFieldExclusions,
+  isAutoSyncCollectionEnabled,
+  setAutoSyncFieldConditions,
+  updateAutoSyncWebhookState,
+  isAlreadyAutoSynced,
+  markAutoSynced,
   setLastSync,
   getLastSync,
   setDebugWebhookPayload,

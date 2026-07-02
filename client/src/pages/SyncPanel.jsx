@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import StatusBadge from "../components/StatusBadge.jsx";
 
@@ -36,6 +37,9 @@ export default function SyncPanel() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
+  const [autoSyncStatus, setAutoSyncStatus] = useState(null);
+  const autoSyncPollRef = useRef(null);
+
   useEffect(() => {
     api.getCollections().then((res) => setCollections(res.collections || []));
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
@@ -61,6 +65,17 @@ export default function SyncPanel() {
     api.getCollectionItems(selectedCollectionId).then((res) => setItems(res.items || []));
     setSelectedItemIds([]);
   }, [selectedCollectionId]);
+
+  useEffect(() => {
+    if (mode !== "auto") {
+      clearInterval(autoSyncPollRef.current);
+      return;
+    }
+    const poll = () => api.getAutoSyncStatus().then(setAutoSyncStatus).catch((err) => setError(err.message));
+    poll();
+    autoSyncPollRef.current = setInterval(poll, POLL_INTERVAL_MS * 4);
+    return () => clearInterval(autoSyncPollRef.current);
+  }, [mode]);
 
   function toggleItem(itemId) {
     setSelectedItemIds((prev) =>
@@ -189,6 +204,9 @@ export default function SyncPanel() {
         </button>
         <button className={tabClass(mode === "item")} onClick={() => setMode("item")}>
           Item Sync
+        </button>
+        <button className={tabClass(mode === "auto")} onClick={() => setMode("auto")}>
+          Auto Sync
         </button>
       </div>
 
@@ -388,6 +406,65 @@ export default function SyncPanel() {
           >
             {running ? "Running..." : "Launch Item Sync"}
           </button>
+        </section>
+      )}
+
+      {mode === "auto" && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Auto Sync</h2>
+          {!autoSyncStatus ? (
+            <p className="text-sm text-slate-500">Loading status...</p>
+          ) : !autoSyncStatus.enabled ? (
+            <p className="text-sm text-slate-600">
+              Auto Sync is disabled. Turn it on and configure which collections/conditions qualify in{" "}
+              <Link to="/settings" className="font-medium text-brand-600 hover:underline">
+                Settings → Auto Sync
+              </Link>
+              .
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                  Enabled
+                </span>
+                <span
+                  className={
+                    "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium " +
+                    (autoSyncStatus.webhookStatus === "active"
+                      ? "bg-green-100 text-green-800"
+                      : "bg-red-100 text-red-800")
+                  }
+                >
+                  webhook: {autoSyncStatus.webhookStatus.replace("_", " ")}
+                </span>
+              </div>
+              <ul className="mt-3 space-y-1 text-sm text-slate-700">
+                <li>
+                  Pending items queued: <strong>{autoSyncStatus.pendingCount}</strong>
+                  {autoSyncStatus.pendingSince && (
+                    <> (oldest since {new Date(autoSyncStatus.pendingSince).toLocaleString()})</>
+                  )}
+                </li>
+                <li>Flushes per day: {autoSyncStatus.flushesPerDay}</li>
+                {autoSyncStatus.nextFlushEstimateAt && (
+                  <li>Next flush (estimate): {new Date(autoSyncStatus.nextFlushEstimateAt).toLocaleString()}</li>
+                )}
+                {autoSyncStatus.webhookLastEventAt && (
+                  <li>Last webhook event: {new Date(autoSyncStatus.webhookLastEventAt).toLocaleString()}</li>
+                )}
+              </ul>
+              {autoSyncStatus.webhookStatus !== "active" && (
+                <p className="mt-3 text-sm text-amber-700">
+                  The Webflow webhook isn't active -- go to{" "}
+                  <Link to="/settings" className="font-medium text-brand-600 hover:underline">
+                    Settings → Auto Sync
+                  </Link>{" "}
+                  to re-register it.
+                </p>
+              )}
+            </>
+          )}
         </section>
       )}
 

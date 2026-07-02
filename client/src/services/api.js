@@ -39,6 +39,13 @@ const api = {
       method: "PUT",
       body: JSON.stringify({ excludedFields }),
     }),
+  updateAutoSyncFieldConditions: (collectionId, conditions) =>
+    request(`/collections/${collectionId}/auto-sync-conditions`, {
+      method: "PUT",
+      body: JSON.stringify({ conditions }),
+    }),
+  getAutoSyncStatus: () => request("/sync/auto/status"),
+  reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
 };
 
 export default api;
