@@ -1,5 +1,6 @@
 const axios = require("axios");
 const FormData = require("form-data");
+const AdmZip = require("adm-zip");
 
 const WXRKS_API_URL = process.env.WXRKS_API_URL || "https://app.wxrks.com/api/v3";
 
@@ -315,15 +316,15 @@ async function getProjectResources(projectUuid) {
 }
 
 /**
- * GET /project/:uuid/work-unit/:workUnitUuid/translation -- the real,
- * reliable per-work-unit retrieval endpoint (confirmed against a prior
- * working n8n automation, and live-tested). Returns a presigned
- * `translatedFileUrl` (plain S3 URL, no wxrks auth needed) once
- * `translationStatus` is "TRANSLATED". This replaced an earlier attempt
- * using `/project/:uuid/download?resources=...&locales=...`, which returned
- * an empty ZIP shortly after the DELIVERED webhook fired -- that endpoint is
- * for ad-hoc bulk downloads, not the eventually-consistent per-work-unit
- * signal the webhook is telling us about.
+ * GET /project/:uuid/work-unit/:workUnitUuid/translation -- returns a
+ * presigned `translatedFileUrl` (plain S3 URL, no wxrks auth needed) once
+ * `translationStatus` is "TRANSLATED". Confirmed against a prior working
+ * n8n automation and live-tested -- but ALSO confirmed live that this URL
+ * can go back to null even once the work unit's overall status has advanced
+ * to DELIVERED (observed on a real delivery: translationStatus stayed
+ * "TRANSLATED" with translatedFileUrl/deliverableFileUrl both null well
+ * after DELIVERED fired). So this alone isn't reliable -- see
+ * waitForWorkUnitTranslation's ZIP-download fallback below.
  */
 async function getWorkUnitTranslation(projectUuid, workUnitUuid) {
   const { data } = await request({
@@ -334,19 +335,54 @@ async function getWorkUnitTranslation(projectUuid, workUnitUuid) {
 }
 
 /**
- * Polls getWorkUnitTranslation until translationStatus is "TRANSLATED", then
- * fetches the translated JSON content from the presigned translatedFileUrl.
+ * Fallback retrieval path: the same `/project/:uuid/download?resources=...
+ * &locales=...` ZIP endpoint used before this file's work-unit-translation
+ * rewrite. That earlier attempt was abandoned because it returned an empty
+ * ZIP immediately after the DELIVERED webhook fired (a race condition), but
+ * live-tested again minutes later on a real delivery where
+ * getWorkUnitTranslation's URLs were stuck null -- the ZIP endpoint DID have
+ * the real translated content by then. So the two endpoints appear to
+ * become reliable at different points in wxrks's pipeline; trying both
+ * covers each other's gap.
  */
-async function waitForWorkUnitTranslation(projectUuid, workUnitUuid, { retries = 5, retryDelayMs = 3000 } = {}) {
+async function downloadResourceZip(projectUuid, resourceId, locale) {
+  const { data } = await request({
+    method: "GET",
+    url: `/project/${projectUuid}/download?resources=${encodeURIComponent(resourceId)}&locales=${encodeURIComponent(locale)}`,
+    responseType: "arraybuffer",
+  });
+  const zip = new AdmZip(Buffer.from(data));
+  const entries = zip.getEntries().filter((e) => !e.isDirectory);
+  if (entries.length === 0) return null;
+  return JSON.parse(entries[0].getData().toString("utf-8"));
+}
+
+/**
+ * Polls both retrieval paths each attempt (translation-endpoint URL first,
+ * then the ZIP download as a fallback) until one succeeds.
+ */
+async function waitForWorkUnitTranslation(
+  projectUuid,
+  workUnitUuid,
+  resourceId,
+  locale,
+  { retries = 6, retryDelayMs = 5000 } = {}
+) {
+  let lastStatus = null;
   for (let attempt = 0; ; attempt++) {
     const info = await getWorkUnitTranslation(projectUuid, workUnitUuid);
+    lastStatus = info.translationStatus;
     if (info.translationStatus === "TRANSLATED" && info.translatedFileUrl) {
       const { data } = await axios.get(info.translatedFileUrl);
       return data;
     }
+
+    const zipContent = await downloadResourceZip(projectUuid, resourceId, locale);
+    if (zipContent) return zipContent;
+
     if (attempt >= retries) {
       throw new Error(
-        `wxrks work unit ${workUnitUuid} translation not ready after ${retries} retries (status: ${info.translationStatus})`
+        `wxrks work unit ${workUnitUuid} translation not ready after ${retries} retries (status: ${lastStatus})`
       );
     }
     await sleep(retryDelayMs);
@@ -369,5 +405,6 @@ module.exports = {
   createWorkUnitsBulk,
   getProjectResources,
   getWorkUnitTranslation,
+  downloadResourceZip,
   waitForWorkUnitTranslation,
 };

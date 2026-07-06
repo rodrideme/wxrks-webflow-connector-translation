@@ -77,7 +77,7 @@ router.post("/wxrks", async (req, res) => {
     return res.status(404).json({ error: `No item found for file ${fileName} in project ${wxrksProjectUUID}` });
   }
 
-  const { webflowCollectionId, webflowItemId, fieldKeys, wordCount } = batchItem;
+  const { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount } = batchItem;
 
   // Respond immediately -- wxrks's own webhook client times out waiting for
   // a response (confirmed live: a real delivery failed with "request timed
@@ -90,7 +90,7 @@ router.post("/wxrks", async (req, res) => {
 
   (async () => {
     const { autoPublish } = await store.getSettings();
-    const translation = await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid);
+    const translation = await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, resourceId, locale);
 
     const fieldData = {};
     for (const fieldKey of fieldKeys) {
