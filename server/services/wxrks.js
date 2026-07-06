@@ -360,13 +360,21 @@ async function downloadResourceZip(projectUuid, resourceId, locale) {
 /**
  * Polls both retrieval paths each attempt (translation-endpoint URL first,
  * then the ZIP download as a fallback) until one succeeds.
+ *
+ * Retry window is generous (~3 minutes) because this now runs entirely in
+ * the background after the webhook has already been ack'd (see
+ * routes/webhooks.js) -- there's no external timeout to race against
+ * anymore. Live-tested delivery lag has been observed up to ~1-2 minutes
+ * past the DELIVERED webhook firing before either retrieval path has real
+ * content, so a short window (the original 30s) silently exhausted retries
+ * and dropped the translation on the floor.
  */
 async function waitForWorkUnitTranslation(
   projectUuid,
   workUnitUuid,
   resourceId,
   locale,
-  { retries = 6, retryDelayMs = 5000 } = {}
+  { retries = 17, retryDelayMs = 10000 } = {}
 ) {
   let lastStatus = null;
   for (let attempt = 0; ; attempt++) {
