@@ -191,6 +191,16 @@ function filterTranslatableFields(fieldData = {}, fieldTypeBySlug = {}, excluded
   const excluded = new Set(excludedSlugs);
   return Object.entries(fieldData).reduce((acc, [key, value]) => {
     if (excluded.has(key)) return acc;
+    // Structural keys (slug, id, _draft, _archived, _*) must be excluded
+    // regardless of the field's Webflow schema type -- `slug` in particular
+    // is typically typed "PlainText" in the schema, so without this check it
+    // would slip past the type-based translatable check below and get sent
+    // to wxrks for translation. wxrks then returns free-form translated
+    // text for it, which Webflow's PATCH validation rejects (slugs must
+    // match `^[_a-zA-Z0-9][-_a-zA-Z0-9]*$`), silently failing every
+    // translation push-back for any item whose fieldData includes a slug
+    // (confirmed live -- this was breaking every real delivery this session).
+    if (NON_TRANSLATABLE_KEYS.has(key) || key.startsWith("_")) return acc;
 
     const type = fieldTypeBySlug[key];
     const translatable = type ? isFieldTypeTranslatable(type) : isTranslatableField(key, value);

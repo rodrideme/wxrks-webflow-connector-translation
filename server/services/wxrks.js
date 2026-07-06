@@ -358,8 +358,24 @@ async function downloadResourceZip(projectUuid, resourceId, locale) {
 }
 
 /**
+ * Fetches translated JSON content from a presigned S3 URL directly -- no
+ * wxrks auth needed. Used for the "WORK_UNIT_TRANSLATION_FILE_READY" webhook
+ * event, which (confirmed live) already includes a working
+ * `translated_file_url` in its own payload with a much longer-lived
+ * signature (~160 hours) than the on-demand
+ * `/work-unit/:uuid/translation` endpoint's URL (~1 hour) -- when this event
+ * fires, there's no need to poll anything at all.
+ */
+async function fetchTranslatedFile(url) {
+  const { data } = await axios.get(url);
+  return data;
+}
+
+/**
  * Polls both retrieval paths each attempt (translation-endpoint URL first,
- * then the ZIP download as a fallback) until one succeeds.
+ * then the ZIP download as a fallback) until one succeeds. Fallback path for
+ * when a webhook event doesn't carry its own translated_file_url (e.g.
+ * WORK_UNIT_STATUS_CHANGE/DELIVERED).
  *
  * Retry window is generous (~3 minutes) because this now runs entirely in
  * the background after the webhook has already been ack'd (see
@@ -414,5 +430,6 @@ module.exports = {
   getProjectResources,
   getWorkUnitTranslation,
   downloadResourceZip,
+  fetchTranslatedFile,
   waitForWorkUnitTranslation,
 };

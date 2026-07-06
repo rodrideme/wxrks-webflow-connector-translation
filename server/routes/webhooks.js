@@ -11,31 +11,30 @@ const router = express.Router();
 
 /**
  * POST /api/webhooks/wxrks
- * Fired by wxrks on various events. We act on "WORK_UNIT_STATUS_CHANGE"
- * transitioning to "DELIVERED" -- fired per work unit (one Webflow item, one
- * target locale) as soon as that translation is ready, rather than waiting
- * for the whole project/batch to finish. That single work unit's translated
- * content is fetched and pushed straight to its matching Webflow CMS item.
+ * Fired by wxrks on various events. We act on two of them, both meaning
+ * "this work unit's translation is ready to push to Webflow":
+ *  - "WORK_UNIT_TRANSLATION_FILE_READY": the reliable, preferred signal --
+ *    its payload already includes a working `translated_file_url` (a
+ *    presigned S3 link good for ~160 hours), confirmed live. No polling
+ *    needed at all for this one.
+ *  - "WORK_UNIT_STATUS_CHANGE" with new_status "DELIVERED": fires around the
+ *    same time but does NOT carry a ready file URL -- falls back to
+ *    wxrks.waitForWorkUnitTranslation's polling (see that function's docs).
+ * Both webhooks are typically registered together and can both fire for the
+ * same delivery, so this handler dedups against `mapping.updates` before
+ * doing any work, keyed by (webflowItemId, locale).
  *
  * Real payload shape (confirmed via live webhook capture, not wxrks docs):
  *   {
- *     id, event_type: "WORK_UNIT_STATUS_CHANGE", new_status: "DELIVERED",
- *     previous_status: "TRANSLATED", project_uuid, org_unit_uuid,
+ *     id, event_type, new_status?, project_uuid, org_unit_uuid,
  *     project_file_id, project_file_name, source_locale, target_locale,
- *     is_last_workflow, ...
+ *     translated_file_url?, is_last_workflow, ...
  *   }
  * Note: `project_file_id` is NOT the same id as the `resourceId` returned by
  * our own resource-creation call (confirmed against the real
  * `/project/:uuid/resource/simple` list) -- match on `project_file_name`
  * instead, since we control that filename ourselves at upload time.
- * The top-level `id` field is the *work unit* uuid (confirmed against
- * `/project/:uuid/work-unit`), which is what
- * `/project/:uuid/work-unit/:workUnitUuid/translation` needs to return a
- * presigned translatedFileUrl -- the reliable per-work-unit retrieval path
- * (see wxrks.waitForWorkUnitTranslation). An earlier attempt using
- * `/project/:uuid/download?resources=...&locales=...` intermittently
- * returned an empty ZIP right after DELIVERED fired; that endpoint is for
- * ad-hoc bulk downloads, not this signal.
+ * The top-level `id` field is the *work unit* uuid.
  * wxrks also POSTs a one-time { event_type: "WEBHOOK_VALIDATION" } ping when
  * a webhook is registered, expecting a 200 back to activate it.
  */
@@ -53,12 +52,15 @@ router.post("/wxrks", async (req, res) => {
     project_uuid: wxrksProjectUUID,
     project_file_name: fileName,
     target_locale: locale,
+    translated_file_url: directTranslatedFileUrl,
   } = req.body || {};
 
   if (eventType === "WEBHOOK_VALIDATION") {
     return res.status(200).json({ ok: true });
   }
-  if (eventType !== "WORK_UNIT_STATUS_CHANGE" || newStatus !== "DELIVERED") {
+  const isTranslationFileReady = eventType === "WORK_UNIT_TRANSLATION_FILE_READY";
+  const isDeliveredStatusChange = eventType === "WORK_UNIT_STATUS_CHANGE" && newStatus === "DELIVERED";
+  if (!isTranslationFileReady && !isDeliveredStatusChange) {
     return res.status(200).json({ ignored: true, reason: `unhandled event: ${eventType}${newStatus ? ` (${newStatus})` : ""}` });
   }
   if (!wxrksProjectUUID || !fileName || !locale || !workUnitUuid) {
@@ -79,21 +81,44 @@ router.post("/wxrks", async (req, res) => {
 
   const { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount } = batchItem;
 
+  // Dedup: WORK_UNIT_TRANSLATION_FILE_READY and WORK_UNIT_STATUS_CHANGE/
+  // DELIVERED can both fire for the same delivery -- skip if this
+  // (item, locale) already has a successful push recorded.
+  const alreadyPushed = mapping.updates.some(
+    (u) =>
+      u.targetLocales.includes(locale) &&
+      (u.resultsByItem || []).some(
+        (r) => r.webflowItemId === webflowItemId && (r.resultsByLocale || []).some((rl) => rl.locale === locale && rl.fieldsUpdated > 0)
+      )
+  );
+  if (alreadyPushed) {
+    return res.status(200).json({ ignored: true, reason: "already pushed to Webflow for this item/locale" });
+  }
+
   // Respond immediately -- wxrks's own webhook client times out waiting for
   // a response (confirmed live: a real delivery failed with "request timed
   // out" from wxrks's Java HTTP client) if we make it wait on
-  // waitForWorkUnitTranslation's retry/poll loop (up to ~15s of sleeps) plus
-  // the actual network calls. The real work happens after the response is
-  // sent, matching the same "respond fast, process in background" pattern
-  // already used by the /api/sync/bulk endpoint.
+  // waitForWorkUnitTranslation's retry/poll loop plus the actual network
+  // calls. The real work happens after the response is sent, matching the
+  // same "respond fast, process in background" pattern already used by the
+  // /api/sync/bulk endpoint.
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
   (async () => {
     const { autoPublish } = await store.getSettings();
-    const translation = await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, resourceId, locale);
+    const translation = directTranslatedFileUrl
+      ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
+      : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, resourceId, locale);
 
     const fieldData = {};
     for (const fieldKey of fieldKeys) {
+      // "slug" must never be patched with translated free text -- Webflow
+      // requires slugs to match `^[_a-zA-Z0-9][-_a-zA-Z0-9]*$` and rejects
+      // the whole PATCH otherwise (confirmed live: this was silently
+      // breaking every delivery for any item whose fieldKeys included
+      // "slug", which filterTranslatableFields no longer sends to wxrks for
+      // NEW syncs -- this guard covers batches uploaded before that fix).
+      if (fieldKey === "slug") continue;
       const value = translation?.[fieldKey];
       if (value !== undefined) fieldData[fieldKey] = value;
     }
