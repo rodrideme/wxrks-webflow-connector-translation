@@ -79,7 +79,16 @@ router.post("/wxrks", async (req, res) => {
 
   const { webflowCollectionId, webflowItemId, fieldKeys, wordCount } = batchItem;
 
-  try {
+  // Respond immediately -- wxrks's own webhook client times out waiting for
+  // a response (confirmed live: a real delivery failed with "request timed
+  // out" from wxrks's Java HTTP client) if we make it wait on
+  // waitForWorkUnitTranslation's retry/poll loop (up to ~15s of sleeps) plus
+  // the actual network calls. The real work happens after the response is
+  // sent, matching the same "respond fast, process in background" pattern
+  // already used by the /api/sync/bulk endpoint.
+  res.json({ received: true, wxrksProjectUUID, workUnitUuid });
+
+  (async () => {
     const { autoPublish } = await store.getSettings();
     const translation = await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid);
 
@@ -128,11 +137,12 @@ router.post("/wxrks", async (req, res) => {
     if (deliveredPairs >= expectedPairs) {
       await store.updateProjectMapping(wxrksProjectUUID, { status: "completed" });
     }
-
-    res.json({ wxrksProjectUUID, workUnitUuid, resultsByLocale });
-  } catch (err) {
-    res.status(502).json({ error: err.response?.data?.message || err.message });
-  }
+  })().catch((err) => {
+    console.error(
+      `wxrks webhook background processing failed for project ${wxrksProjectUUID}, work unit ${workUnitUuid}:`,
+      err.response?.data?.message || err.message
+    );
+  });
 });
 
 /**
