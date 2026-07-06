@@ -30,10 +30,19 @@ async function listCollections() {
 }
 
 /**
- * Webflow's `locale` query param silently falls back to the primary locale
- * for any value it doesn't recognize -- it never errors. So callers must
- * only ever use tags from this real, registered list (never a hardcoded or
- * free-typed locale string).
+ * IMPORTANT (confirmed live + against Webflow's own docs): the CMS item
+ * endpoints do NOT accept a `locale` tag query/body param at all -- reads
+ * and writes are scoped exclusively by `cmsLocaleId` (a different id than
+ * the `tag` shown in Webflow's UI/site-locales response). Passing `locale`
+ * as a query param is silently ignored and always operates on the PRIMARY
+ * locale, for both GET and PATCH. A real production incident on this app's
+ * target site confirmed this: every "translated" push this session had
+ * actually been overwriting the item's PRIMARY content, not a secondary
+ * locale, because patchItemLocale used to send `?locale=X` instead of a
+ * resolved `cmsLocaleId`. Webflow's own "Update Items" doc states it
+ * plainly: "Items will only be updated in the primary locale, unless a
+ * cmsLocaleId is included in the request." Every caller must resolve a tag
+ * to its cmsLocaleId via resolveCmsLocaleId() before touching an item.
  */
 async function getSiteLocales() {
   const { data } = await client().get(`/sites/${siteId()}`);
@@ -48,6 +57,24 @@ async function getSiteLocales() {
       .filter((l) => l.enabled)
       .map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId })),
   };
+}
+
+// Cached for the process lifetime -- site locale config changes rarely, and
+// this avoids an extra GET /sites/:id round trip on every single item
+// read/write (some of which, like listAllItems, already loop over pages).
+let siteLocalesCache = null;
+
+async function resolveCmsLocaleId(tag) {
+  if (!tag) return undefined;
+  if (!siteLocalesCache) {
+    siteLocalesCache = await getSiteLocales();
+  }
+  if (siteLocalesCache.primary?.tag === tag) return siteLocalesCache.primary.cmsLocaleId;
+  const match = siteLocalesCache.secondary.find((l) => l.tag === tag);
+  if (!match) {
+    throw new Error(`"${tag}" is not a registered locale on this Webflow site`);
+  }
+  return match.cmsLocaleId;
 }
 
 /**
@@ -81,13 +108,14 @@ async function getCollection(collectionId) {
  * (Webflow caps each page at 100 items).
  */
 async function listAllItems(collectionId, { locale } = {}) {
+  const cmsLocaleId = await resolveCmsLocaleId(locale);
   const limit = 100;
   let offset = 0;
   let items = [];
 
   while (true) {
     const { data } = await client().get(`/collections/${collectionId}/items`, {
-      params: { locale, limit, offset },
+      params: { cmsLocaleId, limit, offset },
     });
     const page = data?.items || [];
     items = items.concat(page);
@@ -101,18 +129,25 @@ async function listAllItems(collectionId, { locale } = {}) {
 }
 
 async function getItem(collectionId, itemId, { locale } = {}) {
+  const cmsLocaleId = await resolveCmsLocaleId(locale);
   const { data } = await client().get(`/collections/${collectionId}/items/${itemId}`, {
-    params: { locale },
+    params: { cmsLocaleId },
   });
   return data;
 }
 
+/**
+ * Updates one locale's field data for an item. Uses the bulk "Update Items"
+ * endpoint (there is no single-item PATCH that accepts cmsLocaleId) with a
+ * single-element items array -- the single-item endpoint used previously
+ * silently ignored locale scoping entirely (see resolveCmsLocaleId's doc
+ * comment above).
+ */
 async function patchItemLocale(collectionId, itemId, locale, fieldData) {
-  const { data } = await client().patch(
-    `/collections/${collectionId}/items/${itemId}`,
-    { fieldData },
-    { params: { locale } }
-  );
+  const cmsLocaleId = await resolveCmsLocaleId(locale);
+  const { data } = await client().patch(`/collections/${collectionId}/items`, {
+    items: [{ id: itemId, cmsLocaleId, fieldData }],
+  });
   return data;
 }
 

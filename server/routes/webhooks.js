@@ -127,17 +127,31 @@ router.post("/wxrks", async (req, res) => {
     if (Object.keys(fieldData).length === 0) {
       resultsByLocale = [{ locale, error: "Downloaded translation had no matching fields" }];
     } else {
-      await webflow.patchItemLocale(webflowCollectionId, webflowItemId, locale, fieldData);
-      // Auto Sync loop-prevention: a live test proved the inbound Webflow
-      // webhook's cmsLocaleId can't tell us which locale this write landed
-      // on, so instead we mark that we JUST wrote this item at all -- the
-      // Auto Sync webhook checks this before reacting to any
-      // collection_item_changed/published event for the same item.
-      autoSyncSelfWrites.markSelfWrite(webflowCollectionId, webflowItemId);
-      if (autoPublish) {
-        await webflow.publishItems(webflowCollectionId, [webflowItemId]);
+      try {
+        await webflow.patchItemLocale(webflowCollectionId, webflowItemId, locale, fieldData);
+        // Auto Sync loop-prevention: a live test proved the inbound Webflow
+        // webhook's cmsLocaleId can't tell us which locale this write landed
+        // on, so instead we mark that we JUST wrote this item at all -- the
+        // Auto Sync webhook checks this before reacting to any
+        // collection_item_changed/published event for the same item.
+        autoSyncSelfWrites.markSelfWrite(webflowCollectionId, webflowItemId);
+        if (autoPublish) {
+          await webflow.publishItems(webflowCollectionId, [webflowItemId]);
+        }
+        resultsByLocale = [{ locale, fieldsUpdated: Object.keys(fieldData).length, published: autoPublish }];
+      } catch (err) {
+        // Webflow cannot create a new locale variant for a pre-existing item
+        // via the API at all (confirmed against Webflow's own docs) -- that
+        // locale must be added once, manually, in the CMS Designer panel
+        // before this PATCH can ever succeed for that item. Surface that
+        // plainly instead of a generic 404, since it's an action the user
+        // needs to take, not a bug to retry.
+        const isMissingLocaleVariant = err.response?.status === 404;
+        const message = isMissingLocaleVariant
+          ? `This item has no "${locale}" locale variant in Webflow yet. Add "${locale}" to this item once in Webflow's CMS Designer (Collection settings > Localization), then it'll sync automatically going forward.`
+          : err.response?.data?.message || err.message;
+        resultsByLocale = [{ locale, error: message }];
       }
-      resultsByLocale = [{ locale, fieldsUpdated: Object.keys(fieldData).length, published: autoPublish }];
     }
 
     const fieldsUpdated = resultsByLocale[0].fieldsUpdated || 0;
