@@ -47,6 +47,12 @@ const api = {
   getAutoSyncStatus: () => request("/sync/auto/status"),
   flushAutoSyncNow: () => request("/sync/auto/flush", { method: "POST" }),
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
+  getPages: () => request("/sync/pages/list"),
+  previewPagesBulkSync: () => request("/sync/pages/bulk", { method: "POST", body: JSON.stringify({ dryRun: true }) }),
+  syncPagesBulk: () => request("/sync/pages/bulk", { method: "POST", body: JSON.stringify({}) }),
+  getPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}`),
+  cancelPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}/cancel`, { method: "POST" }),
+  syncPagesItem: (pageIds) => request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds }) }),
 };
 
 export default api;

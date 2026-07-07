@@ -8,6 +8,7 @@ const linkClass = "font-medium text-brand-600 hover:text-brand-700 hover:underli
 export default function History() {
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
+  const [pages, setPages] = useState([]);
   const [orgUnits, setOrgUnits] = useState([]);
   const [timezone, setTimezone] = useState(undefined);
   const [error, setError] = useState(null);
@@ -16,12 +17,14 @@ export default function History() {
     Promise.all([
       api.getSyncHistory(),
       api.getCollections().catch(() => ({ collections: [] })),
+      api.getPages().catch(() => ({ pages: [] })),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
       api.getSettings().catch(() => null),
     ])
-      .then(([historyRes, collectionsRes, orgUnitsRes, settingsRes]) => {
+      .then(([historyRes, collectionsRes, pagesRes, orgUnitsRes, settingsRes]) => {
         setHistory(historyRes.history || []);
         setCollections(collectionsRes.collections || []);
+        setPages(pagesRes.pages || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
       })
@@ -39,6 +42,11 @@ export default function History() {
   function collectionName(id) {
     const c = collections.find((c) => c.id === id);
     return c ? c.displayName || c.singularName : id;
+  }
+
+  function pageName(id) {
+    const p = pages.find((p) => p.id === id);
+    return p ? p.title || p.slug : id;
   }
 
   function orgUnitName(uuid) {
@@ -99,8 +107,14 @@ export default function History() {
                   <td className="py-1 text-slate-800">{batch.targetLocales.join(", ")}</td>
                 </tr>
                 <tr>
-                  <td className="py-1 pr-4 font-medium text-slate-500">Collections</td>
-                  <td className="py-1 text-slate-800">{batch.collectionIds.map(collectionName).join(", ") || "—"}</td>
+                  <td className="py-1 pr-4 font-medium text-slate-500">
+                    {batch.mode?.startsWith("pages-") ? "Pages" : "Collections"}
+                  </td>
+                  <td className="py-1 text-slate-800">
+                    {batch.mode?.startsWith("pages-")
+                      ? batch.items.map((i) => pageName(i.webflowPageId)).join(", ") || "—"
+                      : batch.collectionIds.map(collectionName).join(", ") || "—"}
+                  </td>
                 </tr>
                 <tr>
                   <td className="py-1 pr-4 font-medium text-slate-500">Items</td>
@@ -128,7 +142,7 @@ export default function History() {
                   const errors = (update.resultsByItem || []).flatMap((item) =>
                     (item.resultsByLocale || [])
                       .filter((l) => l.error)
-                      .map((l) => `${item.webflowItemId} (${l.locale}): ${l.error}`)
+                      .map((l) => `${item.webflowPageId || item.webflowItemId} (${l.locale}): ${l.error}`)
                   );
                   return (
                     <table key={i} className="w-full rounded-md border border-slate-200 bg-slate-50 text-sm">

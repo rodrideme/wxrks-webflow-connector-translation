@@ -1,5 +1,6 @@
 const express = require("express");
 const webflow = require("../services/webflow");
+const webflowDom = require("../services/webflowDom");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
 const autoSyncSelfWrites = require("../services/autoSyncSelfWrites");
@@ -79,16 +80,23 @@ router.post("/wxrks", async (req, res) => {
     return res.status(404).json({ error: `No item found for file ${fileName} in project ${wxrksProjectUUID}` });
   }
 
-  const { webflowCollectionId, webflowItemId, resourceId, fieldKeys, wordCount } = batchItem;
+  const { entityType = "cmsItem", webflowCollectionId, webflowItemId, webflowPageId, resourceId, fieldKeys, wordCount } =
+    batchItem;
+  const isPage = entityType === "page";
 
   // Dedup: WORK_UNIT_TRANSLATION_FILE_READY and WORK_UNIT_STATUS_CHANGE/
   // DELIVERED can both fire for the same delivery -- skip if this
-  // (item, locale) already has a successful push recorded.
+  // (item, locale) already has a successful push recorded. Matches on
+  // webflowPageId for pages, webflowItemId for CMS items -- the two entity
+  // types never share a batch (see project_mappings' `mode` values), so
+  // there's no risk of a page and item colliding on this check.
   const alreadyPushed = mapping.updates.some(
     (u) =>
       u.targetLocales.includes(locale) &&
       (u.resultsByItem || []).some(
-        (r) => r.webflowItemId === webflowItemId && (r.resultsByLocale || []).some((rl) => rl.locale === locale && rl.fieldsUpdated > 0)
+        (r) =>
+          (isPage ? r.webflowPageId === webflowPageId : r.webflowItemId === webflowItemId) &&
+          (r.resultsByLocale || []).some((rl) => rl.locale === locale && rl.fieldsUpdated > 0)
       )
   );
   if (alreadyPushed) {
@@ -118,7 +126,8 @@ router.post("/wxrks", async (req, res) => {
       // breaking every delivery for any item whose fieldKeys included
       // "slug", which filterTranslatableFields no longer sends to wxrks for
       // NEW syncs -- this guard covers batches uploaded before that fix).
-      if (fieldKey === "slug") continue;
+      // N/A for pages (fieldKeys holds DOM node ids there, never "slug").
+      if (!isPage && fieldKey === "slug") continue;
       const value = translation?.[fieldKey];
       if (value !== undefined) fieldData[fieldKey] = value;
     }
@@ -126,6 +135,13 @@ router.post("/wxrks", async (req, res) => {
     let resultsByLocale;
     if (Object.keys(fieldData).length === 0) {
       resultsByLocale = [{ locale, error: "Downloaded translation had no matching fields" }];
+    } else if (isPage) {
+      try {
+        await webflow.updatePageDom(webflowPageId, locale, webflowDom.buildNodeUpdates(fieldData));
+        resultsByLocale = [{ locale, fieldsUpdated: Object.keys(fieldData).length }];
+      } catch (err) {
+        resultsByLocale = [{ locale, error: err.response?.data?.message || err.message }];
+      }
     } else {
       try {
         await webflow.patchItemLocale(webflowCollectionId, webflowItemId, locale, fieldData);
@@ -155,12 +171,15 @@ router.post("/wxrks", async (req, res) => {
     }
 
     const fieldsUpdated = resultsByLocale[0].fieldsUpdated || 0;
+    const resultEntry = isPage
+      ? { webflowPageId, resultsByLocale }
+      : { webflowCollectionId, webflowItemId, resultsByLocale };
     const updatedMapping = await store.addWebflowUpdateToProjectMapping(wxrksProjectUUID, {
       targetLocales: [locale],
       itemsUpdated: fieldsUpdated > 0 ? 1 : 0,
       wordCount: fieldsUpdated > 0 ? wordCount : 0,
       autoPublish,
-      resultsByItem: [{ webflowCollectionId, webflowItemId, resultsByLocale }],
+      resultsByItem: [resultEntry],
     });
 
     // wxrks fires this per (work unit, locale) rather than once for the
@@ -170,7 +189,7 @@ router.post("/wxrks", async (req, res) => {
     const expectedPairs = mapping.items.length * mapping.targetLocales.length;
     const deliveredPairs = new Set(
       updatedMapping.updates.flatMap((u) =>
-        (u.resultsByItem || []).flatMap((r) => u.targetLocales.map((l) => `${r.webflowItemId}:${l}`))
+        (u.resultsByItem || []).flatMap((r) => u.targetLocales.map((l) => `${r.webflowPageId || r.webflowItemId}:${l}`))
       )
     ).size;
     if (deliveredPairs >= expectedPairs) {

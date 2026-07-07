@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../services/api.js";
 import SettingsGeneral from "./settings/SettingsGeneral.jsx";
 import SettingsCollections from "./settings/SettingsCollections.jsx";
+import SettingsPages from "./settings/SettingsPages.jsx";
 import SettingsAutoSync from "./settings/SettingsAutoSync.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 
@@ -12,6 +13,7 @@ function baseLang(code) {
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "collections", label: "Collections" },
+  { id: "pages", label: "Pages" },
   { id: "autosync", label: "Auto Sync" },
   { id: "keys", label: "Keys" },
 ];
@@ -175,6 +177,8 @@ export default function Settings() {
         workUnitNamePattern: settings.workUnitNamePattern,
         timezone: settings.timezone,
         autoSync: settings.autoSync,
+        pages: settings.pages,
+        pagesWorkUnitNamePattern: settings.pagesWorkUnitNamePattern,
       });
       setSettings((prev) => ({ ...prev, ...updated }));
       setSaved(true);
@@ -245,6 +249,10 @@ export default function Settings() {
                 })
               }
             />
+          )}
+
+          {section === "pages" && (
+            <SettingsPages settings={settings} markDirty={markDirty} timezone={settings.timezone} />
           )}
 
           {section === "autosync" && <SettingsAutoSync settings={settings} markDirty={markDirty} />}

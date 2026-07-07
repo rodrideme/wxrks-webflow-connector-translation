@@ -1,37 +1,32 @@
 const webflow = require("./webflow");
+const webflowDom = require("./webflowDom");
 const wxrks = require("./wxrks");
 const store = require("../store");
 
 /**
- * Adds one Webflow item to an *already-created* wxrks project as a single
- * resource (all its translatable fields bundled into one JSON file) + one
- * work unit, and records it in that project's batch mapping. A whole sync
- * run (Full Sync, a multi-item Item Sync selection, or an Auto Sync flush)
- * shares a single wxrks project rather than creating one project per item,
- * and each item gets exactly one work unit rather than one per field.
+ * Content-agnostic core shared by every entity kind (CMS item, page, and
+ * later component): uploads a flat { key: translatableText } dict as one
+ * wxrks resource + work unit, and records it in the batch's project
+ * mapping. Callers do the entity-specific work of extracting that flat
+ * dict and building the mapping fields (entityType + whichever id(s)
+ * apply) before calling this.
  */
-async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales, namePattern }) {
-  const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
-  const exclusions = await store.getFieldExclusions(collection.id);
-  const translatableFields = webflow.filterTranslatableFields(item.fieldData, fieldTypeBySlug, exclusions);
-
-  if (Object.keys(translatableFields).length === 0) {
-    return { skipped: true, reason: "no translatable fields" };
+async function syncTranslatableContentIntoBatch({ projectUuid, translatableContent, filename, targetLocales, mappingFields }) {
+  if (Object.keys(translatableContent).length === 0) {
+    return { skipped: true, reason: "no translatable content" };
   }
 
-  const filename = webflow.buildResourceFileName(namePattern, { collection, item });
   const resource = await wxrks.createResource(projectUuid, { name: filename });
-  const fileContent = Buffer.from(JSON.stringify(translatableFields), "utf-8");
+  const fileContent = Buffer.from(JSON.stringify(translatableContent), "utf-8");
   await wxrks.uploadResourceContent(projectUuid, resource.resourceId, fileContent, filename);
 
   await wxrks.createWorkUnitsBulk(projectUuid, [{ resourceId: resource.resourceId, targetLocales }]);
 
-  const fieldKeys = Object.keys(translatableFields);
-  const wordCount = webflow.countWords(translatableFields);
+  const fieldKeys = Object.keys(translatableContent);
+  const wordCount = webflow.countWords(translatableContent);
 
   await store.addItemToProjectMapping(projectUuid, {
-    webflowCollectionId: collection.id,
-    webflowItemId: item.id,
+    ...mappingFields,
     resourceId: resource.resourceId,
     resourceFileName: filename,
     fieldKeys,
@@ -39,6 +34,49 @@ async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales,
   });
 
   return { skipped: false, fieldsCount: fieldKeys.length, wordCount };
+}
+
+/**
+ * Adds one Webflow CMS item to an *already-created* wxrks project as a
+ * single resource (all its translatable fields bundled into one JSON
+ * file) + one work unit. A whole sync run (Full Sync, a multi-item Item
+ * Sync selection, or an Auto Sync flush) shares a single wxrks project
+ * rather than creating one project per item, and each item gets exactly
+ * one work unit rather than one per field.
+ */
+async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales, namePattern }) {
+  const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
+  const exclusions = await store.getFieldExclusions(collection.id);
+  const translatableFields = webflow.filterTranslatableFields(item.fieldData, fieldTypeBySlug, exclusions);
+  const filename = webflow.buildResourceFileName(namePattern, { collection, item });
+
+  return syncTranslatableContentIntoBatch({
+    projectUuid,
+    translatableContent: translatableFields,
+    filename,
+    targetLocales,
+    mappingFields: { entityType: "cmsItem", webflowCollectionId: collection.id, webflowItemId: item.id },
+  });
+}
+
+/**
+ * Adds one Webflow static page to an already-created wxrks project.
+ * `nodes` is the page's full primary-locale DOM node list (pre-fetched by
+ * the caller via webflow.getPageDom(page.id, {locale: sourceLocale}), same
+ * pattern as syncItemIntoBatch receiving a pre-fetched `item`). v1 scope:
+ * only `type: "text"` nodes are extracted (see webflowDom.js).
+ */
+async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern }) {
+  const translatableNodes = webflowDom.extractTextNodes(nodes);
+  const filename = webflow.buildPageResourceFileName(namePattern, { page });
+
+  return syncTranslatableContentIntoBatch({
+    projectUuid,
+    translatableContent: translatableNodes,
+    filename,
+    targetLocales,
+    mappingFields: { entityType: "page", webflowPageId: page.id },
+  });
 }
 
 /**
@@ -54,4 +92,4 @@ function requestBatchApproval(projectUuid) {
     .catch((err) => console.error(`Auto-approve failed for wxrks project ${projectUuid}:`, err.message));
 }
 
-module.exports = { syncItemIntoBatch, requestBatchApproval };
+module.exports = { syncItemIntoBatch, syncPageIntoBatch, requestBatchApproval };

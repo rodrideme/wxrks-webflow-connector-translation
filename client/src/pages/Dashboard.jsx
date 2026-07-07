@@ -116,7 +116,8 @@ export default function Dashboard() {
               <li key={p.wxrksProjectUUID} className="rounded-md border border-slate-200 bg-slate-50 p-3">
                 <div className="font-mono text-xs text-slate-500">{p.wxrksProjectUUID}</div>
                 <div className="mt-1">
-                  {p.mode} batch, {p.items.length} item(s) across {p.collectionIds.length} collection(s) →{" "}
+                  {p.mode} batch, {p.items.length} item(s){" "}
+                  {p.mode?.startsWith("pages-") ? "" : `across ${p.collectionIds.length} collection(s) `}→{" "}
                   {p.targetLocales.join(", ")}{" "}
                   <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
                     {p.wxrksStatus}

@@ -14,6 +14,7 @@ const tabClass = (active) =>
   (active ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50");
 
 export default function SyncPanel() {
+  const [entityType, setEntityType] = useState("cms");
   const [mode, setMode] = useState("full");
   const [translateFromDate, setTranslateFromDate] = useState("");
 
@@ -39,6 +40,19 @@ export default function SyncPanel() {
   const [flushError, setFlushError] = useState(null);
   const autoSyncPollRef = useRef(null);
 
+  // Pages sync -- mirrors the CMS state above, but Pages only supports
+  // Full/Item (no Auto Sync -- deferred, see the plan's "Deferred" section).
+  const [pagesMode, setPagesMode] = useState("full");
+  const [pages, setPages] = useState([]);
+  const [selectedPageIds, setSelectedPageIds] = useState([]);
+  const [pagesPreview, setPagesPreview] = useState(null);
+  const [pagesPreviewing, setPagesPreviewing] = useState(false);
+  const [pagesJob, setPagesJob] = useState(null);
+  const pagesPollRef = useRef(null);
+  const [pagesRunning, setPagesRunning] = useState(false);
+  const [pagesResult, setPagesResult] = useState(null);
+  const [pagesError, setPagesError] = useState(null);
+
   useEffect(() => {
     api.getCollections().then((res) => setCollections(res.collections || []));
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
@@ -48,7 +62,10 @@ export default function SyncPanel() {
         api.getOrgUnitResources(res.orgUnitUUID).then(setOrgUnitResources).catch(() => {});
       }
     });
-    return () => clearInterval(pollRef.current);
+    return () => {
+      clearInterval(pollRef.current);
+      clearInterval(pagesPollRef.current);
+    };
   }, []);
 
   function orgUnitName(uuid) {
@@ -75,6 +92,11 @@ export default function SyncPanel() {
     autoSyncPollRef.current = setInterval(poll, POLL_INTERVAL_MS * 4);
     return () => clearInterval(autoSyncPollRef.current);
   }, [mode]);
+
+  useEffect(() => {
+    if (entityType !== "pages" || pagesMode !== "item" || pages.length > 0) return;
+    api.getPages().then((res) => setPages(res.pages || [])).catch((err) => setPagesError(err.message));
+  }, [entityType, pagesMode]);
 
   async function flushAutoSyncNow() {
     setFlushing(true);
@@ -174,6 +196,88 @@ export default function SyncPanel() {
     }
   }
 
+  function togglePage(pageId) {
+    setSelectedPageIds((prev) => (prev.includes(pageId) ? prev.filter((id) => id !== pageId) : [...prev, pageId]));
+  }
+
+  function toggleAllPages() {
+    setSelectedPageIds((prev) => (prev.length === pages.length ? [] : pages.map((p) => p.id)));
+  }
+
+  async function previewPagesFullSync() {
+    setPagesPreviewing(true);
+    setPagesError(null);
+    try {
+      const res = await api.previewPagesBulkSync();
+      setPagesPreview(res);
+    } catch (err) {
+      setPagesError(err.message);
+    } finally {
+      setPagesPreviewing(false);
+    }
+  }
+
+  function pollPagesJob(jobId) {
+    pagesPollRef.current = setInterval(async () => {
+      try {
+        const latest = await api.getPagesBulkSyncJob(jobId);
+        setPagesJob(latest);
+        if (latest.status !== "running") {
+          clearInterval(pagesPollRef.current);
+        }
+      } catch (err) {
+        clearInterval(pagesPollRef.current);
+        setPagesError(err.message);
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  async function launchPagesFullSync() {
+    setPagesError(null);
+    setPagesJob(null);
+    try {
+      const res = await api.syncPagesBulk();
+      setPagesJob({
+        id: res.jobId,
+        total: res.total,
+        processed: 0,
+        status: "running",
+        results: [],
+        wxrksProjectUUID: res.wxrksProjectUUID,
+      });
+      pollPagesJob(res.jobId);
+    } catch (err) {
+      setPagesError(err.message);
+    }
+  }
+
+  async function cancelPagesFullSync() {
+    if (!pagesJob) return;
+    try {
+      await api.cancelPagesBulkSyncJob(pagesJob.id);
+    } catch (err) {
+      setPagesError(err.message);
+    }
+  }
+
+  async function launchPagesItemSync() {
+    if (selectedPageIds.length === 0) {
+      setPagesError("Select at least one page.");
+      return;
+    }
+    setPagesRunning(true);
+    setPagesError(null);
+    setPagesResult(null);
+    try {
+      const res = await api.syncPagesItem(selectedPageIds);
+      setPagesResult(res);
+    } catch (err) {
+      setPagesError(err.message);
+    } finally {
+      setPagesRunning(false);
+    }
+  }
+
   return (
     <div>
       <h1 className="mb-6 text-2xl font-semibold text-slate-900">Sync Panel</h1>
@@ -211,6 +315,17 @@ export default function SyncPanel() {
         </section>
       )}
 
+      <div className="mb-3 flex gap-2">
+        <button className={tabClass(entityType === "cms")} onClick={() => setEntityType("cms")}>
+          CMS Items
+        </button>
+        <button className={tabClass(entityType === "pages")} onClick={() => setEntityType("pages")}>
+          Pages
+        </button>
+      </div>
+
+      {entityType === "cms" && (
+        <>
       <div className="mb-5 flex gap-2">
         <button className={tabClass(mode === "full")} onClick={() => setMode("full")}>
           Full Sync
@@ -532,6 +647,175 @@ export default function SyncPanel() {
             {JSON.stringify(result.results, null, 2)}
           </pre>
         </section>
+      )}
+        </>
+      )}
+
+      {entityType === "pages" && (
+        <>
+          <div className="mb-5 flex gap-2">
+            <button className={tabClass(pagesMode === "full")} onClick={() => setPagesMode("full")}>
+              Full Sync
+            </button>
+            <button className={tabClass(pagesMode === "item")} onClick={() => setPagesMode("item")}>
+              Item Sync
+            </button>
+          </div>
+
+          {pagesMode === "full" && (
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-3 text-base font-semibold text-slate-900">Pages Full Sync</h2>
+              <p className="text-sm text-slate-500">Syncs every enabled static page (see Settings → Pages).</p>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={previewPagesFullSync}
+                  disabled={pagesPreviewing || pagesJob?.status === "running"}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pagesPreviewing ? "Checking..." : "Preview"}
+                </button>
+                <button
+                  onClick={launchPagesFullSync}
+                  disabled={!pagesPreview || pagesPreview.totalPages === 0 || pagesJob?.status === "running"}
+                  className="rounded-md bg-brand-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Launch Pages Full Sync
+                </button>
+              </div>
+
+              {pagesPreview && (
+                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  {pagesPreview.totalPages === 0 ? (
+                    <p>No pages match the current filter — nothing to sync.</p>
+                  ) : (
+                    <p>
+                      This will create <strong>one wxrks project</strong> containing{" "}
+                      <strong>{pagesPreview.totalPages}</strong> page(s). Estimated words to translate:{" "}
+                      <strong>{pagesPreview.estimatedWordCount?.toLocaleString()}</strong>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {pagesJob && (
+                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full bg-green-600 transition-all duration-300"
+                      style={{ width: `${pagesJob.total ? Math.round((pagesJob.processed / pagesJob.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-slate-700">
+                    {pagesJob.processed} / {pagesJob.total} processed — <strong>{pagesJob.status}</strong>
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                    {pagesJob.wxrksProjectUUID && <li>wxrks project: {pagesJob.wxrksProjectUUID}</li>}
+                    {pagesJob.targetLocales?.length > 0 && <li>Target locales: {pagesJob.targetLocales.join(", ")}</li>}
+                    {pagesJob.results?.length > 0 && (
+                      <li>
+                        Estimated words:{" "}
+                        {pagesJob.results.reduce((sum, r) => sum + (r.wordCount || 0), 0).toLocaleString()}
+                      </li>
+                    )}
+                  </ul>
+                  {pagesJob.status === "running" && (
+                    <button
+                      onClick={cancelPagesFullSync}
+                      className="mt-3 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  {pagesJob.status !== "running" && pagesJob.results.length > 0 && (
+                    <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+                      {JSON.stringify(pagesJob.results, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {pagesMode === "item" && (
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-3 text-base font-semibold text-slate-900">Pages Item Sync</h2>
+
+              {pages.length > 0 && (
+                <div className="mt-2 max-h-96 overflow-auto rounded-md border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="w-8 px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedPageIds.length === pages.length}
+                            onChange={toggleAllPages}
+                            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                          />
+                        </th>
+                        <th className="px-3 py-2">Page</th>
+                        <th className="px-3 py-2">Slug</th>
+                        <th className="px-3 py-2">Last updated</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {pages.map((page) => (
+                        <tr key={page.id} className="hover:bg-slate-50">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedPageIds.includes(page.id)}
+                              onChange={() => togglePage(page.id)}
+                              className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-slate-900">{page.title}</td>
+                          <td className="px-3 py-2 text-slate-600">{page.slug}</td>
+                          <td className="px-3 py-2 text-slate-600">{formatDateOnly(page.lastUpdated, settings?.timezone)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {selectedPageIds.length > 0 && (
+                <p className="mt-3 text-sm text-slate-600">
+                  This will create <strong>one wxrks project</strong> containing{" "}
+                  <strong>{selectedPageIds.length}</strong> page(s).
+                </p>
+              )}
+
+              <button
+                onClick={launchPagesItemSync}
+                disabled={pagesRunning || selectedPageIds.length === 0}
+                className="mt-4 rounded-md bg-brand-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {pagesRunning ? "Running..." : "Launch Pages Item Sync"}
+              </button>
+            </section>
+          )}
+
+          {pagesError && <p className="mt-4 text-sm font-medium text-red-600">Error: {pagesError}</p>}
+
+          {pagesResult && (
+            <section className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-3 text-base font-semibold text-slate-900">Result</h2>
+              <ul className="space-y-1 text-sm text-slate-700">
+                <li>wxrks project: {pagesResult.wxrksProjectUUID}</li>
+                <li>Target locales: {pagesResult.targetLocales?.join(", ")}</li>
+                <li>
+                  Pages: {pagesResult.itemsSynced} synced, {pagesResult.skipped} skipped, {pagesResult.errors} error(s)
+                </li>
+                <li>Estimated words: {pagesResult.estimatedWordCount?.toLocaleString()}</li>
+              </ul>
+              <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+                {JSON.stringify(pagesResult.results, null, 2)}
+              </pre>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

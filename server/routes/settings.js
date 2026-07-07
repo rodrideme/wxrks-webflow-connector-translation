@@ -60,6 +60,8 @@ router.put("/", async (req, res) => {
     workUnitNamePattern,
     timezone,
     autoSync,
+    pages,
+    pagesWorkUnitNamePattern,
   } = req.body || {};
   const patch = {};
   if (sourceLocale !== undefined) patch.sourceLocale = sourceLocale;
@@ -71,6 +73,8 @@ router.put("/", async (req, res) => {
   if (enabledCollectionIds !== undefined) patch.enabledCollectionIds = enabledCollectionIds;
   if (workUnitNamePattern !== undefined) patch.workUnitNamePattern = workUnitNamePattern;
   if (timezone !== undefined) patch.timezone = timezone;
+  if (pages !== undefined) patch.pages = pages;
+  if (pagesWorkUnitNamePattern !== undefined) patch.pagesWorkUnitNamePattern = pagesWorkUnitNamePattern;
 
   try {
     const before = await store.getSettings();

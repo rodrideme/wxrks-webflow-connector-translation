@@ -8,6 +8,7 @@ const db = require("./db");
 const store = require("./store");
 const collectionsRouter = require("./routes/collections");
 const syncRouter = require("./routes/sync");
+const syncPagesRouter = require("./routes/syncPages");
 const webhooksRouter = require("./routes/webhooks");
 const settingsRouter = require("./routes/settings");
 const configRouter = require("./routes/config");
@@ -42,6 +43,7 @@ app.get("/api/health", (req, res) => res.json({ status: "ok", commit: deployedCo
 app.use("/api/collections", collectionsRouter);
 app.get("/api/backlog", collectionsRouter.backlogHandler);
 app.use("/api/sync", syncRouter);
+app.use("/api/sync/pages", syncPagesRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/config", configRouter);
