@@ -38,6 +38,8 @@ export default function SyncPanel() {
   const [error, setError] = useState(null);
 
   const [autoSyncStatus, setAutoSyncStatus] = useState(null);
+  const [flushing, setFlushing] = useState(false);
+  const [flushError, setFlushError] = useState(null);
   const autoSyncPollRef = useRef(null);
 
   useEffect(() => {
@@ -76,6 +78,20 @@ export default function SyncPanel() {
     autoSyncPollRef.current = setInterval(poll, POLL_INTERVAL_MS * 4);
     return () => clearInterval(autoSyncPollRef.current);
   }, [mode]);
+
+  async function flushAutoSyncNow() {
+    setFlushing(true);
+    setFlushError(null);
+    try {
+      await api.flushAutoSyncNow();
+      const latest = await api.getAutoSyncStatus();
+      setAutoSyncStatus(latest);
+    } catch (err) {
+      setFlushError(err.message);
+    } finally {
+      setFlushing(false);
+    }
+  }
 
   function toggleItem(itemId) {
     setSelectedItemIds((prev) =>
@@ -440,20 +456,51 @@ export default function SyncPanel() {
                 </span>
               </div>
               <ul className="mt-3 space-y-1 text-sm text-slate-700">
-                <li>
-                  Pending items queued: <strong>{autoSyncStatus.pendingCount}</strong>
-                  {autoSyncStatus.pendingSince && (
-                    <> (oldest since {new Date(autoSyncStatus.pendingSince).toLocaleString()})</>
-                  )}
-                </li>
-                <li>Flushes per day: {autoSyncStatus.flushesPerDay}</li>
-                {autoSyncStatus.nextFlushEstimateAt && (
-                  <li>Next flush (estimate): {new Date(autoSyncStatus.nextFlushEstimateAt).toLocaleString()}</li>
+                <li>Flush times (UTC): {autoSyncStatus.flushTimes?.join(", ")}</li>
+                {autoSyncStatus.nextFlushAt && (
+                  <li>Next flush: {new Date(autoSyncStatus.nextFlushAt).toLocaleString()}</li>
                 )}
                 {autoSyncStatus.webhookLastEventAt && (
                   <li>Last webhook event: {new Date(autoSyncStatus.webhookLastEventAt).toLocaleString()}</li>
                 )}
               </ul>
+
+              <div className="mt-4 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Pending queue ({autoSyncStatus.pendingCount})
+                </h3>
+                <button
+                  onClick={flushAutoSyncNow}
+                  disabled={flushing || autoSyncStatus.pendingCount === 0}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {flushing ? "Flushing..." : "Flush now"}
+                </button>
+              </div>
+              {flushError && <p className="mt-1 text-xs font-medium text-red-600">{flushError}</p>}
+
+              {autoSyncStatus.pendingItems?.length > 0 && (
+                <div className="mt-2 max-h-64 overflow-auto rounded-md border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2">Item</th>
+                        <th className="px-3 py-2">Collection</th>
+                        <th className="px-3 py-2">Queued at</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {autoSyncStatus.pendingItems.map((p) => (
+                        <tr key={`${p.collectionId}:${p.itemId}`}>
+                          <td className="px-3 py-2 text-slate-900">{p.itemName}</td>
+                          <td className="px-3 py-2 text-slate-600">{p.collectionName}</td>
+                          <td className="px-3 py-2 text-slate-600">{new Date(p.enqueuedAt).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               {autoSyncStatus.webhookStatus !== "active" && (
                 <p className="mt-3 text-sm text-amber-700">
                   The Webflow webhook isn't active -- go to{" "}

@@ -86,15 +86,15 @@ router.put("/", async (req, res) => {
 
       if (!wasEnabled && nowEnabled) {
         await autoSyncWebhook.ensureWebhookRegistered();
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushesPerDay);
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes);
         autoSyncReconciliation.startReconciliationLoop();
       } else if (wasEnabled && !nowEnabled) {
         await autoSyncWebhook.teardownWebhook();
         autoSyncQueue.stopFlushLoop();
         autoSyncReconciliation.stopReconciliationLoop();
-      } else if (nowEnabled && before.autoSync.flushesPerDay !== updated.autoSync.flushesPerDay) {
+      } else if (nowEnabled && JSON.stringify(before.autoSync.flushTimes) !== JSON.stringify(updated.autoSync.flushTimes)) {
         // Flush-schedule edit takes effect immediately, no restart needed.
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushesPerDay);
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes);
       }
     }
 

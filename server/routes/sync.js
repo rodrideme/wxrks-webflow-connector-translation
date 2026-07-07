@@ -268,24 +268,39 @@ router.get("/status", async (req, res) => {
 
 /**
  * GET /api/sync/auto/status
- * Live status for the Sync Panel's Auto Sync tab -- pending queue size,
- * when it was first queued, the flush schedule, and webhook health.
+ * Live status for the Sync Panel's Auto Sync tab -- the actual queued
+ * items (not just a count), the exact next scheduled flush time, and
+ * webhook health.
  */
 router.get("/auto/status", async (req, res) => {
   try {
     const { autoSync } = await store.getSettings();
-    const lastFlush = autoSyncQueue.lastFlushAt();
-    const intervalMs = (24 / autoSync.flushesPerDay) * 60 * 60 * 1000;
     res.json({
       enabled: autoSync.enabled,
-      flushesPerDay: autoSync.flushesPerDay,
+      flushTimes: autoSync.flushTimes,
       pendingCount: autoSyncQueue.pendingCount(),
       pendingSince: autoSyncQueue.pendingSince(),
-      nextFlushEstimateAt: autoSync.enabled && lastFlush ? new Date(new Date(lastFlush).getTime() + intervalMs).toISOString() : null,
+      pendingItems: autoSyncQueue.pendingItems(),
+      nextFlushAt: autoSync.enabled ? autoSyncQueue.nextFlushAt(autoSync.flushTimes) : null,
       webhookStatus: autoSync.webhook.status,
       webhookRegisteredAt: autoSync.webhook.registeredAt,
       webhookLastEventAt: autoSync.webhook.lastEventAt,
     });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/sync/auto/flush
+ * Manual "flush now" for the Sync Panel's Auto Sync tab -- runs the same
+ * flush() the scheduled times trigger, immediately, without waiting for the
+ * next scheduled time. A no-op (not an error) if the queue is empty.
+ */
+router.post("/auto/flush", async (req, res) => {
+  try {
+    await autoSyncQueue.flush();
+    res.json({ flushed: true, pendingCount: autoSyncQueue.pendingCount() });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

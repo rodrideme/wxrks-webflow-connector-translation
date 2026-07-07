@@ -35,7 +35,10 @@ const DEFAULT_SETTINGS = {
   // sync, auto sync, both, or neither.
   autoSync: {
     enabled: false,
-    flushesPerDay: 2, // fixed-interval flush window = 24/flushesPerDay hours
+    // Exact UTC clock times ("HH:mm") the queued batch flushes at each day --
+    // not just an interval count, so the user can see and edit precisely
+    // when it happens rather than an opaque "every N hours" cadence.
+    flushTimes: ["00:00", "12:00"],
     allCollectionsEnabled: false,
     enabledCollectionIds: [],
     // { [collectionId]: AutoSyncCondition[] }, ALL conditions must match (AND)

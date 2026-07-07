@@ -45,6 +45,7 @@ const api = {
       body: JSON.stringify({ conditions }),
     }),
   getAutoSyncStatus: () => request("/sync/auto/status"),
+  flushAutoSyncNow: () => request("/sync/auto/flush", { method: "POST" }),
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
 };
 
