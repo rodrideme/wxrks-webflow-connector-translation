@@ -53,6 +53,14 @@ const api = {
   getPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}`),
   cancelPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}/cancel`, { method: "POST" }),
   syncPagesItem: (pageIds) => request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds }) }),
+  getComponents: () => request("/sync/components/list"),
+  previewComponentsBulkSync: () =>
+    request("/sync/components/bulk", { method: "POST", body: JSON.stringify({ dryRun: true }) }),
+  syncComponentsBulk: () => request("/sync/components/bulk", { method: "POST", body: JSON.stringify({}) }),
+  getComponentsBulkSyncJob: (jobId) => request(`/sync/components/bulk/${jobId}`),
+  cancelComponentsBulkSyncJob: (jobId) => request(`/sync/components/bulk/${jobId}/cancel`, { method: "POST" }),
+  syncComponentsItem: (componentIds) =>
+    request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds }) }),
 };
 
 export default api;

@@ -61,6 +61,18 @@ export default function SyncPanel() {
   const [pagesResult, setPagesResult] = useState(null);
   const [pagesError, setPagesError] = useState(null);
 
+  // Components sync -- mirrors Pages' state, same Bulk/Item-only scope.
+  const [componentsMode, setComponentsMode] = useState("bulk");
+  const [components, setComponents] = useState([]);
+  const [selectedComponentIds, setSelectedComponentIds] = useState([]);
+  const [componentsPreview, setComponentsPreview] = useState(null);
+  const [componentsPreviewing, setComponentsPreviewing] = useState(false);
+  const [componentsJob, setComponentsJob] = useState(null);
+  const componentsPollRef = useRef(null);
+  const [componentsRunning, setComponentsRunning] = useState(false);
+  const [componentsResult, setComponentsResult] = useState(null);
+  const [componentsError, setComponentsError] = useState(null);
+
   useEffect(() => {
     api.getCollections().then((res) => setCollections(res.collections || []));
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
@@ -73,6 +85,7 @@ export default function SyncPanel() {
     return () => {
       clearInterval(pollRef.current);
       clearInterval(pagesPollRef.current);
+      clearInterval(componentsPollRef.current);
     };
   }, []);
 
@@ -105,6 +118,11 @@ export default function SyncPanel() {
     if (entityType !== "pages" || pagesMode !== "item" || pages.length > 0) return;
     api.getPages().then((res) => setPages(res.pages || [])).catch((err) => setPagesError(err.message));
   }, [entityType, pagesMode]);
+
+  useEffect(() => {
+    if (entityType !== "components" || componentsMode !== "item" || components.length > 0) return;
+    api.getComponents().then((res) => setComponents(res.components || [])).catch((err) => setComponentsError(err.message));
+  }, [entityType, componentsMode]);
 
   async function flushAutoSyncNow() {
     setFlushing(true);
@@ -286,12 +304,100 @@ export default function SyncPanel() {
     }
   }
 
+  function toggleComponent(componentId) {
+    setSelectedComponentIds((prev) =>
+      prev.includes(componentId) ? prev.filter((id) => id !== componentId) : [...prev, componentId]
+    );
+  }
+
+  function toggleAllComponents() {
+    setSelectedComponentIds((prev) => (prev.length === components.length ? [] : components.map((c) => c.id)));
+  }
+
+  async function previewComponentsBulkSync() {
+    setComponentsPreviewing(true);
+    setComponentsError(null);
+    try {
+      const res = await api.previewComponentsBulkSync();
+      setComponentsPreview(res);
+    } catch (err) {
+      setComponentsError(err.message);
+    } finally {
+      setComponentsPreviewing(false);
+    }
+  }
+
+  function pollComponentsJob(jobId) {
+    componentsPollRef.current = setInterval(async () => {
+      try {
+        const latest = await api.getComponentsBulkSyncJob(jobId);
+        setComponentsJob(latest);
+        if (latest.status !== "running") {
+          clearInterval(componentsPollRef.current);
+        }
+      } catch (err) {
+        clearInterval(componentsPollRef.current);
+        setComponentsError(err.message);
+      }
+    }, POLL_INTERVAL_MS);
+  }
+
+  async function launchComponentsBulkSync() {
+    setComponentsError(null);
+    setComponentsJob(null);
+    try {
+      const res = await api.syncComponentsBulk();
+      setComponentsJob({
+        id: res.jobId,
+        total: res.total,
+        processed: 0,
+        status: "running",
+        results: [],
+        wxrksProjectUUID: res.wxrksProjectUUID,
+      });
+      pollComponentsJob(res.jobId);
+    } catch (err) {
+      setComponentsError(err.message);
+    }
+  }
+
+  async function cancelComponentsBulkSync() {
+    if (!componentsJob) return;
+    try {
+      await api.cancelComponentsBulkSyncJob(componentsJob.id);
+    } catch (err) {
+      setComponentsError(err.message);
+    }
+  }
+
+  async function launchComponentsItemSync() {
+    if (selectedComponentIds.length === 0) {
+      setComponentsError("Select at least one component.");
+      return;
+    }
+    setComponentsRunning(true);
+    setComponentsError(null);
+    setComponentsResult(null);
+    try {
+      const res = await api.syncComponentsItem(selectedComponentIds);
+      setComponentsResult(res);
+    } catch (err) {
+      setComponentsError(err.message);
+    } finally {
+      setComponentsRunning(false);
+    }
+  }
+
   const cmsTabs = [
     { value: "bulk", label: "Bulk Sync" },
     { value: "item", label: "Item Sync" },
     { value: "auto", label: "Auto Sync" },
   ];
   const pagesTabs = [
+    { value: "bulk", label: "Bulk Sync" },
+    { value: "item", label: "Item Sync" },
+  ];
+  const componentsTabs = [
     { value: "bulk", label: "Bulk Sync" },
     { value: "item", label: "Item Sync" },
   ];
@@ -304,6 +410,7 @@ export default function SyncPanel() {
           options={[
             { value: "cms", label: "CMS Items" },
             { value: "pages", label: "Pages" },
+            { value: "components", label: "Components" },
           ]}
           value={entityType}
           onChange={setEntityType}
@@ -824,6 +931,194 @@ export default function SyncPanel() {
                 <summary className="cursor-pointer text-xs font-medium text-ink-faint">Raw results</summary>
                 <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface-sunken p-3 text-xs text-ink-soft">
                   {JSON.stringify(pagesResult.results, null, 2)}
+                </pre>
+              </details>
+            </Card>
+          )}
+        </>
+      )}
+
+      {entityType === "components" && (
+        <>
+          <UnderlineTabs options={componentsTabs} value={componentsMode} onChange={setComponentsMode} className="mb-5" />
+
+          {componentsMode === "bulk" && (
+            <Card accent>
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-accent-subtle p-4">
+                <div>
+                  <div className="text-[13px] font-semibold text-ink">Components Bulk Sync</div>
+                  <div className="mt-0.5 text-xs text-ink-soft">
+                    Syncs every enabled component's definition (see Settings → Components) -- one translation, applies
+                    everywhere it's used
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={previewComponentsBulkSync}
+                    disabled={componentsPreviewing || componentsJob?.status === "running"}
+                    className={btnGhost}
+                  >
+                    {componentsPreviewing ? "Checking..." : "Preview"}
+                  </button>
+                  <button
+                    onClick={launchComponentsBulkSync}
+                    disabled={!componentsPreview || componentsPreview.totalComponents === 0 || componentsJob?.status === "running"}
+                    className={btnPrimary}
+                  >
+                    Launch Bulk Sync
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4">
+                {componentsPreview && (
+                  <div className="rounded-md border border-border bg-surface-sunken p-4 text-sm text-ink-soft">
+                    {componentsPreview.totalComponents === 0 ? (
+                      <p>No components match the current filter — nothing to sync.</p>
+                    ) : (
+                      <p>
+                        This will create <b className="text-ink">one wxrks project</b> containing{" "}
+                        <b className="font-mono tabular-nums text-ink">{componentsPreview.totalComponents}</b>{" "}
+                        component(s). Estimated words to translate:{" "}
+                        <b className="font-mono tabular-nums text-ink">
+                          {componentsPreview.estimatedWordCount?.toLocaleString()}
+                        </b>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {componentsJob && (
+                  <div className="mt-4 rounded-md border border-border bg-surface-sunken p-4">
+                    <div className="mb-2 flex items-center gap-3">
+                      <StatusPill
+                        variant={
+                          componentsJob.status === "running" ? "progress" : componentsJob.status === "error" ? "error" : "success"
+                        }
+                        label={componentsJob.status}
+                      />
+                      <span className="flex-1">
+                        <ProgressBar
+                          value={componentsJob.processed}
+                          max={componentsJob.total}
+                          label={`${componentsJob.processed} / ${componentsJob.total} processed`}
+                        />
+                      </span>
+                    </div>
+                    <ul className="mt-3 space-y-1 text-sm text-ink-soft">
+                      {componentsJob.wxrksProjectUUID && <li className="font-mono text-xs">{componentsJob.wxrksProjectUUID}</li>}
+                      {componentsJob.targetLocales?.length > 0 && <li>Target locales: {componentsJob.targetLocales.join(", ")}</li>}
+                      {componentsJob.results?.length > 0 && (
+                        <li>
+                          Estimated words:{" "}
+                          <span className="font-mono tabular-nums">
+                            {componentsJob.results.reduce((sum, r) => sum + (r.wordCount || 0), 0).toLocaleString()}
+                          </span>
+                        </li>
+                      )}
+                    </ul>
+                    {componentsJob.status === "running" && (
+                      <button
+                        onClick={cancelComponentsBulkSync}
+                        className="mt-3 rounded-md border border-status-error-fg/30 bg-surface px-3 py-1.5 text-sm font-medium text-status-error-fg hover:bg-status-error-bg"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    {componentsJob.status !== "running" && componentsJob.results.length > 0 && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-xs font-medium text-ink-faint">Raw results</summary>
+                        <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface p-3 text-xs text-ink-soft">
+                          {JSON.stringify(componentsJob.results, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {componentsMode === "item" && (
+            <Card accent>
+              <div className="flex items-center justify-between bg-accent-subtle p-4">
+                <div className="text-[13px] font-semibold text-ink">Select components to sync</div>
+                <button
+                  onClick={launchComponentsItemSync}
+                  disabled={componentsRunning || selectedComponentIds.length === 0}
+                  className={btnPrimary}
+                >
+                  {componentsRunning ? "Running..." : "Launch Item Sync"}
+                </button>
+              </div>
+
+              {components.length > 0 && (
+                <>
+                  <div className="flex items-center justify-between border-b border-border bg-surface-sunken px-4 py-2.5 text-[12.5px] text-ink-soft">
+                    <span>
+                      <b className="font-mono tabular-nums text-ink">{selectedComponentIds.length}</b> of {components.length}{" "}
+                      components selected
+                    </span>
+                  </div>
+                  <div className="max-h-96 overflow-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="sticky top-0 z-10 bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                        <tr>
+                          <th className="w-8 px-4 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedComponentIds.length === components.length}
+                              onChange={toggleAllComponents}
+                            />
+                          </th>
+                          <th className="whitespace-nowrap px-3 py-2">Component</th>
+                          <th className="whitespace-nowrap px-3 py-2">Group</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {components.map((component) => (
+                          <tr key={component.id} className="hover:bg-surface-sunken">
+                            <td className="px-4 py-2.5">
+                              <input
+                                type="checkbox"
+                                checked={selectedComponentIds.includes(component.id)}
+                                onChange={() => toggleComponent(component.id)}
+                              />
+                            </td>
+                            <td className="px-3 py-2.5 font-medium text-ink">{component.name}</td>
+                            <td className="px-3 py-2.5 font-mono text-xs text-ink-faint">{component.group || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
+          {componentsError && <p className="mt-4 text-sm font-medium text-status-error-fg">Error: {componentsError}</p>}
+
+          {componentsResult && (
+            <Card className="mt-6 p-5">
+              <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Result</h2>
+              <ul className="space-y-1 text-sm text-ink-soft">
+                <li className="font-mono text-xs">{componentsResult.wxrksProjectUUID}</li>
+                <li>Target locales: {componentsResult.targetLocales?.join(", ")}</li>
+                <li>
+                  Components: <span className="font-mono tabular-nums">{componentsResult.itemsSynced}</span> synced,{" "}
+                  <span className="font-mono tabular-nums">{componentsResult.skipped}</span> skipped,{" "}
+                  <span className="font-mono tabular-nums">{componentsResult.errors}</span> error(s)
+                </li>
+                <li>
+                  Estimated words:{" "}
+                  <span className="font-mono tabular-nums">{componentsResult.estimatedWordCount?.toLocaleString()}</span>
+                </li>
+              </ul>
+              <details className="mt-3">
+                <summary className="cursor-pointer text-xs font-medium text-ink-faint">Raw results</summary>
+                <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface-sunken p-3 text-xs text-ink-soft">
+                  {JSON.stringify(componentsResult.results, null, 2)}
                 </pre>
               </details>
             </Card>

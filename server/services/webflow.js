@@ -258,6 +258,74 @@ async function updatePageDom(pageId, locale, nodeUpdates) {
 }
 
 /**
+ * Lists every reusable Component defined on the site (confirmed live: 43 on
+ * the real site, one call). Each entry is identity-only (`{id, name,
+ * description, group}`) -- no content, unlike CMS items' `fieldData`.
+ */
+async function listComponents() {
+  const limit = 100;
+  let offset = 0;
+  let components = [];
+
+  while (true) {
+    const { data } = await client().get(`/sites/${siteId()}/components`, { params: { limit, offset } });
+    const page = data?.components || [];
+    components = components.concat(page);
+
+    const total = data?.pagination?.total ?? components.length;
+    offset += limit;
+    if (components.length >= total || page.length === 0) break;
+  }
+
+  return components;
+}
+
+/**
+ * Fetches a component's DOM content -- IMPORTANT (confirmed live): unlike
+ * Pages' `/pages/:id/dom`, this is nested under `/sites/:site_id/...`; the
+ * bare `/components/:id/dom` 404s. Node shape and pagination are otherwise
+ * identical to `getPageDom` (same `{id, type, text:{html,text}}` shape,
+ * same "secondary locale only returns already-overridden nodes" behavior --
+ * always read the PRIMARY locale for the full translatable tree).
+ */
+async function getComponentDom(componentId, { locale } = {}) {
+  const localeId = await resolvePageLocaleId(locale);
+  const limit = 100;
+  let offset = 0;
+  let nodes = [];
+
+  while (true) {
+    const { data } = await client().get(`/sites/${siteId()}/components/${componentId}/dom`, { params: { localeId, limit, offset } });
+    const page = data?.nodes || [];
+    nodes = nodes.concat(page);
+
+    const total = data?.pagination?.total ?? nodes.length;
+    offset += limit;
+    if (nodes.length >= total || page.length === 0) break;
+  }
+
+  return nodes;
+}
+
+/**
+ * Writes translated text back to specific nodes on a component's
+ * *definition* -- propagates everywhere that component is used across the
+ * site. Confirmed live (same contract as updatePageDom): reuses
+ * `resolvePageLocaleId`/`isPrimaryPageLocaleId` (Components use the exact
+ * same site-locale `id` scheme as Pages, NOT CMS items' `cmsLocaleId` --
+ * verified live), same write payload shape, same hard 400 on a
+ * primary-locale write.
+ */
+async function updateComponentDom(componentId, locale, nodeUpdates) {
+  const localeId = await resolvePageLocaleId(locale);
+  if (await isPrimaryPageLocaleId(localeId)) {
+    throw new Error(`Refusing to write component content to the primary locale ("${locale}") -- only secondary locales are writable via the API.`);
+  }
+  const { data } = await client().post(`/sites/${siteId()}/components/${componentId}/dom`, { nodes: nodeUpdates }, { params: { localeId } });
+  return data;
+}
+
+/**
  * Fetch all items in a collection for a given locale, handling pagination
  * (Webflow caps each page at 100 items).
  */
@@ -454,6 +522,19 @@ function buildPageResourceFileName(pattern, { page }) {
   return `${name}.json`;
 }
 
+const DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN = "component-{component}";
+
+/**
+ * Sibling of buildPageResourceFileName for components -- supports a
+ * {component} token. Components have no `slug` field, only `name` (e.g.
+ * "<Footer>", "Dark CTA"), so it's always slugified.
+ */
+function buildComponentResourceFileName(pattern, { component }) {
+  const componentToken = slugify(component.name || component.id);
+  const name = (pattern || DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN).replace(/{component}/g, componentToken);
+  return `${name}.json`;
+}
+
 module.exports = {
   listCollections,
   getCollection,
@@ -478,4 +559,9 @@ module.exports = {
   updatePageDom,
   buildPageResourceFileName,
   DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
+  listComponents,
+  getComponentDom,
+  updateComponentDom,
+  buildComponentResourceFileName,
+  DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
 };

@@ -11,6 +11,8 @@ const linkClass = "font-medium text-accent-text hover:underline";
 function modeLabel(mode) {
   if (mode === "pages-bulk") return "Pages · Bulk Sync";
   if (mode === "pages-item") return "Pages · Item Sync";
+  if (mode === "components-bulk") return "Components · Bulk Sync";
+  if (mode === "components-item") return "Components · Item Sync";
   if (mode === "bulk") return "Bulk Sync";
   if (mode === "item") return "Item Sync";
   if (mode === "auto") return "Auto Sync";
@@ -21,6 +23,7 @@ export default function History() {
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
   const [pages, setPages] = useState([]);
+  const [components, setComponents] = useState([]);
   const [orgUnits, setOrgUnits] = useState([]);
   const [timezone, setTimezone] = useState(undefined);
   const [error, setError] = useState(null);
@@ -30,13 +33,15 @@ export default function History() {
       api.getSyncHistory(),
       api.getCollections().catch(() => ({ collections: [] })),
       api.getPages().catch(() => ({ pages: [] })),
+      api.getComponents().catch(() => ({ components: [] })),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
       api.getSettings().catch(() => null),
     ])
-      .then(([historyRes, collectionsRes, pagesRes, orgUnitsRes, settingsRes]) => {
+      .then(([historyRes, collectionsRes, pagesRes, componentsRes, orgUnitsRes, settingsRes]) => {
         setHistory(historyRes.history || []);
         setCollections(collectionsRes.collections || []);
         setPages(pagesRes.pages || []);
+        setComponents(componentsRes.components || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
       })
@@ -59,6 +64,11 @@ export default function History() {
   function pageName(id) {
     const p = pages.find((p) => p.id === id);
     return p ? p.title || p.slug : id;
+  }
+
+  function componentName(id) {
+    const c = components.find((c) => c.id === id);
+    return c ? c.name : id;
   }
 
   function orgUnitName(uuid) {
@@ -107,10 +117,12 @@ export default function History() {
                   }
                 />
                 <Field
-                  label={batch.mode?.startsWith("pages-") ? "Pages" : "Collections"}
+                  label={batch.mode?.startsWith("pages-") ? "Pages" : batch.mode?.startsWith("components-") ? "Components" : "Collections"}
                   value={
                     batch.mode?.startsWith("pages-")
                       ? batch.items.map((i) => pageName(i.webflowPageId)).join(", ") || "—"
+                      : batch.mode?.startsWith("components-")
+                      ? batch.items.map((i) => componentName(i.webflowComponentId)).join(", ") || "—"
                       : batch.collectionIds.map(collectionName).join(", ") || "—"
                   }
                 />
@@ -128,7 +140,11 @@ export default function History() {
                     const errors = (update.resultsByItem || []).flatMap((item) =>
                       (item.resultsByLocale || [])
                         .filter((l) => l.error)
-                        .map((l) => ({ id: item.webflowPageId || item.webflowItemId, locale: l.locale, message: l.error }))
+                        .map((l) => ({
+                          id: item.webflowComponentId || item.webflowPageId || item.webflowItemId,
+                          locale: l.locale,
+                          message: l.error,
+                        }))
                     );
                     return (
                       <div key={i} className="rounded-md border border-border bg-surface-sunken p-3">

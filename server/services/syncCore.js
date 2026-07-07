@@ -4,8 +4,8 @@ const wxrks = require("./wxrks");
 const store = require("../store");
 
 /**
- * Content-agnostic core shared by every entity kind (CMS item, page, and
- * later component): uploads a flat { key: translatableText } dict as one
+ * Content-agnostic core shared by every entity kind (CMS item, page,
+ * component): uploads a flat { key: translatableText } dict as one
  * wxrks resource + work unit, and records it in the batch's project
  * mapping. Callers do the entity-specific work of extracting that flat
  * dict and building the mapping fields (entityType + whichever id(s)
@@ -80,6 +80,26 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
 }
 
 /**
+ * Adds one Webflow Component *definition* to an already-created wxrks
+ * project -- translating it once so the translation propagates everywhere
+ * that component is used across the site. Same shape as syncPageIntoBatch;
+ * `nodes` is the component's full primary-locale DOM node list (pre-fetched
+ * via webflow.getComponentDom(component.id, {locale: sourceLocale})).
+ */
+async function syncComponentIntoBatch({ projectUuid, component, nodes, targetLocales, namePattern }) {
+  const translatableNodes = webflowDom.extractTextNodes(nodes);
+  const filename = webflow.buildComponentResourceFileName(namePattern, { component });
+
+  return syncTranslatableContentIntoBatch({
+    projectUuid,
+    translatableContent: translatableNodes,
+    filename,
+    targetLocales,
+    mappingFields: { entityType: "component", webflowComponentId: component.id },
+  });
+}
+
+/**
  * Kicks off auto-approval for a whole batch project once, after every item
  * in it has been synced -- not per item. Runs in the background: polling
  * for wxrks's async status propagation can take up to ~45s per phase, far
@@ -92,4 +112,4 @@ function requestBatchApproval(projectUuid) {
     .catch((err) => console.error(`Auto-approve failed for wxrks project ${projectUuid}:`, err.message));
 }
 
-module.exports = { syncItemIntoBatch, syncPageIntoBatch, requestBatchApproval };
+module.exports = { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval };

@@ -7,7 +7,11 @@
  */
 
 const db = require("./db");
-const { DEFAULT_WORK_UNIT_NAME_PATTERN, DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN } = require("./services/webflow");
+const {
+  DEFAULT_WORK_UNIT_NAME_PATTERN,
+  DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
+  DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
+} = require("./services/webflow");
 
 const DEFAULT_SETTINGS = {
   sourceLocale: process.env.SOURCE_LOCALE || "en",
@@ -45,6 +49,16 @@ const DEFAULT_SETTINGS = {
   // Placeholder: {page}. Kept separate from workUnitNamePattern since the
   // token vocabulary differs (a page has no collection/entry distinction).
   pagesWorkUnitNamePattern: DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
+  // Components sync (v1: manual Bulk/Item Sync only, same reasoning as
+  // Pages). Sibling enable-tree shape again; components have no field
+  // schema of their own either.
+  components: {
+    allComponentsEnabled: true,
+    enabledComponentIds: [],
+  },
+  // Placeholder: {component}. Components have no slug/entry token, only a
+  // free-text `name` (e.g. "<Footer>", "Dark CTA") -- always slugified.
+  componentsWorkUnitNamePattern: DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
   // Auto Sync: automatically translate content when it's published, based on
   // a 3-level rule tree (master enable -> per-collection allow-list ->
   // optional per-field conditions). Separate from allCollectionsEnabled/
@@ -138,12 +152,22 @@ async function createProjectMapping(wxrksProjectUUID, mapping) {
  */
 async function addItemToProjectMapping(
   wxrksProjectUUID,
-  { entityType, webflowCollectionId, webflowItemId, webflowPageId, resourceId, resourceFileName, fieldKeys, wordCount }
+  {
+    entityType,
+    webflowCollectionId,
+    webflowItemId,
+    webflowPageId,
+    webflowComponentId,
+    resourceId,
+    resourceFileName,
+    fieldKeys,
+    wordCount,
+  }
 ) {
   const existing = await getProjectMapping(wxrksProjectUUID);
   if (!existing) return undefined;
 
-  // Pages have no collectionId -- only track one when this is a CMS item.
+  // Pages/Components have no collectionId -- only track one when this is a CMS item.
   const collectionIds =
     webflowCollectionId && !existing.collectionIds.includes(webflowCollectionId)
       ? [...existing.collectionIds, webflowCollectionId]
@@ -155,7 +179,17 @@ async function addItemToProjectMapping(
       ...existing.items,
       // entityType defaults to "cmsItem" for backward compat with rows
       // written before this discriminator existed.
-      { entityType: entityType || "cmsItem", webflowCollectionId, webflowItemId, webflowPageId, resourceId, resourceFileName, fieldKeys, wordCount },
+      {
+        entityType: entityType || "cmsItem",
+        webflowCollectionId,
+        webflowItemId,
+        webflowPageId,
+        webflowComponentId,
+        resourceId,
+        resourceFileName,
+        fieldKeys,
+        wordCount,
+      },
     ],
   });
 }
@@ -238,6 +272,10 @@ function mergeSettings(stored) {
     ...DEFAULT_SETTINGS.pages,
     ...(stored.pages || {}),
   };
+  merged.components = {
+    ...DEFAULT_SETTINGS.components,
+    ...(stored.components || {}),
+  };
   return merged;
 }
 
@@ -274,6 +312,11 @@ function isCollectionEnabled(settings, collectionId) {
 // Pure helper, mirrors isCollectionEnabled but for static pages.
 function isPageEnabled(settings, pageId) {
   return settings.pages.allPagesEnabled || settings.pages.enabledPageIds.includes(pageId);
+}
+
+// Pure helper, mirrors isPageEnabled but for components.
+function isComponentEnabled(settings, componentId) {
+  return settings.components.allComponentsEnabled || settings.components.enabledComponentIds.includes(componentId);
 }
 
 async function getFieldExclusions(collectionId) {
@@ -436,6 +479,7 @@ module.exports = {
   updateSettings,
   isCollectionEnabled,
   isPageEnabled,
+  isComponentEnabled,
   getFieldExclusions,
   setFieldExclusions,
   isAutoSyncCollectionEnabled,
