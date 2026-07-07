@@ -1,6 +1,7 @@
 import { useState } from "react";
 import api from "../../services/api.js";
 import StatusBadge from "../../components/StatusBadge.jsx";
+import { formatDateOnly } from "../../formatDate.js";
 
 const linkButtonClass = "text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline";
 const inputClass =
@@ -16,10 +17,6 @@ const OPERATORS_BY_TYPE = {
   PlainText: [{ value: "equals", label: "equals" }],
 };
 
-function formatDate(iso) {
-  return iso ? new Date(iso).toLocaleDateString() : "—";
-}
-
 export default function SettingsCollections({
   collections,
   isCollectionEnabled,
@@ -31,6 +28,7 @@ export default function SettingsCollections({
   checkAllAutoSyncCollections,
   uncheckAllAutoSyncCollections,
   autoSyncFieldConditions,
+  timezone,
   onAutoSyncFieldConditionsSaved,
 }) {
   const [expanded, setExpanded] = useState(null);
@@ -288,7 +286,7 @@ export default function SettingsCollections({
                   {(itemsByCollection[collection.id] || []).map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50">
                       <td className="px-3 py-2 text-slate-900">{item.name}</td>
-                      <td className="px-3 py-2 text-slate-600">{formatDate(item.lastPublished)}</td>
+                      <td className="px-3 py-2 text-slate-600">{formatDateOnly(item.lastPublished, timezone)}</td>
                       <td className="px-3 py-2">
                         {item.isArchived ? (
                           <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">

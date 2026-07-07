@@ -73,7 +73,7 @@ db.migrate()
           .ensureWebhookRegistered()
           .catch((err) => console.error("Auto Sync webhook self-heal failed:", err.message));
       }
-      autoSyncQueue.startFlushLoop(settings.autoSync.flushTimes);
+      autoSyncQueue.startFlushLoop(settings.autoSync.flushTimes, settings.timezone);
       autoSyncReconciliation.startReconciliationLoop();
     }
 

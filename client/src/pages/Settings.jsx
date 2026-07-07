@@ -173,6 +173,7 @@ export default function Settings() {
         allCollectionsEnabled: settings.allCollectionsEnabled,
         enabledCollectionIds: settings.enabledCollectionIds,
         workUnitNamePattern: settings.workUnitNamePattern,
+        timezone: settings.timezone,
         autoSync: settings.autoSync,
       });
       setSettings((prev) => ({ ...prev, ...updated }));
@@ -234,6 +235,7 @@ export default function Settings() {
               checkAllAutoSyncCollections={checkAllAutoSyncCollections}
               uncheckAllAutoSyncCollections={uncheckAllAutoSyncCollections}
               autoSyncFieldConditions={settings.autoSync.fieldConditions}
+              timezone={settings.timezone}
               onAutoSyncFieldConditionsSaved={(collectionId, conditions) =>
                 markDirty({
                   autoSync: {

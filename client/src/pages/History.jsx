@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
+import { formatDateTime } from "../formatDate.js";
 
 const linkClass = "font-medium text-brand-600 hover:text-brand-700 hover:underline";
 
@@ -8,6 +9,7 @@ export default function History() {
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
   const [orgUnits, setOrgUnits] = useState([]);
+  const [timezone, setTimezone] = useState(undefined);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -15,11 +17,13 @@ export default function History() {
       api.getSyncHistory(),
       api.getCollections().catch(() => ({ collections: [] })),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
+      api.getSettings().catch(() => null),
     ])
-      .then(([historyRes, collectionsRes, orgUnitsRes]) => {
+      .then(([historyRes, collectionsRes, orgUnitsRes, settingsRes]) => {
         setHistory(historyRes.history || []);
         setCollections(collectionsRes.collections || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
+        setTimezone(settingsRes?.timezone);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -70,7 +74,7 @@ export default function History() {
               <tbody className="divide-y divide-slate-100">
                 <tr>
                   <td className="py-1 pr-4 font-medium text-slate-500">Created</td>
-                  <td className="py-1 text-slate-800">{new Date(batch.createdAt).toLocaleString()}</td>
+                  <td className="py-1 text-slate-800">{formatDateTime(batch.createdAt, timezone)}</td>
                 </tr>
                 <tr>
                   <td className="py-1 pr-4 font-medium text-slate-500">Mode</td>
@@ -131,7 +135,7 @@ export default function History() {
                       <tbody className="divide-y divide-slate-200">
                         <tr>
                           <td className="px-3 py-1.5 font-medium text-slate-500">Pushed at</td>
-                          <td className="px-3 py-1.5 text-slate-800">{new Date(update.updatedAt).toLocaleString()}</td>
+                          <td className="px-3 py-1.5 text-slate-800">{formatDateTime(update.updatedAt, timezone)}</td>
                         </tr>
                         <tr>
                           <td className="px-3 py-1.5 font-medium text-slate-500">Locales</td>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import api from "../../services/api.js";
+import { formatDateTime } from "../../formatDate.js";
 
 const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
 const hintClass = "text-xs text-slate-500";
@@ -10,10 +11,6 @@ const WEBHOOK_STATUS_STYLES = {
   deactivated: "bg-red-100 text-red-800",
   error: "bg-red-100 text-red-800",
 };
-
-function formatDate(iso) {
-  return iso ? new Date(iso).toLocaleString() : "—";
-}
 
 // Evenly spaces `n` times across a 24h UTC day starting at midnight, e.g.
 // n=2 -> ["00:00", "12:00"], n=4 -> ["00:00", "06:00", "12:00", "18:00"].
@@ -102,7 +99,7 @@ export default function SettingsAutoSync({ settings, markDirty }) {
         </label>
         <p className={`mt-1 ${hintClass}`}>
           Changing this evenly spaces the times below across the day -- edit any individual time afterward if
-          you want a different schedule. All times are UTC.
+          you want a different schedule. All times are in {settings.timezone} (Settings → General).
         </p>
 
         <div className="mt-3 flex flex-col gap-2">
@@ -160,11 +157,11 @@ export default function SettingsAutoSync({ settings, markDirty }) {
           <tbody className="divide-y divide-slate-100">
             <tr>
               <td className="py-1.5 pr-4 font-medium text-slate-500">Registered</td>
-              <td className="py-1.5 text-slate-800">{formatDate(autoSync.webhook.registeredAt)}</td>
+              <td className="py-1.5 text-slate-800">{formatDateTime(autoSync.webhook.registeredAt, settings.timezone)}</td>
             </tr>
             <tr>
               <td className="py-1.5 pr-4 font-medium text-slate-500">Last event received</td>
-              <td className="py-1.5 text-slate-800">{formatDate(autoSync.webhook.lastEventAt)}</td>
+              <td className="py-1.5 text-slate-800">{formatDateTime(autoSync.webhook.lastEventAt, settings.timezone)}</td>
             </tr>
             {autoSync.webhook.lastError && (
               <tr>

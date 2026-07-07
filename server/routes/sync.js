@@ -274,14 +274,15 @@ router.get("/status", async (req, res) => {
  */
 router.get("/auto/status", async (req, res) => {
   try {
-    const { autoSync } = await store.getSettings();
+    const { autoSync, timezone } = await store.getSettings();
     res.json({
       enabled: autoSync.enabled,
       flushTimes: autoSync.flushTimes,
+      timezone,
       pendingCount: autoSyncQueue.pendingCount(),
       pendingSince: autoSyncQueue.pendingSince(),
       pendingItems: autoSyncQueue.pendingItems(),
-      nextFlushAt: autoSync.enabled ? autoSyncQueue.nextFlushAt(autoSync.flushTimes) : null,
+      nextFlushAt: autoSync.enabled ? autoSyncQueue.nextFlushAt(autoSync.flushTimes, timezone) : null,
       webhookStatus: autoSync.webhook.status,
       webhookRegisteredAt: autoSync.webhook.registeredAt,
       webhookLastEventAt: autoSync.webhook.lastEventAt,

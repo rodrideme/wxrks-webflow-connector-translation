@@ -58,6 +58,7 @@ router.put("/", async (req, res) => {
     allCollectionsEnabled,
     enabledCollectionIds,
     workUnitNamePattern,
+    timezone,
     autoSync,
   } = req.body || {};
   const patch = {};
@@ -69,6 +70,7 @@ router.put("/", async (req, res) => {
   if (allCollectionsEnabled !== undefined) patch.allCollectionsEnabled = allCollectionsEnabled;
   if (enabledCollectionIds !== undefined) patch.enabledCollectionIds = enabledCollectionIds;
   if (workUnitNamePattern !== undefined) patch.workUnitNamePattern = workUnitNamePattern;
+  if (timezone !== undefined) patch.timezone = timezone;
 
   try {
     const before = await store.getSettings();
@@ -80,22 +82,29 @@ router.put("/", async (req, res) => {
 
     const updated = await store.updateSettings(patch);
 
+    const scheduleChanged =
+      JSON.stringify(before.autoSync.flushTimes) !== JSON.stringify(updated.autoSync.flushTimes) ||
+      before.timezone !== updated.timezone;
+
     if (autoSync !== undefined) {
       const wasEnabled = before.autoSync.enabled;
       const nowEnabled = updated.autoSync.enabled;
 
       if (!wasEnabled && nowEnabled) {
         await autoSyncWebhook.ensureWebhookRegistered();
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes);
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
         autoSyncReconciliation.startReconciliationLoop();
       } else if (wasEnabled && !nowEnabled) {
         await autoSyncWebhook.teardownWebhook();
         autoSyncQueue.stopFlushLoop();
         autoSyncReconciliation.stopReconciliationLoop();
-      } else if (nowEnabled && JSON.stringify(before.autoSync.flushTimes) !== JSON.stringify(updated.autoSync.flushTimes)) {
-        // Flush-schedule edit takes effect immediately, no restart needed.
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes);
+      } else if (nowEnabled && scheduleChanged) {
+        // Flush-schedule or timezone edit takes effect immediately, no restart needed.
+        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
       }
+    } else if (updated.autoSync.enabled && scheduleChanged) {
+      // Timezone changed via a PUT that didn't touch autoSync itself.
+      autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
     }
 
     res.json(await store.getSettings()); // re-fetch: webhook state may have changed above

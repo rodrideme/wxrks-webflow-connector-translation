@@ -27,6 +27,7 @@ const pending = new Map();
 let scheduleTimer = null;
 let lastFlushAt = null;
 let currentFlushTimes = [];
+let currentTimezone = "UTC";
 let lastFiredMinuteKey = null;
 
 function enqueue({ collection, item }) {
@@ -34,17 +35,36 @@ function enqueue({ collection, item }) {
 }
 
 /**
- * Checks every 30s (well under a minute) whether the current UTC time
- * matches one of the configured flushTimes ("HH:mm"), and flushes if so.
- * lastFiredMinuteKey guards against firing twice for the same minute across
- * the two 30s ticks that fall within it.
+ * Formats a UTC instant as "HH:mm" wall-clock time in the given IANA
+ * timezone -- DST-correct via Intl, no date library needed. Used both to
+ * check "is it a scheduled flush time right now" and (via nextFlushAt's
+ * brute-force scan) to find the next one.
  */
-function startFlushLoop(flushTimes) {
+function formatInTimeZone(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+  const hh = parts.find((p) => p.type === "hour").value;
+  const mm = parts.find((p) => p.type === "minute").value;
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Checks every 30s (well under a minute) whether the current wall-clock time
+ * in the configured timezone matches one of the configured flushTimes
+ * ("HH:mm"), and flushes if so. lastFiredMinuteKey guards against firing
+ * twice for the same minute across the two 30s ticks that fall within it.
+ */
+function startFlushLoop(flushTimes, timezone = "UTC") {
   stopFlushLoop();
   currentFlushTimes = flushTimes || [];
+  currentTimezone = timezone;
   scheduleTimer = setInterval(() => {
     const now = new Date();
-    const hhmm = `${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`;
+    const hhmm = formatInTimeZone(now, currentTimezone);
     const minuteKey = now.toISOString().slice(0, 16);
     if (currentFlushTimes.includes(hhmm) && minuteKey !== lastFiredMinuteKey) {
       lastFiredMinuteKey = minuteKey;
@@ -59,20 +79,25 @@ function stopFlushLoop() {
 }
 
 /**
- * Next scheduled flush time on or after `from`, given a sorted/unsorted list
- * of "HH:mm" UTC times. Wraps to the earliest time tomorrow if none remain
- * today.
+ * Next scheduled flush time on or after `from`, given a list of "HH:mm"
+ * times interpreted as wall-clock times in `timezone`. Brute-force scans
+ * minute-by-minute up to 48h ahead -- simple and DST-correct (via Intl)
+ * rather than doing timezone-offset arithmetic by hand; cheap enough since
+ * this only runs on-demand (status polling), not in the hot scheduling
+ * path above.
  */
-function nextFlushAt(flushTimes, from = new Date()) {
+function nextFlushAt(flushTimes, timezone = "UTC", from = new Date()) {
   if (!flushTimes || flushTimes.length === 0) return null;
   const sorted = [...flushTimes].sort();
-  const todayStr = from.toISOString().slice(0, 10);
-  for (const t of sorted) {
-    const candidate = new Date(`${todayStr}T${t}:00.000Z`);
-    if (candidate > from) return candidate.toISOString();
+  const cursor = new Date(from.getTime());
+  cursor.setSeconds(0, 0);
+  for (let i = 0; i < 60 * 24 * 2; i++) {
+    cursor.setTime(cursor.getTime() + 60000);
+    if (sorted.includes(formatInTimeZone(cursor, timezone))) {
+      return cursor.toISOString();
+    }
   }
-  const tomorrow = new Date(from.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return new Date(`${tomorrow}T${sorted[0]}:00.000Z`).toISOString();
+  return null;
 }
 
 async function flush() {

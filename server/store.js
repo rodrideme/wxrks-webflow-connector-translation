@@ -12,6 +12,11 @@ const { DEFAULT_WORK_UNIT_NAME_PATTERN } = require("./services/webflow");
 const DEFAULT_SETTINGS = {
   sourceLocale: process.env.SOURCE_LOCALE || "en",
   targetLocales: [],
+  // IANA timezone (e.g. "America/Sao_Paulo"). App-wide: interprets Auto
+  // Sync's flushTimes as wall-clock times in this zone, and is used to
+  // render every date/time shown in the UI consistently for all viewers
+  // (rather than each browser's own local zone).
+  timezone: "UTC",
   autoPublish: process.env.AUTO_PUBLISH === "true",
   autoApprove: false,
   orgUnitUUID: process.env.WXRKS_ORG_UNIT_UUID || "",

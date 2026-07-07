@@ -2,15 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import StatusBadge from "../components/StatusBadge.jsx";
+import { formatDateTime, formatDateOnly } from "../formatDate.js";
 
 const POLL_INTERVAL_MS = 1500;
 
 // Fixed for now -- there's no UI to configure this yet, just to show it.
 const WORKFLOW_STEPS = ["TRANSLATION"];
-
-function formatDate(iso) {
-  return iso ? new Date(iso).toLocaleDateString() : "—";
-}
 
 const tabClass = (active) =>
   "rounded-md px-4 py-2 text-sm font-medium transition-colors " +
@@ -380,7 +377,7 @@ export default function SyncPanel() {
                         />
                       </td>
                       <td className="px-3 py-2 text-slate-900">{item.name}</td>
-                      <td className="px-3 py-2 text-slate-600">{formatDate(item.lastPublished)}</td>
+                      <td className="px-3 py-2 text-slate-600">{formatDateOnly(item.lastPublished, settings?.timezone)}</td>
                       <td className="px-3 py-2">
                         {item.isArchived ? (
                           <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
@@ -456,12 +453,14 @@ export default function SyncPanel() {
                 </span>
               </div>
               <ul className="mt-3 space-y-1 text-sm text-slate-700">
-                <li>Flush times (UTC): {autoSyncStatus.flushTimes?.join(", ")}</li>
+                <li>
+                  Flush times ({autoSyncStatus.timezone}): {autoSyncStatus.flushTimes?.join(", ")}
+                </li>
                 {autoSyncStatus.nextFlushAt && (
-                  <li>Next flush: {new Date(autoSyncStatus.nextFlushAt).toLocaleString()}</li>
+                  <li>Next flush: {formatDateTime(autoSyncStatus.nextFlushAt, autoSyncStatus.timezone)}</li>
                 )}
                 {autoSyncStatus.webhookLastEventAt && (
-                  <li>Last webhook event: {new Date(autoSyncStatus.webhookLastEventAt).toLocaleString()}</li>
+                  <li>Last webhook event: {formatDateTime(autoSyncStatus.webhookLastEventAt, autoSyncStatus.timezone)}</li>
                 )}
               </ul>
 
@@ -494,7 +493,7 @@ export default function SyncPanel() {
                         <tr key={`${p.collectionId}:${p.itemId}`}>
                           <td className="px-3 py-2 text-slate-900">{p.itemName}</td>
                           <td className="px-3 py-2 text-slate-600">{p.collectionName}</td>
-                          <td className="px-3 py-2 text-slate-600">{new Date(p.enqueuedAt).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-slate-600">{formatDateTime(p.enqueuedAt, autoSyncStatus.timezone)}</td>
                         </tr>
                       ))}
                     </tbody>

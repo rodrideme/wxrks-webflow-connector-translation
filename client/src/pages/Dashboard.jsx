@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
+import { formatDateTime } from "../formatDate.js";
 
 const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
 const linkClass = "font-medium text-brand-600 hover:text-brand-700 hover:underline";
@@ -10,6 +11,7 @@ export default function Dashboard() {
   const [backlog, setBacklog] = useState(null);
   const [syncStatus, setSyncStatus] = useState(null);
   const [orgUnits, setOrgUnits] = useState([]);
+  const [timezone, setTimezone] = useState(undefined);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -18,11 +20,13 @@ export default function Dashboard() {
       api.getBacklog(),
       api.getSyncStatus(),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
+      api.getSettings().catch(() => null),
     ])
-      .then(([backlogRes, statusRes, orgUnitsRes]) => {
+      .then(([backlogRes, statusRes, orgUnitsRes, settingsRes]) => {
         setBacklog(backlogRes);
         setSyncStatus(statusRes);
         setOrgUnits(orgUnitsRes.orgUnits || []);
+        setTimezone(settingsRes?.timezone);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -68,7 +72,7 @@ export default function Dashboard() {
         {lastSync ? (
           <>
             <p className="text-sm text-slate-700">
-              {lastSync.mode} sync at {new Date(lastSync.timestamp).toLocaleString()}
+              {lastSync.mode} sync at {formatDateTime(lastSync.timestamp, timezone)}
             </p>
             {lastSync.summary && (
               <ul className="mt-2 space-y-1 text-sm text-slate-700">

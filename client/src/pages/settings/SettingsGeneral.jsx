@@ -6,6 +6,16 @@ function buildPreviewName(pattern) {
   return `${name}.json`;
 }
 
+const FALLBACK_TIMEZONES = ["UTC", "America/Sao_Paulo", "America/New_York", "Europe/London", "Europe/Rome"];
+
+function listTimezones() {
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return FALLBACK_TIMEZONES;
+  }
+}
+
 const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
 const labelClass = "flex flex-col gap-1 text-sm font-medium text-slate-700";
 const selectClass =
@@ -106,6 +116,28 @@ export default function SettingsGeneral({
         <p className={`mt-3 ${hintClass}`}>
           Only locales actually enabled on your Webflow site are shown here — Webflow silently falls back
           to the primary locale for anything else, so free-typed codes aren't offered.
+        </p>
+      </section>
+
+      <section className={cardClass}>
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Timezone</h2>
+        <label className={labelClass}>
+          Timezone:
+          <select
+            value={settings.timezone}
+            onChange={(e) => markDirty({ timezone: e.target.value })}
+            className={selectClass}
+          >
+            {listTimezones().map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className={`mt-1 ${hintClass}`}>
+          Used for Auto Sync's flush times (Settings → Auto Sync) and every date/time shown throughout this
+          app, so everyone viewing it sees the same wall-clock time regardless of their own browser's zone.
         </p>
       </section>
 
