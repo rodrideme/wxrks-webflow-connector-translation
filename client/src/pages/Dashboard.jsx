@@ -3,9 +3,36 @@ import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
 import { formatDateTime } from "../formatDate.js";
+import Card from "../components/Card.jsx";
+import StatusPill from "../components/StatusPill.jsx";
+import Chip from "../components/Chip.jsx";
 
-const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
-const linkClass = "font-medium text-brand-600 hover:text-brand-700 hover:underline";
+const linkClass = "font-medium text-accent-text hover:underline";
+
+function modeLabel(mode) {
+  if (mode === "pages-bulk") return "Pages · Bulk Sync";
+  if (mode === "pages-item") return "Pages · Item Sync";
+  if (mode === "bulk") return "Bulk Sync";
+  if (mode === "item") return "Item Sync";
+  if (mode === "auto") return "Auto Sync";
+  return mode;
+}
+
+function projectErrorCount(p) {
+  return (p.updates || []).reduce(
+    (sum, u) =>
+      sum + (u.resultsByItem || []).reduce((s, r) => s + (r.resultsByLocale || []).filter((rl) => rl.error).length, 0),
+    0
+  );
+}
+
+function projectWordsDelivered(p) {
+  return (p.updates || []).reduce((sum, u) => sum + (u.wordCount || 0), 0);
+}
+
+function projectTotalWords(p) {
+  return (p.items || []).reduce((sum, i) => sum + (i.wordCount || 0), 0);
+}
 
 export default function Dashboard() {
   const [backlog, setBacklog] = useState(null);
@@ -41,102 +68,146 @@ export default function Dashboard() {
     acc[entry.collectionName] = (acc[entry.collectionName] || 0) + 1;
     return acc;
   }, {});
+  const backlogEntries = Object.entries(backlogByCollection);
+  const maxBacklogCount = Math.max(1, ...backlogEntries.map(([, count]) => count));
 
-  if (loading) return <p className="text-slate-600">Loading dashboard...</p>;
-  if (error) return <p className="text-sm font-medium text-red-600">Error: {error}</p>;
+  if (loading) return <p className="text-sm text-ink-soft">Loading dashboard...</p>;
+  if (error) return <p className="text-sm font-medium text-status-error-fg">Error: {error}</p>;
 
   const lastSync = syncStatus?.lastSync;
+  const lastSyncFailed = (lastSync?.summary?.errors ?? 0) > 0;
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Dashboard</h1>
+      <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Dashboard</h1>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Backlog by collection</h2>
-        {Object.keys(backlogByCollection).length === 0 ? (
-          <p className="text-sm text-slate-600">No untranslated items. Backlog is clear.</p>
-        ) : (
-          <ul className="space-y-1 text-sm text-slate-700">
-            {Object.entries(backlogByCollection).map(([name, count]) => (
-              <li key={name}>
-                {name}: <strong>{count}</strong> pending
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-3 text-sm font-medium text-slate-500">Total backlog: {backlog?.count ?? 0}</p>
-      </section>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Backlog by collection</p>
+      {backlogEntries.length === 0 ? (
+        <Card className="mb-6 px-4 py-4 text-sm text-ink-soft">No untranslated items. Backlog is clear.</Card>
+      ) : (
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {backlogEntries.map(([name, count]) => (
+            <Card key={name} className="p-3.5">
+              <div className="mb-2 text-[12.5px] font-semibold text-ink-soft">{name}</div>
+              <div className="text-xl font-semibold text-ink">
+                {count} <small className="text-xs font-medium text-ink-faint">items pending</small>
+              </div>
+              <div className="mt-2 h-[5px] overflow-hidden rounded-full bg-surface-sunken">
+                <div
+                  className="h-full rounded-full bg-accent"
+                  style={{ width: `${Math.max(6, Math.round((count / maxBacklogCount) * 100))}%` }}
+                />
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      <p className="mb-6 -mt-3 text-xs text-ink-faint">Total backlog: {backlog?.count ?? 0}</p>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Last sync</h2>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Last sync result</p>
+      <Card className="mb-6 flex items-center gap-4 p-4">
         {lastSync ? (
           <>
-            <p className="text-sm text-slate-700">
-              {lastSync.mode} sync at {formatDateTime(lastSync.timestamp, timezone)}
-            </p>
-            {lastSync.summary && (
-              <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                <li>
-                  Items: {lastSync.summary.itemsSynced ?? lastSync.summary.itemsProcessed ?? 0} synced,{" "}
-                  {lastSync.summary.skipped ?? 0} skipped, {lastSync.summary.errors ?? 0} error(s)
-                </li>
-                {lastSync.summary.estimatedWordCount !== undefined && (
-                  <li>Estimated words: {lastSync.summary.estimatedWordCount.toLocaleString()}</li>
+            <div
+              className={
+                "flex h-9 w-9 flex-none items-center justify-center rounded-lg text-base " +
+                (lastSyncFailed ? "bg-status-error-bg text-status-error-fg" : "bg-status-success-bg text-status-success-fg")
+              }
+            >
+              {lastSyncFailed ? "!" : "✓"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-ink">
+                {modeLabel(lastSync.mode)} {lastSyncFailed ? "finished with errors" : "completed"}
+              </div>
+              <div className="mt-0.5 text-xs text-ink-faint">
+                <span className="font-mono tabular-nums">
+                  {lastSync.summary?.itemsSynced ?? lastSync.summary?.itemsProcessed ?? 0} synced
+                </span>
+                {lastSync.summary?.skipped ? (
+                  <>
+                    {" · "}
+                    <span className="font-mono tabular-nums">{lastSync.summary.skipped} skipped</span>
+                  </>
+                ) : null}
+                {lastSync.summary?.estimatedWordCount !== undefined && (
+                  <>
+                    {" · "}
+                    <span className="font-mono tabular-nums">
+                      {lastSync.summary.estimatedWordCount.toLocaleString()} words
+                    </span>
+                  </>
                 )}
-                {lastSync.summary.orgUnitUUID && <li>Org unit: {orgUnitName(lastSync.summary.orgUnitUUID)}</li>}
-                {lastSync.summary.targetLocales && (
-                  <li>Target locales: {lastSync.summary.targetLocales.join(", ")}</li>
+                {" · "}
+                {formatDateTime(lastSync.timestamp, timezone)}
+                {lastSync.summary?.errors ? (
+                  <>
+                    {" · "}
+                    <span className="font-medium text-status-error-fg">{lastSync.summary.errors} error(s)</span>
+                  </>
+                ) : (
+                  " · 0 errors"
                 )}
-                {lastSync.summary.wxrksProjectUUID && (
-                  <li>
-                    <a href={wxrksProjectUrl(lastSync.summary.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
-                      Open in wxrks
-                    </a>{" "}
-                    ·{" "}
-                    <Link to={`/history#${lastSync.summary.wxrksProjectUUID}`} className={linkClass}>
-                      View in History
-                    </Link>
-                  </li>
-                )}
-              </ul>
+              </div>
+            </div>
+            {lastSync.summary?.wxrksProjectUUID && (
+              <Link to={`/history#${lastSync.summary.wxrksProjectUUID}`} className={linkClass + " flex-none text-[13px]"}>
+                View in History →
+              </Link>
             )}
           </>
         ) : (
-          <p className="text-sm text-slate-600">No syncs run yet.</p>
+          <p className="text-sm text-ink-soft">No syncs run yet.</p>
         )}
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Active wxrks projects</h2>
+      <div className="mb-2 flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Active wxrks projects</p>
+      </div>
+      <Card>
         {(syncStatus?.activeProjects || []).length === 0 ? (
-          <p className="text-sm text-slate-600">No translations in progress.</p>
+          <p className="p-4 text-sm text-ink-soft">No translations in progress.</p>
         ) : (
-          <ul className="space-y-3 text-sm text-slate-700">
-            {syncStatus.activeProjects.map((p) => (
-              <li key={p.wxrksProjectUUID} className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                <div className="font-mono text-xs text-slate-500">{p.wxrksProjectUUID}</div>
-                <div className="mt-1">
-                  {p.mode} batch, {p.items.length} item(s){" "}
-                  {p.mode?.startsWith("pages-") ? "" : `across ${p.collectionIds.length} collection(s) `}→{" "}
-                  {p.targetLocales.join(", ")}{" "}
-                  <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
-                    {p.wxrksStatus}
-                  </span>
+          syncStatus.activeProjects.map((p) => {
+            const errCount = projectErrorCount(p);
+            const delivered = projectWordsDelivered(p);
+            const total = projectTotalWords(p);
+            return (
+              <div
+                key={p.wxrksProjectUUID}
+                className="flex flex-wrap items-center gap-3.5 border-t border-border px-4 py-3.5 first:border-t-0"
+              >
+                <div className="min-w-[10rem] flex-1">
+                  <div className="text-[13.5px] font-semibold text-ink">{modeLabel(p.mode)}</div>
+                  <div className="mt-0.5 font-mono text-[11.5px] text-ink-faint">{p.wxrksProjectUUID}</div>
                 </div>
-                <div className="mt-1.5">
+                {errCount > 0 ? (
+                  <StatusPill variant="error" label={`${errCount} error${errCount === 1 ? "" : "s"}`} />
+                ) : (
+                  <StatusPill variant="progress" />
+                )}
+                <div className="text-[12.5px] text-ink-soft">
+                  <span className="font-mono font-semibold tabular-nums text-ink">{delivered.toLocaleString()}</span> /{" "}
+                  <span className="font-mono tabular-nums">{total.toLocaleString()}</span> words
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {p.targetLocales.map((l) => (
+                    <Chip key={l}>{l}</Chip>
+                  ))}
+                </div>
+                <div className="ml-auto flex gap-3 whitespace-nowrap text-xs">
                   <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
-                    Open in wxrks
-                  </a>{" "}
-                  ·{" "}
+                    wxrks ↗
+                  </a>
                   <Link to={`/history#${p.wxrksProjectUUID}`} className={linkClass}>
-                    View in History
+                    History
                   </Link>
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            );
+          })
         )}
-      </section>
+      </Card>
     </div>
   );
 }

@@ -1,16 +1,21 @@
 import { useState } from "react";
 import api from "../../services/api.js";
 import { formatDateTime } from "../../formatDate.js";
+import Card from "../../components/Card.jsx";
+import Toggle from "../../components/Toggle.jsx";
+import StatusPill from "../../components/StatusPill.jsx";
 
-const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
-const hintClass = "text-xs text-slate-500";
+const hintClass = "text-xs text-ink-faint";
+const btnGhost =
+  "rounded-md border border-border-strong bg-surface px-3 py-1 text-xs font-medium text-ink transition-colors hover:border-ink-faint disabled:opacity-50";
+const timeInputClass =
+  "rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
 
-const WEBHOOK_STATUS_STYLES = {
-  active: "bg-green-100 text-green-800",
-  not_registered: "bg-slate-100 text-slate-600",
-  deactivated: "bg-red-100 text-red-800",
-  error: "bg-red-100 text-red-800",
-};
+function webhookPill(status) {
+  if (status === "active") return <StatusPill variant="success" label="Active" />;
+  if (status === "not_registered") return <StatusPill variant="draft" label="Not registered" />;
+  return <StatusPill variant="error" label={status.replace("_", " ")} />;
+}
 
 // Evenly spaces `n` times across a 24h UTC day starting at midnight, e.g.
 // n=2 -> ["00:00", "12:00"], n=4 -> ["00:00", "06:00", "12:00", "18:00"].
@@ -67,26 +72,21 @@ export default function SettingsAutoSync({ settings, markDirty }) {
   }
 
   return (
-    <>
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Auto Sync</h2>
+    <div className="flex flex-col gap-5">
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Auto Sync</h2>
         <p className={`mb-4 ${hintClass}`}>
           Automatically translate content when it's published in Webflow, based on the collections and
-          conditions configured below. A third mode alongside Full Sync and Item Sync -- passive, not manually
+          conditions configured below. A third mode alongside Bulk Sync and Item Sync -- passive, not manually
           triggered.
         </p>
 
-        <label className="flex items-center gap-1.5 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={autoSync.enabled}
-            onChange={(e) => markAutoSyncDirty({ enabled: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
-          />
+        <label className="flex items-center gap-2 text-sm text-ink-soft">
+          <Toggle checked={autoSync.enabled} onChange={(e) => markAutoSyncDirty({ enabled: e.target.checked })} label="Enable Auto Sync" />
           Enable Auto Sync
         </label>
 
-        <label className="mt-4 flex flex-col gap-1 text-sm font-medium text-slate-700">
+        <label className="mt-4 flex flex-col gap-1 text-sm font-medium text-ink-soft">
           Number of flushes per day:
           <input
             type="number"
@@ -94,7 +94,7 @@ export default function SettingsAutoSync({ settings, markDirty }) {
             max={24}
             value={autoSync.flushTimes.length}
             onChange={(e) => setFlushCount(Number(e.target.value) || 1)}
-            className="w-24 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="w-24 rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </label>
         <p className={`mt-1 ${hintClass}`}>
@@ -105,23 +105,18 @@ export default function SettingsAutoSync({ settings, markDirty }) {
         <div className="mt-3 flex flex-col gap-2">
           {autoSync.flushTimes.map((t, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input
-                type="time"
-                value={t}
-                onChange={(e) => setFlushTimeAt(i, e.target.value)}
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
+              <input type="time" value={t} onChange={(e) => setFlushTimeAt(i, e.target.value)} className={timeInputClass} />
               <button
                 type="button"
                 onClick={() => removeFlushTimeAt(i)}
                 disabled={autoSync.flushTimes.length <= 1}
-                className="text-xs text-red-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                className="text-xs text-status-error-fg hover:underline disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Remove
               </button>
             </div>
           ))}
-          <button type="button" onClick={addFlushTime} className="self-start text-xs font-medium text-brand-600 hover:underline">
+          <button type="button" onClick={addFlushTime} className="self-start text-xs font-medium text-accent-text hover:underline">
             + Add flush time
           </button>
         </div>
@@ -131,52 +126,42 @@ export default function SettingsAutoSync({ settings, markDirty }) {
           project per publish. Use "Flush now" on the Sync Panel's Auto Sync tab to send the current queue
           immediately without waiting.
         </p>
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Webflow webhook</h2>
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Webflow webhook</h2>
         <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-              WEBHOOK_STATUS_STYLES[autoSync.webhook.status] || "bg-slate-100 text-slate-600"
-            }`}
-          >
-            {autoSync.webhook.status.replace("_", " ")}
-          </span>
+          {webhookPill(autoSync.webhook.status)}
           {autoSync.webhook.status !== "active" && autoSync.enabled && (
-            <button
-              onClick={reregisterWebhook}
-              disabled={reregistering}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
+            <button onClick={reregisterWebhook} disabled={reregistering} className={btnGhost}>
               {reregistering ? "Registering..." : "Re-register webhook"}
             </button>
           )}
         </div>
         <table className="mt-3 w-full text-left text-sm">
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-border">
             <tr>
-              <td className="py-1.5 pr-4 font-medium text-slate-500">Registered</td>
-              <td className="py-1.5 text-slate-800">{formatDateTime(autoSync.webhook.registeredAt, settings.timezone)}</td>
+              <td className="py-1.5 pr-4 font-medium text-ink-faint">Registered</td>
+              <td className="py-1.5 text-ink">{formatDateTime(autoSync.webhook.registeredAt, settings.timezone)}</td>
             </tr>
             <tr>
-              <td className="py-1.5 pr-4 font-medium text-slate-500">Last event received</td>
-              <td className="py-1.5 text-slate-800">{formatDateTime(autoSync.webhook.lastEventAt, settings.timezone)}</td>
+              <td className="py-1.5 pr-4 font-medium text-ink-faint">Last event received</td>
+              <td className="py-1.5 text-ink">{formatDateTime(autoSync.webhook.lastEventAt, settings.timezone)}</td>
             </tr>
             {autoSync.webhook.lastError && (
               <tr>
-                <td className="py-1.5 pr-4 font-medium text-slate-500">Last error</td>
-                <td className="py-1.5 text-red-600">{autoSync.webhook.lastError}</td>
+                <td className="py-1.5 pr-4 font-medium text-ink-faint">Last error</td>
+                <td className="py-1.5 text-status-error-fg">{autoSync.webhook.lastError}</td>
               </tr>
             )}
           </tbody>
         </table>
-        {reregisterError && <p className="mt-2 text-sm font-medium text-red-600">{reregisterError}</p>}
+        {reregisterError && <p className="mt-2 text-sm font-medium text-status-error-fg">{reregisterError}</p>}
         <p className={`mt-3 ${hintClass}`}>
           Level 2 (which collections) and Level 3 (per-field conditions) are configured on the Collections page,
           next to each collection's existing sync settings.
         </p>
-      </section>
-    </>
+      </Card>
+    </div>
   );
 }

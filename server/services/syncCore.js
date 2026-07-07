@@ -39,7 +39,7 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
 /**
  * Adds one Webflow CMS item to an *already-created* wxrks project as a
  * single resource (all its translatable fields bundled into one JSON
- * file) + one work unit. A whole sync run (Full Sync, a multi-item Item
+ * file) + one work unit. A whole sync run (Bulk Sync, a multi-item Item
  * Sync selection, or an Auto Sync flush) shares a single wxrks project
  * rather than creating one project per item, and each item gets exactly
  * one work unit rather than one per field.

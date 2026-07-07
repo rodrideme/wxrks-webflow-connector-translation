@@ -1,3 +1,6 @@
+import Card from "../../components/Card.jsx";
+import Toggle from "../../components/Toggle.jsx";
+
 function buildPreviewName(pattern) {
   const name = (pattern || "")
     .replace(/{collection}/g, "blog")
@@ -16,12 +19,14 @@ function listTimezones() {
   }
 }
 
-const cardClass = "mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm";
-const labelClass = "flex flex-col gap-1 text-sm font-medium text-slate-700";
+const labelClass = "flex flex-col gap-1 text-sm font-medium text-ink-soft";
 const selectClass =
-  "w-72 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
-const hintClass = "text-xs text-slate-500";
-const linkButtonClass = "text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline";
+  "w-72 rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+const inputClass =
+  "w-80 rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+const hintClass = "text-xs text-ink-faint";
+const linkButtonClass = "text-xs font-medium text-accent-text hover:underline";
+const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
 
 export default function SettingsGeneral({
   settings,
@@ -36,9 +41,9 @@ export default function SettingsGeneral({
   markDirty,
 }) {
   return (
-    <>
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">wxrks org unit</h2>
+    <div className="flex flex-col gap-5">
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">wxrks org unit</h2>
         <label className={labelClass}>
           Org unit:
           <select value={settings.orgUnitUUID || ""} onChange={(e) => selectOrgUnit(e.target.value)} className={selectClass}>
@@ -53,18 +58,18 @@ export default function SettingsGeneral({
         <p className={`mt-1 ${hintClass}`}>Projects and work units are created under this org unit in wxrks.</p>
 
         {settings.orgUnitUUID && (
-          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+          <div className="mt-3 rounded-md border border-border bg-surface-sunken p-3 text-sm">
             {orgUnitResourcesLoading && <p className={hintClass}>Loading translation memories &amp; glossaries...</p>}
             {orgUnitResources && (
               <>
-                <p className="text-slate-700">
-                  <strong className="text-slate-900">Translation memories:</strong>{" "}
+                <p className="text-ink-soft">
+                  <strong className="text-ink">Translation memories:</strong>{" "}
                   {orgUnitResources.translationMemories.length === 0
                     ? "none bound to this org unit"
                     : orgUnitResources.translationMemories.map((tm) => tm.name).join(", ")}
                 </p>
-                <p className="mt-1 text-slate-700">
-                  <strong className="text-slate-900">Glossaries:</strong>{" "}
+                <p className="mt-1 text-ink-soft">
+                  <strong className="text-ink">Glossaries:</strong>{" "}
                   {orgUnitResources.glossaries.length === 0
                     ? "none bound to this org unit"
                     : orgUnitResources.glossaries.map((g) => g.name).join(", ")}
@@ -76,17 +81,17 @@ export default function SettingsGeneral({
             )}
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Locales</h2>
-        <p className="text-sm text-slate-700">
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Locales</h2>
+        <p className="text-sm text-ink-soft">
           Source locale (fixed by your Webflow site config):{" "}
-          <strong className="text-slate-900">{webflowLocales?.primary?.displayName || settings.sourceLocale}</strong>
+          <strong className="text-ink">{webflowLocales?.primary?.displayName || settings.sourceLocale}</strong>
         </p>
 
         <fieldset className="mt-4">
-          <legend className="mb-1 text-sm font-semibold text-slate-900">Target locales</legend>
+          <legend className="mb-1 text-sm font-semibold text-ink">Target locales</legend>
           {webflowLocales?.secondary?.length > 0 && (
             <p className="mb-2">
               <button type="button" className={linkButtonClass} onClick={checkAllTargetLocales}>
@@ -98,16 +103,15 @@ export default function SettingsGeneral({
               </button>
             </p>
           )}
-          <div className="flex flex-wrap gap-x-4 gap-y-2">
+          <div className="flex flex-wrap gap-x-5 gap-y-2.5">
             {(webflowLocales?.secondary || []).map((locale) => (
-              <label key={locale.tag} className="inline-flex items-center gap-1.5 text-sm text-slate-700">
-                <input
-                  type="checkbox"
+              <label key={locale.tag} className="inline-flex items-center gap-2 text-sm text-ink-soft">
+                <Toggle
                   checked={settings.targetLocales.includes(locale.tag)}
                   onChange={() => toggleTargetLocale(locale.tag)}
-                  className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+                  label={`${locale.displayName} (${locale.tag})`}
                 />
-                {locale.displayName} ({locale.tag})
+                {locale.displayName} <span className="font-mono text-xs text-ink-faint">{locale.tag}</span>
               </label>
             ))}
           </div>
@@ -117,10 +121,10 @@ export default function SettingsGeneral({
           Only locales actually enabled on your Webflow site are shown here — Webflow silently falls back
           to the primary locale for anything else, so free-typed codes aren't offered.
         </p>
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Timezone</h2>
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Timezone</h2>
         <label className={labelClass}>
           Timezone:
           <select
@@ -139,52 +143,50 @@ export default function SettingsGeneral({
           Used for Auto Sync's flush times (Settings → Auto Sync) and every date/time shown throughout this
           app, so everyone viewing it sees the same wall-clock time regardless of their own browser's zone.
         </p>
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Work unit naming</h2>
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Work unit naming</h2>
         <label className={labelClass}>
           Pattern:
           <input
             type="text"
             value={settings.workUnitNamePattern}
             onChange={(e) => markDirty({ workUnitNamePattern: e.target.value })}
-            className="w-80 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className={inputClass}
           />
         </label>
         <p className={`mt-2 ${hintClass}`}>
-          Placeholders: <code className="rounded bg-slate-100 px-1 py-0.5">{"{collection}"}</code>,{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5">{"{entry}"}</code>. Preview:{" "}
-          <strong className="text-slate-900">{buildPreviewName(settings.workUnitNamePattern)}</strong>
+          Placeholders: <code className={codeClass}>{"{collection}"}</code>,{" "}
+          <code className={codeClass}>{"{entry}"}</code>. Preview:{" "}
+          <strong className="text-ink">{buildPreviewName(settings.workUnitNamePattern)}</strong>
         </p>
         <p className={`mt-1 ${hintClass}`}>
           This becomes the wxrks resource/work-unit name — one per Webflow entry (all its translatable
-          fields bundled together). Keep <code className="rounded bg-slate-100 px-1 py-0.5">{"{entry}"}</code> in the
+          fields bundled together). Keep <code className={codeClass}>{"{entry}"}</code> in the
           pattern so names stay unique within a project.
         </p>
-      </section>
+      </Card>
 
-      <section className={cardClass}>
-        <h2 className="mb-3 text-base font-semibold text-slate-900">Automation</h2>
-        <label className="flex items-center gap-1.5 text-sm text-slate-700">
-          <input
-            type="checkbox"
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Automation</h2>
+        <label className="flex items-center gap-2 text-sm text-ink-soft">
+          <Toggle
             checked={settings.autoApprove}
             onChange={(e) => markDirty({ autoApprove: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+            label="Auto-approve wxrks projects"
           />
           Auto-approve wxrks projects (skip manual approval so translation starts immediately)
         </label>
-        <label className="mt-2 flex items-center gap-1.5 text-sm text-slate-700">
-          <input
-            type="checkbox"
+        <label className="mt-3 flex items-center gap-2 text-sm text-ink-soft">
+          <Toggle
             checked={settings.autoPublish}
             onChange={(e) => markDirty({ autoPublish: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
+            label="Auto-publish translated Webflow items"
           />
           Auto-publish translated Webflow items (otherwise leave as Draft)
         </label>
-      </section>
-    </>
+      </Card>
+    </div>
   );
 }

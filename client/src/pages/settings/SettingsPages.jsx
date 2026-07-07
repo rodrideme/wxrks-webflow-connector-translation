@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import api from "../../services/api.js";
 import { formatDateOnly } from "../../formatDate.js";
+import Card from "../../components/Card.jsx";
+import Toggle from "../../components/Toggle.jsx";
 
-const linkButtonClass = "text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline";
+const linkButtonClass = "text-xs font-medium text-accent-text hover:underline";
 
 export default function SettingsPages({ settings, markDirty, timezone }) {
   const [pages, setPages] = useState([]);
@@ -46,13 +48,13 @@ export default function SettingsPages({ settings, markDirty, timezone }) {
     markDirty({ pages: { ...settings.pages, allPagesEnabled: false, enabledPageIds: [] } });
   }
 
-  if (loading) return <p className="text-slate-600">Loading pages...</p>;
+  if (loading) return <p className="text-sm text-ink-soft">Loading pages...</p>;
 
   return (
     <div>
-      {error && <p className="mb-3 text-sm font-medium text-red-600">Error: {error}</p>}
+      {error && <p className="mb-3 text-sm font-medium text-status-error-fg">Error: {error}</p>}
       {pages.length > 0 && (
-        <p className="mb-3">
+        <p className="mb-3 text-sm text-ink-soft">
           <button type="button" className={linkButtonClass} onClick={checkAll}>
             Check all
           </button>{" "}
@@ -63,37 +65,34 @@ export default function SettingsPages({ settings, markDirty, timezone }) {
           {" — manual sync."}
         </p>
       )}
-      {pages.length === 0 && <p className="text-sm text-slate-500">No static pages found.</p>}
+      {pages.length === 0 && <p className="text-sm text-ink-faint">No static pages found.</p>}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      <Card>
+        <div className="max-h-[32rem] overflow-auto">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <thead className="sticky top-0 z-10 bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
             <tr>
-              <th className="px-3 py-2">Sync</th>
-              <th className="px-3 py-2">Page</th>
-              <th className="px-3 py-2">Slug</th>
-              <th className="px-3 py-2">Last updated</th>
+              <th className="whitespace-nowrap px-3.5 py-2">Sync</th>
+              <th className="whitespace-nowrap px-3 py-2">Page</th>
+              <th className="whitespace-nowrap px-3 py-2">Slug</th>
+              <th className="whitespace-nowrap px-3 py-2">Last updated</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-border">
             {pages.map((page) => (
-              <tr key={page.id} className="hover:bg-slate-50">
-                <td className="px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={isPageEnabled(page.id)}
-                    onChange={() => togglePage(page.id)}
-                    className="h-4 w-4 rounded border-slate-300 text-brand-500 focus:ring-brand-500"
-                  />
+              <tr key={page.id} className="hover:bg-surface-sunken">
+                <td className="px-3.5 py-2.5">
+                  <Toggle checked={isPageEnabled(page.id)} onChange={() => togglePage(page.id)} label={page.title} />
                 </td>
-                <td className="px-3 py-2 text-slate-900">{page.title}</td>
-                <td className="px-3 py-2 text-slate-600">{page.slug}</td>
-                <td className="px-3 py-2 text-slate-600">{formatDateOnly(page.lastUpdated, timezone)}</td>
+                <td className="px-3 py-2.5 font-medium text-ink">{page.title}</td>
+                <td className="px-3 py-2.5 font-mono text-xs text-ink-faint">{page.slug}</td>
+                <td className="px-3 py-2.5 font-mono text-xs text-ink-faint">{formatDateOnly(page.lastUpdated, timezone)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }

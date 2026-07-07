@@ -56,7 +56,7 @@ router.post("/bulk", async (req, res) => {
 
     const orgUnitUUID = settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const project = await wxrks.createProject({
-      reference: `Pages Full Sync ${new Date().toISOString()}`,
+      reference: `Pages Bulk Sync ${new Date().toISOString()}`,
       sourceLocale,
       orgUnitUUID,
     });
