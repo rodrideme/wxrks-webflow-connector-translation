@@ -187,17 +187,23 @@ router.post("/wxrks", async (req, res) => {
 /**
  * POST /api/webhooks/webflow
  * Fired by Webflow on "collection_item_published". Live-verified payload
- * shape: { payload: { id, siteId, workspaceId, collectionId, cmsLocaleId,
- * isDraft, isArchived, lastPublished, lastUpdated, createdOn, fieldData },
- * triggerType }.
+ * shape: { payload: { items: [ { id, siteId, workspaceId, collectionId,
+ * cmsLocaleId, isDraft, isArchived, lastPublished, lastUpdated, createdOn,
+ * fieldData }, ... ] }, triggerType } -- note the `items` ARRAY wrapper.
+ * This differs from `collection_item_changed`'s flat single-item payload
+ * (confirmed via an earlier live test of that trigger type only); Webflow
+ * batches multiple items into one `collection_item_published` delivery when
+ * several are published together (e.g. a bulk "Publish all" action), so
+ * every item in the array must be processed, not just one.
  *
  * IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
- * edited (live-tested: it reports the primary locale's id even when only a
- * secondary locale's field changed) -- do not use it for loop-prevention.
- * Instead this route checks autoSyncSelfWrites (a blanket per-item cooldown
- * marked by the /wxrks handler above whenever it pushes a translation back),
- * and always re-fetches the item fresh via the primary locale rather than
- * trusting payload.fieldData for content.
+ * edited (live-tested against `collection_item_changed`: it reports the
+ * primary locale's id even when only a secondary locale's field changed) --
+ * do not use it for loop-prevention. Instead this route checks
+ * autoSyncSelfWrites (a blanket per-item cooldown marked by the /wxrks
+ * handler above whenever it pushes a translation back), and always
+ * re-fetches each item fresh via the primary locale rather than trusting
+ * payload fieldData for content.
  */
 router.post("/webflow", async (req, res) => {
   // TEMPORARY: capture every inbound Webflow webhook (shared ring buffer with
@@ -229,45 +235,52 @@ router.post("/webflow", async (req, res) => {
   }
 
   const { payload, triggerType } = req.body || {};
-  if (triggerType !== autoSyncWebhook.TRIGGER_TYPE || !payload) {
+  const items = payload?.items;
+  if (triggerType !== autoSyncWebhook.TRIGGER_TYPE || !Array.isArray(items)) {
     return res.status(200).json({ ignored: true, reason: `unhandled trigger: ${triggerType}` });
   }
 
-  const { id: itemId, collectionId, isDraft, isArchived } = payload;
-  if (isDraft || isArchived) {
-    return res.status(200).json({ ignored: true, reason: "draft or archived" });
-  }
-  if (autoSyncSelfWrites.isRecentSelfWrite(collectionId, itemId)) {
-    return res.status(200).json({ ignored: true, reason: "recent self-write (translation push-back echo)" });
-  }
-
-  try {
-    const collection = await webflow.getCollection(collectionId);
-    const locales = await webflow.getSiteLocales();
-    // Always re-fetch fresh primary-locale content rather than trusting
-    // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
-    const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
-
-    const qualifies = evaluateAutoSyncRules(settings, collection, item);
-    console.log(
-      `Auto Sync evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies=${qualifies}`,
-      JSON.stringify({
-        autoSyncEnabled: settings.autoSync.enabled,
-        allCollectionsEnabled: settings.autoSync.allCollectionsEnabled,
-        collectionInAllowList: settings.autoSync.enabledCollectionIds.includes(collectionId),
-        conditions: settings.autoSync.fieldConditions[collectionId] || [],
-        itemIsDraft: item.isDraft,
-        itemIsArchived: item.isArchived,
-      })
-    );
-    if (qualifies) {
-      autoSyncQueue.enqueue({ collection, item });
+  const results = [];
+  for (const itemPayload of items) {
+    const { id: itemId, collectionId, isDraft, isArchived } = itemPayload;
+    if (isDraft || isArchived) {
+      results.push({ itemId, qualified: false, reason: "draft or archived" });
+      continue;
+    }
+    if (autoSyncSelfWrites.isRecentSelfWrite(collectionId, itemId)) {
+      results.push({ itemId, qualified: false, reason: "recent self-write (translation push-back echo)" });
+      continue;
     }
 
-    res.json({ received: true, qualified: qualifies });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
+    try {
+      const collection = await webflow.getCollection(collectionId);
+      const locales = await webflow.getSiteLocales();
+      // Always re-fetch fresh primary-locale content rather than trusting
+      // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
+      const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
+
+      const qualifies = evaluateAutoSyncRules(settings, collection, item);
+      console.log(
+        `Auto Sync evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies=${qualifies}`,
+        JSON.stringify({
+          autoSyncEnabled: settings.autoSync.enabled,
+          allCollectionsEnabled: settings.autoSync.allCollectionsEnabled,
+          collectionInAllowList: settings.autoSync.enabledCollectionIds.includes(collectionId),
+          conditions: settings.autoSync.fieldConditions[collectionId] || [],
+          itemIsDraft: item.isDraft,
+          itemIsArchived: item.isArchived,
+        })
+      );
+      if (qualifies) {
+        autoSyncQueue.enqueue({ collection, item });
+      }
+      results.push({ itemId, qualified: qualifies });
+    } catch (err) {
+      results.push({ itemId, error: err.message });
+    }
   }
+
+  res.json({ received: true, results });
 });
 
 // TEMPORARY: inspect recent raw webhook payloads wxrks actually sent, to
