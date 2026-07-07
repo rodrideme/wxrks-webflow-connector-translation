@@ -200,6 +200,13 @@ router.post("/wxrks", async (req, res) => {
  * trusting payload.fieldData for content.
  */
 router.post("/webflow", async (req, res) => {
+  // TEMPORARY: capture every inbound Webflow webhook (shared ring buffer with
+  // the wxrks debug capture below, tagged so they're distinguishable) --
+  // added to diagnose why a real publish event didn't result in a queued
+  // item. Remove once Auto Sync is fully proven out live.
+  await store.setDebugWebhookPayload({ source: "webflow", headers: req.headers, body: req.body }).catch(() => {});
+  console.log("webflow webhook payload:", JSON.stringify(req.body, null, 2));
+
   const settings = await store.getSettings();
   const { signingSecret } = settings.autoSync.webhook;
 
@@ -242,6 +249,17 @@ router.post("/webflow", async (req, res) => {
     const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
 
     const qualifies = evaluateAutoSyncRules(settings, collection, item);
+    console.log(
+      `Auto Sync evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies=${qualifies}`,
+      JSON.stringify({
+        autoSyncEnabled: settings.autoSync.enabled,
+        allCollectionsEnabled: settings.autoSync.allCollectionsEnabled,
+        collectionInAllowList: settings.autoSync.enabledCollectionIds.includes(collectionId),
+        conditions: settings.autoSync.fieldConditions[collectionId] || [],
+        itemIsDraft: item.isDraft,
+        itemIsArchived: item.isArchived,
+      })
+    );
     if (qualifies) {
       autoSyncQueue.enqueue({ collection, item });
     }
