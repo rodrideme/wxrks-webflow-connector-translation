@@ -98,4 +98,4 @@ function stopReconciliationLoop() {
   reconciliationTimer = null;
 }
 
-module.exports = { reconcile, startReconciliationLoop, stopReconciliationLoop };
+module.exports = { reconcile, reconcileAutomation, startReconciliationLoop, stopReconciliationLoop };

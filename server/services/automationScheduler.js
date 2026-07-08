@@ -14,6 +14,7 @@ const webflow = require("./webflow");
 const webflowDom = require("./webflowDom");
 const store = require("../store");
 const autoSyncQueue = require("./autoSyncQueue");
+const autoSyncReconciliation = require("./autoSyncReconciliation");
 
 function leafIds(automation, kind) {
   return (automation.contentScope.leaves || []).filter((l) => l.kind === kind).map((l) => l.id);
@@ -91,4 +92,34 @@ async function runAutomationCycle(automation) {
   await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
 }
 
-module.exports = { runAutomationCycle };
+/**
+ * Runs immediately when a new automation is created with "include existing
+ * content on the first run" checked -- otherwise the backfill only happened
+ * passively, on whichever came first: this automation's own cadence tick
+ * (could be a full day away for a daily/weekly schedule) or the hourly CMS
+ * reconciliation safety net. Neither is "right away", which is what the
+ * wizard's checkbox copy promises. Mirrors runAutomationCycle but also scans
+ * CMS collections (reconciliation's per-automation scan, reused directly
+ * since its cutoff/qualification logic already does the right thing for a
+ * checkpoint-less automation) and flushes once at the end so a scope
+ * spanning multiple content kinds still lands in a single wxrks project.
+ */
+async function runFirstSyncNow(automation) {
+  const settings = await store.getSettings();
+  const scanCutoff = new Date();
+
+  const allCollections = await webflow.listCollections();
+  await autoSyncReconciliation.reconcileAutomation(automation, allCollections);
+
+  if (needsPagesScan(automation)) {
+    await scanAndEnqueuePages(automation);
+  }
+  if (needsComponentsScan(automation)) {
+    await scanAndEnqueueComponents(automation, settings);
+  }
+
+  await autoSyncQueue.flush(automation.id);
+  await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
+}
+
+module.exports = { runAutomationCycle, runFirstSyncNow };

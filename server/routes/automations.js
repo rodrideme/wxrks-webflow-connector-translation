@@ -73,7 +73,28 @@ router.post("/", async (req, res) => {
       includeExisting,
       orgUnitOverride,
     });
-    await syncWebhookRegistrationToAutomationsState();
+
+    if (automation.includeExisting) {
+      // Backfill currently-matching content right away rather than waiting
+      // for this automation's own cadence tick (up to a day away) or the
+      // hourly CMS reconciliation safety net -- runs in the background so
+      // the wizard doesn't block on what can be a large sync.
+      automationScheduler
+        .runFirstSyncNow(automation)
+        .catch((err) => console.error(`Automation "${automation.name}" first-run sync failed:`, err.message));
+    }
+
+    // Best-effort: the automation is already saved at this point, and a
+    // failed (re)registration is already surfaced persistently via the
+    // Runs page's webhook status pill -- it shouldn't turn a successful
+    // creation into an error response (and, before this fix, threw before
+    // the includeExisting backfill above ever got a chance to run).
+    try {
+      await syncWebhookRegistrationToAutomationsState();
+    } catch (err) {
+      console.error("Webhook registration sync failed after creating automation:", err.message);
+    }
+
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -98,7 +119,11 @@ router.put("/:id", async (req, res) => {
 
     const automation = await store.updateAutomation(req.params.id, patch);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    await syncWebhookRegistrationToAutomationsState();
+    try {
+      await syncWebhookRegistrationToAutomationsState();
+    } catch (err) {
+      console.error("Webhook registration sync failed after updating automation:", err.message);
+    }
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
