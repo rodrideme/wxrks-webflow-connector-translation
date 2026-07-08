@@ -122,4 +122,32 @@ async function runFirstSyncNow(automation) {
   await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
 }
 
-module.exports = { runAutomationCycle, runFirstSyncNow };
+/**
+ * Fired from the site_publish webhook (routes/webhooks.js) -- scans every
+ * enabled, non-archived automation that needs Pages/Components and enqueues
+ * anything new/changed, WITHOUT flushing or advancing its checkpoint. This
+ * mirrors the CMS live webhook's own behavior (enqueue only; sending to
+ * wxrks still waits for the automation's own cadence tick or a manual
+ * flush) -- Pages/Components previously only got scanned at all on that
+ * same cadence tick, so a page/component published between ticks wouldn't
+ * even show up in the pending queue until the next one (up to a day away
+ * for a daily schedule). Safe to call as often as publishes arrive: both
+ * scan functions enqueue idempotently (autoSyncQueue's map overwrites by
+ * key) and skip anything already synced.
+ */
+async function scanAndEnqueueForPublishEvent() {
+  const settings = await store.getSettings();
+  const automations = await store.listAutomations();
+  const relevant = automations.filter((a) => a.enabled && !a.archived && (needsPagesScan(a) || needsComponentsScan(a)));
+
+  for (const automation of relevant) {
+    if (needsPagesScan(automation)) {
+      await scanAndEnqueuePages(automation);
+    }
+    if (needsComponentsScan(automation)) {
+      await scanAndEnqueueComponents(automation, settings);
+    }
+  }
+}
+
+module.exports = { runAutomationCycle, runFirstSyncNow, scanAndEnqueueForPublishEvent };

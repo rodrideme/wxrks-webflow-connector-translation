@@ -3,21 +3,27 @@ const webflow = require("./webflow");
 const store = require("../store");
 
 const TRIGGER_TYPE = "collection_item_published";
+// Pages/Components have no per-entity webhook in Webflow's API -- this is
+// the closest available signal (fires on any Designer publish action), used
+// to trigger an immediate scan+enqueue for Pages/Components automations
+// instead of waiting for their own cadence tick (see routes/webhooks.js and
+// automationScheduler.scanAndEnqueueForPublishEvent).
+const PAGES_TRIGGER_TYPE = "site_publish";
 const WEBHOOK_PATH = "/api/webhooks/webflow";
 
 /**
- * Registers (or confirms already-registered) the Webflow webhook CMS
- * Automation relies on. Called whenever an automation CRUD mutation changes
- * whether any enabled cms/all automation exists (see
- * routes/automations.js's syncWebhookRegistrationToAutomationsState), and as
- * a startup self-heal check. Lists existing webhooks first to avoid leaking
- * duplicate registrations across repeated create/delete/pause/resume calls
- * (Webflow caps registrations at 75 per trigger type per site).
+ * Registers (or confirms already-registered) one webhook, generic over
+ * trigger type/settings-state so the CMS (`collection_item_published`) and
+ * Pages/Components (`site_publish`) registrations -- two independent Webflow
+ * webhook registrations, each with its own secretKey -- share one
+ * implementation. Lists existing webhooks first to avoid leaking duplicate
+ * registrations across repeated create/delete/pause/resume calls (Webflow
+ * caps registrations at 75 per trigger type per site).
  */
-async function ensureWebhookRegistered() {
+async function ensureRegistered(triggerType, updateState) {
   const appBaseUrl = process.env.APP_BASE_URL;
   if (!appBaseUrl) {
-    await store.updateAutoSyncWebhookState({
+    await updateState({
       status: "error",
       lastError: "APP_BASE_URL is not configured -- cannot register a Webflow webhook without a public URL",
     });
@@ -26,19 +32,15 @@ async function ensureWebhookRegistered() {
   const url = `${appBaseUrl.replace(/\/$/, "")}${WEBHOOK_PATH}`;
 
   const existing = await webflow.listWebhooks();
-  const alreadyRegistered = existing.find((h) => h.triggerType === TRIGGER_TYPE && h.url === url);
+  const alreadyRegistered = existing.find((h) => h.triggerType === triggerType && h.url === url);
   if (alreadyRegistered) {
-    await store.updateAutoSyncWebhookState({
-      webflowWebhookId: alreadyRegistered.id,
-      status: "active",
-      lastError: null,
-    });
+    await updateState({ webflowWebhookId: alreadyRegistered.id, status: "active", lastError: null });
     return alreadyRegistered;
   }
 
   try {
-    const hook = await webflow.registerWebhook(TRIGGER_TYPE, url);
-    await store.updateAutoSyncWebhookState({
+    const hook = await webflow.registerWebhook(triggerType, url);
+    await updateState({
       webflowWebhookId: hook.id,
       signingSecret: hook.secretKey,
       registeredAt: new Date().toISOString(),
@@ -47,19 +49,17 @@ async function ensureWebhookRegistered() {
     });
     return hook;
   } catch (err) {
-    await store.updateAutoSyncWebhookState({ status: "error", lastError: err.message });
+    await updateState({ status: "error", lastError: err.message });
     throw err;
   }
 }
 
 /**
- * Deletes the registered webhook once no enabled cms/all automation exists
- * anymore. Not calling this would leave a live webhook silently posting into
- * a feature the admin thinks is fully paused/deleted.
+ * Deletes a registered webhook once no enabled automation needs it anymore.
+ * Not calling this would leave a live webhook silently posting into a
+ * feature the admin thinks is fully paused/deleted.
  */
-async function teardownWebhook() {
-  const settings = await store.getSettings();
-  const { webflowWebhookId } = settings.autoSyncWebhook;
+async function teardown(webflowWebhookId, updateState) {
   if (webflowWebhookId) {
     try {
       await webflow.deleteWebhook(webflowWebhookId);
@@ -69,13 +69,25 @@ async function teardownWebhook() {
       console.error(`Failed to delete Webflow webhook ${webflowWebhookId}:`, err.message);
     }
   }
-  await store.updateAutoSyncWebhookState({
-    webflowWebhookId: null,
-    signingSecret: null,
-    registeredAt: null,
-    status: "not_registered",
-    lastError: null,
-  });
+  await updateState({ webflowWebhookId: null, signingSecret: null, registeredAt: null, status: "not_registered", lastError: null });
+}
+
+async function ensureWebhookRegistered() {
+  return ensureRegistered(TRIGGER_TYPE, (patch) => store.updateAutoSyncWebhookState(patch));
+}
+
+async function teardownWebhook() {
+  const settings = await store.getSettings();
+  return teardown(settings.autoSyncWebhook.webflowWebhookId, (patch) => store.updateAutoSyncWebhookState(patch));
+}
+
+async function ensurePagesWebhookRegistered() {
+  return ensureRegistered(PAGES_TRIGGER_TYPE, (patch) => store.updateSitePublishWebhookState(patch));
+}
+
+async function teardownPagesWebhook() {
+  const settings = await store.getSettings();
+  return teardown(settings.sitePublishWebhook.webflowWebhookId, (patch) => store.updateSitePublishWebhookState(patch));
 }
 
 /**
@@ -103,4 +115,12 @@ function verifySignature({ rawBody, signature, timestamp, signingSecret }) {
   return crypto.timingSafeEqual(expectedBuf, actualBuf);
 }
 
-module.exports = { ensureWebhookRegistered, teardownWebhook, verifySignature, TRIGGER_TYPE };
+module.exports = {
+  ensureWebhookRegistered,
+  teardownWebhook,
+  ensurePagesWebhookRegistered,
+  teardownPagesWebhook,
+  verifySignature,
+  TRIGGER_TYPE,
+  PAGES_TRIGGER_TYPE,
+};

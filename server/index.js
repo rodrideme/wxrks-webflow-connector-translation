@@ -163,7 +163,7 @@ db.migrate()
     await migrateLegacyAutoSyncIfNeeded();
     await migrateAutomationsToLeafShapeIfNeeded();
 
-    // Startup self-heal: register/teardown the shared Webflow webhook based
+    // Startup self-heal: register/teardown the shared Webflow webhooks based
     // on current automations state, in case a prior process crashed
     // mid-registration or mid-teardown. Cheap and idempotent.
     const automations = await store.listAutomations();
@@ -172,6 +172,15 @@ db.migrate()
     );
     if (anyNeedsWebhook) {
       autoSyncWebhook.ensureWebhookRegistered().catch((err) => console.error("Automation webhook self-heal failed:", err.message));
+    }
+    const anyNeedsPagesWebhook = automations.some(
+      (a) =>
+        a.enabled &&
+        !a.archived &&
+        (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
+    );
+    if (anyNeedsPagesWebhook) {
+      autoSyncWebhook.ensurePagesWebhookRegistered().catch((err) => console.error("Pages webhook self-heal failed:", err.message));
     }
 
     autoSyncQueue.startFlushLoop();

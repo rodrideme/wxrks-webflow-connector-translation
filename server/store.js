@@ -73,6 +73,21 @@ const DEFAULT_SETTINGS = {
     status: "not_registered", // "not_registered" | "active" | "deactivated" | "error"
     lastError: null,
   },
+  // Pages/Components have no per-entity webhook in Webflow's API (confirmed
+  // live) -- this registers the closest available signal, "site_publish"
+  // (fires on any Designer publish action), used to trigger an immediate
+  // scan+enqueue for Pages/Components automations instead of waiting for
+  // their own cadence tick. Same shape as autoSyncWebhook, tracked
+  // separately since each is its own Webflow webhook registration with its
+  // own signing secret.
+  sitePublishWebhook: {
+    webflowWebhookId: null,
+    signingSecret: null,
+    registeredAt: null,
+    lastEventAt: null,
+    status: "not_registered",
+    lastError: null,
+  },
 };
 
 // jobId -> { id, mode, total, processed, results: [], status, cancelled, startedAt }
@@ -290,6 +305,10 @@ function mergeSettings(stored) {
     ...DEFAULT_SETTINGS.autoSyncWebhook,
     ...(stored.autoSyncWebhook || {}),
   };
+  merged.sitePublishWebhook = {
+    ...DEFAULT_SETTINGS.sitePublishWebhook,
+    ...(stored.sitePublishWebhook || {}),
+  };
   merged.pages = {
     ...DEFAULT_SETTINGS.pages,
     ...(stored.pages || {}),
@@ -365,6 +384,13 @@ async function updateAutoSyncWebhookState(patch) {
   const autoSyncWebhook = { ...settings.autoSyncWebhook, ...patch };
   await updateSettings({ autoSyncWebhook });
   return autoSyncWebhook;
+}
+
+async function updateSitePublishWebhookState(patch) {
+  const settings = await getSettings();
+  const sitePublishWebhook = { ...settings.sitePublishWebhook, ...patch };
+  await updateSettings({ sitePublishWebhook });
+  return sitePublishWebhook;
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +686,7 @@ module.exports = {
   getFieldExclusions,
   setFieldExclusions,
   updateAutoSyncWebhookState,
+  updateSitePublishWebhookState,
   listAutomations,
   getAutomation,
   createAutomation,

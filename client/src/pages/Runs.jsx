@@ -46,16 +46,17 @@ function cadenceLabel(cadence) {
   return `Daily · ${cadence.time}`;
 }
 
-function webhookPill(status) {
-  if (status === "active") return <StatusPill variant="success" label="Webhook healthy" />;
-  if (status === "not_registered") return <StatusPill variant="draft" label="Webhook not registered" />;
-  return <StatusPill variant="error" label={`Webhook ${status.replace("_", " ")}`} />;
+function webhookPill(status, label) {
+  if (status === "active") return <StatusPill variant="success" label={`${label} healthy`} />;
+  if (status === "not_registered") return <StatusPill variant="draft" label={`${label} not registered`} />;
+  return <StatusPill variant="error" label={`${label} ${status.replace("_", " ")}`} />;
 }
 
 export default function Runs() {
   const [automations, setAutomations] = useState(null);
   const [pendingItems, setPendingItems] = useState([]);
   const [webhook, setWebhook] = useState(null);
+  const [pagesWebhook, setPagesWebhook] = useState(null);
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
   const [pages, setPages] = useState([]);
@@ -77,6 +78,7 @@ export default function Runs() {
         setAutomations(res.automations || []);
         setPendingItems(res.pendingItems || []);
         setWebhook(res.webhook);
+        setPagesWebhook(res.pagesWebhook);
       })
       .catch((err) => setError(err.message))
       .finally(() => setRefreshing(false));
@@ -232,7 +234,12 @@ export default function Runs() {
         )}
       </Card>
 
-      {webhook && <div className="mb-6 flex items-center gap-2">{webhookPill(webhook.status)}</div>}
+      {(webhook || pagesWebhook) && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {webhook && webhookPill(webhook.status, "CMS webhook")}
+          {pagesWebhook && pagesWebhook.status !== "not_registered" && webhookPill(pagesWebhook.status, "Pages/Components publish webhook")}
+        </div>
+      )}
 
       {/* Pending queue */}
       <Card className="mb-6">

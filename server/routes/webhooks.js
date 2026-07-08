@@ -6,6 +6,7 @@ const store = require("../store");
 const autoSyncSelfWrites = require("../services/autoSyncSelfWrites");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
 const autoSyncQueue = require("../services/autoSyncQueue");
+const automationScheduler = require("../services/automationScheduler");
 
 const router = express.Router();
 
@@ -222,24 +223,36 @@ router.post("/wxrks", async (req, res) => {
 
 /**
  * POST /api/webhooks/webflow
- * Fired by Webflow on "collection_item_published". Live-verified payload
- * shape: { payload: { items: [ { id, siteId, workspaceId, collectionId,
- * cmsLocaleId, isDraft, isArchived, lastPublished, lastUpdated, createdOn,
- * fieldData }, ... ] }, triggerType } -- note the `items` ARRAY wrapper.
- * This differs from `collection_item_changed`'s flat single-item payload
- * (confirmed via an earlier live test of that trigger type only); Webflow
- * batches multiple items into one `collection_item_published` delivery when
- * several are published together (e.g. a bulk "Publish all" action), so
- * every item in the array must be processed, not just one.
+ * Shared endpoint for TWO independent Webflow webhook registrations, each
+ * with its own signing secret -- dispatches on `triggerType` before
+ * verifying, since which secret applies depends on which one this is:
  *
- * IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
- * edited (live-tested against `collection_item_changed`: it reports the
- * primary locale's id even when only a secondary locale's field changed) --
- * do not use it for loop-prevention. Instead this route checks
- * autoSyncSelfWrites (a blanket per-item cooldown marked by the /wxrks
- * handler above whenever it pushes a translation back), and always
- * re-fetches each item fresh via the primary locale rather than trusting
- * payload fieldData for content.
+ * - "collection_item_published" (CMS Automation): live-verified payload
+ *   shape: { payload: { items: [ { id, siteId, workspaceId, collectionId,
+ *   cmsLocaleId, isDraft, isArchived, lastPublished, lastUpdated, createdOn,
+ *   fieldData }, ... ] }, triggerType } -- note the `items` ARRAY wrapper.
+ *   This differs from `collection_item_changed`'s flat single-item payload
+ *   (confirmed via an earlier live test of that trigger type only); Webflow
+ *   batches multiple items into one `collection_item_published` delivery
+ *   when several are published together (e.g. a bulk "Publish all" action),
+ *   so every item in the array must be processed, not just one.
+ *
+ *   IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
+ *   edited (live-tested against `collection_item_changed`: it reports the
+ *   primary locale's id even when only a secondary locale's field changed)
+ *   -- do not use it for loop-prevention. Instead this route checks
+ *   autoSyncSelfWrites (a blanket per-item cooldown marked by the /wxrks
+ *   handler above whenever it pushes a translation back), and always
+ *   re-fetches each item fresh via the primary locale rather than trusting
+ *   payload fieldData for content.
+ *
+ * - "site_publish" (Pages/Components -- Webflow has no per-page or
+ *   per-component webhook at all, this is the closest available signal):
+ *   fires on any Designer publish action with no per-entity detail, so
+ *   handling it means re-running the same scan automationScheduler's
+ *   cadence tick would do, just triggered by the publish instead of waiting
+ *   for the schedule. Enqueues only (mirrors the CMS path above) -- sending
+ *   to wxrks still waits for the automation's own cadence or a manual flush.
  */
 router.post("/webflow", async (req, res) => {
   // TEMPORARY: capture every inbound Webflow webhook (shared ring buffer with
@@ -249,9 +262,32 @@ router.post("/webflow", async (req, res) => {
   await store.setDebugWebhookPayload({ source: "webflow", headers: req.headers, body: req.body }).catch(() => {});
   console.log("webflow webhook payload:", JSON.stringify(req.body, null, 2));
 
+  const { triggerType } = req.body || {};
   const settings = await store.getSettings();
-  const { signingSecret } = settings.autoSyncWebhook;
 
+  if (triggerType === autoSyncWebhook.PAGES_TRIGGER_TYPE) {
+    const verified = autoSyncWebhook.verifySignature({
+      rawBody: req.rawBody,
+      signature: req.headers["x-webflow-signature"],
+      timestamp: req.headers["x-webflow-timestamp"],
+      signingSecret: settings.sitePublishWebhook.signingSecret,
+    });
+    if (!verified) {
+      return res.status(401).json({ error: "Invalid or missing Webflow webhook signature" });
+    }
+    await store.updateSitePublishWebhookState({ lastEventAt: new Date().toISOString() });
+
+    // Respond immediately -- scanning can mean many Webflow API calls
+    // (Components need a DOM fetch per component just to hash them), same
+    // "respond fast, process after" pattern as the wxrks webhook above.
+    res.json({ received: true });
+    automationScheduler
+      .scanAndEnqueueForPublishEvent()
+      .catch((err) => console.error("Pages/Components publish-triggered scan failed:", err.message));
+    return;
+  }
+
+  const { signingSecret } = settings.autoSyncWebhook;
   const verified = autoSyncWebhook.verifySignature({
     rawBody: req.rawBody,
     signature: req.headers["x-webflow-signature"],
@@ -277,7 +313,7 @@ router.post("/webflow", async (req, res) => {
     return res.status(200).json({ ignored: true, reason: "No enabled CMS/All Content automations" });
   }
 
-  const { payload, triggerType } = req.body || {};
+  const { payload } = req.body || {};
   const items = payload?.items;
   if (triggerType !== autoSyncWebhook.TRIGGER_TYPE || !Array.isArray(items)) {
     return res.status(200).json({ ignored: true, reason: `unhandled trigger: ${triggerType}` });

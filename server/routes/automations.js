@@ -14,19 +14,47 @@ function needsWebhook(automation) {
   );
 }
 
+function needsPagesWebhook(automation) {
+  return (
+    automation.enabled &&
+    !automation.archived &&
+    (automation.contentScope.scope === "all" ||
+      (automation.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
+  );
+}
+
 /**
- * Registers/tears down the shared Webflow webhook based on whether any
- * enabled, non-archived automation includes CMS content. Called after every
- * mutation below -- both underlying calls are idempotent
- * (ensureWebhookRegistered lists existing webhooks first; teardownWebhook is
- * a no-op if nothing's registered), so calling this unconditionally is safe.
+ * Registers/tears down the two shared Webflow webhooks (CMS and, separately,
+ * Pages/Components' site_publish) based on whether any enabled, non-archived
+ * automation needs each. Called after every mutation below -- all four
+ * underlying calls are idempotent (ensure* lists existing webhooks first;
+ * teardown* is a no-op if nothing's registered), so calling this
+ * unconditionally is safe.
  */
 async function syncWebhookRegistrationToAutomationsState() {
   const automations = await store.listAutomations();
-  if (automations.some(needsWebhook)) {
-    await autoSyncWebhook.ensureWebhookRegistered();
-  } else {
-    await autoSyncWebhook.teardownWebhook();
+
+  // Each awaited independently -- one webhook's registration failing (e.g.
+  // APP_BASE_URL unset locally) must not prevent the other from being
+  // attempted.
+  try {
+    if (automations.some(needsWebhook)) {
+      await autoSyncWebhook.ensureWebhookRegistered();
+    } else {
+      await autoSyncWebhook.teardownWebhook();
+    }
+  } catch (err) {
+    console.error("CMS webhook registration sync failed:", err.message);
+  }
+
+  try {
+    if (automations.some(needsPagesWebhook)) {
+      await autoSyncWebhook.ensurePagesWebhookRegistered();
+    } else {
+      await autoSyncWebhook.teardownPagesWebhook();
+    }
+  } catch (err) {
+    console.error("Pages webhook registration sync failed:", err.message);
   }
 }
 
@@ -48,6 +76,7 @@ router.get("/", async (req, res) => {
       // unified pending queue rather than one per automation.
       pendingItems: autoSyncQueue.pendingItems(),
       webhook: settings.autoSyncWebhook,
+      pagesWebhook: settings.sitePublishWebhook,
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
