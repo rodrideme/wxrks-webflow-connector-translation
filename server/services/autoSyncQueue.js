@@ -259,10 +259,13 @@ async function flush(automationId, { jobId } = {}) {
           namePattern: settings.pagesWorkUnitNamePattern,
           workflows: automation.workflows,
         });
-        if (!result.skipped) {
-          itemsSynced += 1;
-          await store.markAutomationPageSynced(automationId, entry.page.id, entry.contentHash);
-        }
+        if (!result.skipped) itemsSynced += 1;
+        // Recorded even when skipped (no translatable text) -- otherwise a
+        // genuinely empty page can never establish a baseline hash and
+        // would reappear in the pending queue on every future scan forever.
+        // If it's later edited to contain real text, the hash will differ
+        // from this "empty" one and correctly re-enqueue it.
+        await store.markAutomationPageSynced(automationId, entry.page.id, entry.contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
         const result = await syncComponentIntoBatch({
@@ -273,10 +276,8 @@ async function flush(automationId, { jobId } = {}) {
           namePattern: settings.componentsWorkUnitNamePattern,
           workflows: automation.workflows,
         });
-        if (!result.skipped) {
-          itemsSynced += 1;
-          await store.markAutomationComponentSynced(automationId, entry.component.id, entry.contentHash);
-        }
+        if (!result.skipped) itemsSynced += 1;
+        await store.markAutomationComponentSynced(automationId, entry.component.id, entry.contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.component.id, ...result });
       }
     } catch (err) {
