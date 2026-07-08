@@ -22,7 +22,7 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
   const plural = (n) => `item${n === 1 ? "" : "s"}`;
 
   return (
-    <div className="sticky bottom-0 z-10 -mx-8 border-t border-border bg-surface px-8 py-3.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
+    <div className="sticky bottom-0 z-10 -mx-8 mt-auto border-t border-border bg-surface px-8 py-3.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
       {phase === "running" && progress && (
         <div className="flex items-center gap-4">
           <StatusPill variant="progress" label={`Creating ${progress.jobCount > 1 ? `${progress.jobCount} projects` : "project"}…`} />

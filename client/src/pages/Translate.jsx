@@ -31,7 +31,7 @@ const DATE_FILTER_OPTS = [
 ];
 
 export default function Translate() {
-  const [mode, setMode] = useState("specific"); // "all" | "specific"
+  const [mode, setMode] = useState("all"); // "all" | "specific"
   const [settings, setSettings] = useState(null);
 
   const [collections, setCollections] = useState([]);
@@ -408,7 +408,7 @@ export default function Translate() {
       : null;
 
   return (
-    <div>
+    <div className="flex min-h-full flex-col">
       <div className="mb-5">
         <h1 className="text-[22px] font-semibold tracking-tight text-ink">Translate</h1>
         <p className="mt-0.5 text-[13px] text-ink-faint">Send content to wxrks for translation, or automate it on a schedule.</p>
