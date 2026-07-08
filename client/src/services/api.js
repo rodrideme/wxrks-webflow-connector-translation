@@ -1,16 +1,44 @@
+// Render's free tier spins the app down when idle -- the first request after
+// a spin-down can take 10-15s to wake it back up, and requests made while
+// it's still coming up can fail with a transient 5xx or a network-level
+// error before it's actually ready. Retried only for idempotent GETs (with a
+// growing backoff, capped at a few attempts) so a page's initial data load
+// recovers on its own instead of surfacing a scary error for something that
+// resolves itself in a few seconds. Never retried for a mutating call
+// (POST/PUT/DELETE) -- if that request actually succeeded server-side and
+// only the response got lost to the same hiccup, blindly retrying could
+// double-create a real wxrks project or automation.
+const RETRY_DELAYS_MS = [1000, 2000, 3000, 4000];
+
 async function request(path, options = {}) {
-  const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const isIdempotent = !options.method || options.method.toUpperCase() === "GET";
+  const maxAttempts = isIdempotent ? RETRY_DELAYS_MS.length + 1 : 1;
 
-  const data = await res.json().catch(() => ({}));
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res;
+    try {
+      res = await fetch(`/api${path}`, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+    } catch (err) {
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+        continue;
+      }
+      throw err;
+    }
 
-  if (!res.ok) {
-    throw new Error(data.error || `Request failed: ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (isIdempotent && res.status >= 500 && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+        continue;
+      }
+      throw new Error(data.error || `Request failed: ${res.status}`);
+    }
+    return data;
   }
-
-  return data;
 }
 
 const api = {
