@@ -1,8 +1,7 @@
 /**
- * A pill-group switch for a small, closed set of options (e.g. Sync
- * Panel's "CMS Items | Pages"). Visually distinct from UnderlineTabs --
- * this is for switching *what* you're looking at; underline tabs are for
- * switching *mode* within that.
+ * A pill-group switch for a small, closed set of options (e.g. Select &
+ * Send's "CMS Items | Pages | Components", or the Automation wizard's
+ * content-scope picker).
  */
 export default function SegmentedControl({ options, value, onChange }) {
   return (

@@ -9,7 +9,7 @@ import Chip from "../components/Chip.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
 
-function modeLabel(mode) {
+function modeLabel(mode, automationName) {
   if (mode === "pages-bulk") return "Pages · Bulk Sync";
   if (mode === "pages-item") return "Pages · Item Sync";
   if (mode === "components-bulk") return "Components · Bulk Sync";
@@ -17,6 +17,7 @@ function modeLabel(mode) {
   if (mode === "bulk") return "Bulk Sync";
   if (mode === "item") return "Item Sync";
   if (mode === "auto") return "Auto Sync";
+  if (mode === "automation") return automationName ? `Automation · ${automationName}` : "Automation";
   return mode;
 }
 
@@ -120,7 +121,7 @@ export default function Dashboard() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-ink">
-                {modeLabel(lastSync.mode)} {lastSyncFailed ? "finished with errors" : "completed"}
+                {modeLabel(lastSync.mode, lastSync.summary?.automationName)} {lastSyncFailed ? "finished with errors" : "completed"}
               </div>
               <div className="mt-0.5 text-xs text-ink-faint">
                 <span className="font-mono tabular-nums">
@@ -180,7 +181,7 @@ export default function Dashboard() {
                 className="flex flex-wrap items-center gap-3.5 border-t border-border px-4 py-3.5 first:border-t-0"
               >
                 <div className="min-w-[10rem] flex-1">
-                  <div className="text-[13.5px] font-semibold text-ink">{modeLabel(p.mode)}</div>
+                  <div className="text-[13.5px] font-semibold text-ink">{modeLabel(p.mode, p.automationName)}</div>
                   <div className="mt-0.5 font-mono text-[11.5px] text-ink-faint">{p.wxrksProjectUUID}</div>
                 </div>
                 {errCount > 0 ? (

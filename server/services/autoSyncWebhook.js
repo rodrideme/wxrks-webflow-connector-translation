@@ -6,13 +6,13 @@ const TRIGGER_TYPE = "collection_item_published";
 const WEBHOOK_PATH = "/api/webhooks/webflow";
 
 /**
- * Registers (or confirms already-registered) the Webflow webhook Auto Sync
- * relies on. Called when settings.autoSync.enabled transitions false->true,
- * and as a startup self-heal check if enabled but never successfully
- * registered (e.g. a prior attempt crashed, or APP_BASE_URL wasn't set yet).
- * Lists existing webhooks first to avoid leaking duplicate registrations
- * across repeated enable/disable toggling (Webflow caps registrations at 75
- * per trigger type per site).
+ * Registers (or confirms already-registered) the Webflow webhook CMS
+ * Automation relies on. Called whenever an automation CRUD mutation changes
+ * whether any enabled cms/all automation exists (see
+ * routes/automations.js's syncWebhookRegistrationToAutomationsState), and as
+ * a startup self-heal check. Lists existing webhooks first to avoid leaking
+ * duplicate registrations across repeated create/delete/pause/resume calls
+ * (Webflow caps registrations at 75 per trigger type per site).
  */
 async function ensureWebhookRegistered() {
   const appBaseUrl = process.env.APP_BASE_URL;
@@ -53,13 +53,13 @@ async function ensureWebhookRegistered() {
 }
 
 /**
- * Deletes the registered webhook on settings.autoSync.enabled true->false.
- * Not calling this on disable would leave a live webhook silently posting
- * into a feature the admin thinks is off.
+ * Deletes the registered webhook once no enabled cms/all automation exists
+ * anymore. Not calling this would leave a live webhook silently posting into
+ * a feature the admin thinks is fully paused/deleted.
  */
 async function teardownWebhook() {
   const settings = await store.getSettings();
-  const { webflowWebhookId } = settings.autoSync.webhook;
+  const { webflowWebhookId } = settings.autoSyncWebhook;
   if (webflowWebhookId) {
     try {
       await webflow.deleteWebhook(webflowWebhookId);

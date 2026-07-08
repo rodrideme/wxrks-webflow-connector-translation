@@ -4,10 +4,11 @@ import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 
 /**
- * App-level configuration: timezone, work-unit naming patterns, automation
- * toggles, and env keys. Distinct from Templates.jsx, which holds "what
- * gets translated" (org unit, locales, collections/pages/components,
- * Auto Sync rules) -- see the nav-restructuring plan for why these split.
+ * App-level configuration: timezone, work-unit naming patterns, autoApprove/
+ * autoPublish toggles, and env keys. Distinct from Templates.jsx, which
+ * holds "what gets translated" (org unit, locales, collections/pages/
+ * components for manual Select & Send) and from the Automation page, which
+ * holds each automation's own content scope + schedule.
  */
 export default function Settings() {
   const [settings, setSettings] = useState(null);

@@ -1,29 +1,14 @@
 /**
- * Pure Auto Sync rule evaluation -- no network calls, so it's usable
- * identically from the live webhook path (server/routes/webhooks.js) and the
- * reconciliation safety-net path (server/services/autoSyncReconciliation.js)
- * against the same `itemLike` shape (a full item as returned by
- * webflow.getItem()/listAllItems(), i.e. { fieldData, lastPublished,
- * isDraft, isArchived, ... }).
+ * Pure per-field condition evaluation -- no network calls, so it's usable
+ * identically from the live webhook path (server/routes/webhooks.js), the
+ * reconciliation safety-net path (server/services/autoSyncReconciliation.js),
+ * and store.js's isAutomationCmsItemQualified, all against the same
+ * `itemLike` shape (a full item as returned by webflow.getItem()/
+ * listAllItems(), i.e. { fieldData, lastPublished, isDraft, isArchived, ... }).
  *
- * 3-level model: Level 1 master enable, Level 2 collection allow-list,
- * Level 3 optional per-field conditions (all must match -- AND semantics).
- * An empty conditions array for an enabled collection means "no Level 3
+ * An empty conditions array for a qualifying collection means "no Level 3
  * restriction" -- every published item in that collection qualifies.
  */
-
-function evaluateAutoSyncRules(settings, collection, itemLike) {
-  const { autoSync } = settings;
-  if (!autoSync.enabled) return false;
-  if (itemLike.isDraft || itemLike.isArchived) return false;
-
-  const collectionQualifies =
-    autoSync.allCollectionsEnabled || autoSync.enabledCollectionIds.includes(collection.id);
-  if (!collectionQualifies) return false;
-
-  const conditions = autoSync.fieldConditions[collection.id] || [];
-  return conditions.every((cond) => evaluateCondition(cond, itemLike.fieldData));
-}
 
 function evaluateCondition(cond, fieldData) {
   const value = fieldData?.[cond.fieldSlug];
@@ -45,4 +30,4 @@ function evaluateCondition(cond, fieldData) {
   }
 }
 
-module.exports = { evaluateAutoSyncRules, evaluateCondition };
+module.exports = { evaluateCondition };

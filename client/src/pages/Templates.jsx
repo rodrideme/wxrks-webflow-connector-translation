@@ -4,7 +4,6 @@ import SettingsGeneral from "./settings/SettingsGeneral.jsx";
 import SettingsCollections from "./settings/SettingsCollections.jsx";
 import SettingsPages from "./settings/SettingsPages.jsx";
 import SettingsComponents from "./settings/SettingsComponents.jsx";
-import SettingsAutoSync from "./settings/SettingsAutoSync.jsx";
 
 function baseLang(code) {
   return code.toLowerCase().replace("_", "-").split("-")[0];
@@ -15,15 +14,15 @@ const SECTIONS = [
   { id: "collections", label: "Collections" },
   { id: "pages", label: "Pages" },
   { id: "components", label: "Components" },
-  { id: "autosync", label: "Auto Sync" },
 ];
 
 /**
  * What gets translated and how it's scoped: org unit, locales, which
- * collections/pages/components are enabled, and Auto Sync's rules.
+ * collections/pages/components are enabled for manual Select & Send.
  * Distinct from Settings.jsx, which holds app-level configuration
- * (timezone, naming patterns, automation toggles, env keys) -- see the
- * nav-restructuring plan for why these were split.
+ * (timezone, naming patterns, automation toggles, env keys). Automation's
+ * own scoping (collections/fields/folders per automation) lives in the
+ * Automation page's New Automation modal instead, not here.
  */
 export default function Templates() {
   const [section, setSection] = useState("general");
@@ -136,39 +135,6 @@ export default function Templates() {
     markDirty({ allCollectionsEnabled: false, enabledCollectionIds: [] });
   }
 
-  // Separate from the manual-sync collection toggles above -- a collection
-  // can be enabled for manual sync, Auto Sync, both, or neither.
-  function toggleAutoSyncCollection(collectionId) {
-    const { autoSync } = settings;
-    if (autoSync.allCollectionsEnabled) {
-      const allIds = collections.map((c) => c.id);
-      markDirty({
-        autoSync: {
-          ...autoSync,
-          allCollectionsEnabled: false,
-          enabledCollectionIds: allIds.filter((id) => id !== collectionId),
-        },
-      });
-      return;
-    }
-    const enabledCollectionIds = autoSync.enabledCollectionIds.includes(collectionId)
-      ? autoSync.enabledCollectionIds.filter((id) => id !== collectionId)
-      : [...autoSync.enabledCollectionIds, collectionId];
-    markDirty({ autoSync: { ...autoSync, enabledCollectionIds } });
-  }
-
-  function isAutoSyncCollectionEnabled(collectionId) {
-    return settings.autoSync.allCollectionsEnabled || settings.autoSync.enabledCollectionIds.includes(collectionId);
-  }
-
-  function checkAllAutoSyncCollections() {
-    markDirty({ autoSync: { ...settings.autoSync, allCollectionsEnabled: true, enabledCollectionIds: [] } });
-  }
-
-  function uncheckAllAutoSyncCollections() {
-    markDirty({ autoSync: { ...settings.autoSync, allCollectionsEnabled: false, enabledCollectionIds: [] } });
-  }
-
   async function save() {
     setSaving(true);
     setError(null);
@@ -179,7 +145,6 @@ export default function Templates() {
         orgUnitUUID: settings.orgUnitUUID,
         allCollectionsEnabled: settings.allCollectionsEnabled,
         enabledCollectionIds: settings.enabledCollectionIds,
-        autoSync: settings.autoSync,
         pages: settings.pages,
         components: settings.components,
       });
@@ -236,20 +201,7 @@ export default function Templates() {
               toggleCollection={toggleCollection}
               checkAllCollections={checkAllCollections}
               uncheckAllCollections={uncheckAllCollections}
-              isAutoSyncCollectionEnabled={isAutoSyncCollectionEnabled}
-              toggleAutoSyncCollection={toggleAutoSyncCollection}
-              checkAllAutoSyncCollections={checkAllAutoSyncCollections}
-              uncheckAllAutoSyncCollections={uncheckAllAutoSyncCollections}
-              autoSyncFieldConditions={settings.autoSync.fieldConditions}
               timezone={settings.timezone}
-              onAutoSyncFieldConditionsSaved={(collectionId, conditions) =>
-                markDirty({
-                  autoSync: {
-                    ...settings.autoSync,
-                    fieldConditions: { ...settings.autoSync.fieldConditions, [collectionId]: conditions },
-                  },
-                })
-              }
             />
           )}
 
@@ -258,8 +210,6 @@ export default function Templates() {
           )}
 
           {section === "components" && <SettingsComponents settings={settings} markDirty={markDirty} />}
-
-          {section === "autosync" && <SettingsAutoSync settings={settings} markDirty={markDirty} />}
 
           {error && <p className="mt-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
           {saved && <p className="mt-4 text-sm font-medium text-status-success-fg">Templates saved.</p>}

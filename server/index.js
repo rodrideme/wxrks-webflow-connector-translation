@@ -10,6 +10,7 @@ const collectionsRouter = require("./routes/collections");
 const syncRouter = require("./routes/sync");
 const syncPagesRouter = require("./routes/syncPages");
 const syncComponentsRouter = require("./routes/syncComponents");
+const automationsRouter = require("./routes/automations");
 const webhooksRouter = require("./routes/webhooks");
 const settingsRouter = require("./routes/settings");
 const configRouter = require("./routes/config");
@@ -46,6 +47,7 @@ app.get("/api/backlog", collectionsRouter.backlogHandler);
 app.use("/api/sync", syncRouter);
 app.use("/api/sync/pages", syncPagesRouter);
 app.use("/api/sync/components", syncComponentsRouter);
+app.use("/api/automations", automationsRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/config", configRouter);
@@ -63,23 +65,55 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
+/**
+ * One-time migration of the old singleton Auto Sync config into the new
+ * automations table, run once at startup. The new CMS content-scope shape
+ * mirrors the old settings.autoSync shape field-for-field, so this is a
+ * direct copy, not a rebuild. Deliberately always `type: "cms"`, never
+ * "all" -- the old config never had Pages/Components scope, so mapping it
+ * to "all" would silently expand scope to content the user never opted
+ * into. No-ops if there's nothing to migrate or automations already exist.
+ */
+async function migrateLegacyAutoSyncIfNeeded() {
+  const settings = await store.getSettings();
+  const legacy = settings.autoSync;
+  if (!legacy) return;
+
+  const existing = await store.listAutomations();
+  if (existing.length > 0) return;
+
+  const automation = await store.createAutomation({
+    name: "Auto Sync (migrated)",
+    enabled: legacy.enabled,
+    contentScope: {
+      type: "cms",
+      allCollectionsEnabled: legacy.allCollectionsEnabled,
+      enabledCollectionIds: legacy.enabledCollectionIds,
+      fieldConditions: legacy.fieldConditions,
+    },
+    flushTimes: legacy.flushTimes,
+    orgUnitOverride: null,
+  });
+  console.log(`Migrated legacy Auto Sync config into automation "${automation.name}" (${automation.id})`);
+
+  await store.updateSettings({ autoSync: null, autoSyncReconciliation: null });
+}
+
 db.migrate()
   .then(async () => {
-    // Auto Sync startup self-heal: if it's enabled but never successfully
-    // registered a webhook (e.g. a prior attempt crashed, or APP_BASE_URL
-    // wasn't set yet when it was first turned on), retry once at boot.
-    // Cheap and idempotent -- ensureWebhookRegistered() lists existing
-    // webhooks before creating one.
-    const settings = await store.getSettings();
-    if (settings.autoSync.enabled) {
-      if (!settings.autoSync.webhook.webflowWebhookId) {
-        autoSyncWebhook
-          .ensureWebhookRegistered()
-          .catch((err) => console.error("Auto Sync webhook self-heal failed:", err.message));
-      }
-      autoSyncQueue.startFlushLoop(settings.autoSync.flushTimes, settings.timezone);
-      autoSyncReconciliation.startReconciliationLoop();
+    await migrateLegacyAutoSyncIfNeeded();
+
+    // Startup self-heal: register/teardown the shared Webflow webhook based
+    // on current automations state, in case a prior process crashed
+    // mid-registration or mid-teardown. Cheap and idempotent.
+    const automations = await store.listAutomations();
+    const anyNeedsWebhook = automations.some((a) => a.enabled && (a.contentScope.type === "all" || a.contentScope.type === "cms"));
+    if (anyNeedsWebhook) {
+      autoSyncWebhook.ensureWebhookRegistered().catch((err) => console.error("Automation webhook self-heal failed:", err.message));
     }
+
+    autoSyncQueue.startFlushLoop();
+    autoSyncReconciliation.startReconciliationLoop();
 
     app.listen(PORT, () => {
       console.log(`Webflow Translation Sync server listening on port ${PORT}`);

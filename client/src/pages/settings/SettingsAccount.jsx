@@ -51,7 +51,7 @@ export default function SettingsAccount({ settings, markDirty }) {
           </select>
         </label>
         <p className={`mt-1 ${hintClass}`}>
-          Used for Auto Sync's flush times (Templates → Auto Sync) and every date/time shown throughout this
+          Used for each automation's send schedule (Automation page) and every date/time shown throughout this
           app, so everyone viewing it sees the same wall-clock time regardless of their own browser's zone.
         </p>
       </Card>

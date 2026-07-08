@@ -5,7 +5,6 @@ const wxrks = require("../services/wxrks");
 const store = require("../store");
 const autoSyncSelfWrites = require("../services/autoSyncSelfWrites");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
-const { evaluateAutoSyncRules } = require("../services/autoSyncRules");
 const autoSyncQueue = require("../services/autoSyncQueue");
 
 const router = express.Router();
@@ -251,7 +250,7 @@ router.post("/webflow", async (req, res) => {
   console.log("webflow webhook payload:", JSON.stringify(req.body, null, 2));
 
   const settings = await store.getSettings();
-  const { signingSecret } = settings.autoSync.webhook;
+  const { signingSecret } = settings.autoSyncWebhook;
 
   const verified = autoSyncWebhook.verifySignature({
     rawBody: req.rawBody,
@@ -267,8 +266,10 @@ router.post("/webflow", async (req, res) => {
   // for any verified request, regardless of whether it ends up qualifying.
   await store.updateAutoSyncWebhookState({ lastEventAt: new Date().toISOString() });
 
-  if (!settings.autoSync.enabled) {
-    return res.status(200).json({ ignored: true, reason: "Auto Sync is disabled" });
+  const automations = await store.listAutomations();
+  const cmsAutomations = automations.filter((a) => a.enabled && (a.contentScope.type === "cms" || a.contentScope.type === "all"));
+  if (cmsAutomations.length === 0) {
+    return res.status(200).json({ ignored: true, reason: "No enabled CMS/All Content automations" });
   }
 
   const { payload, triggerType } = req.body || {};
@@ -296,22 +297,14 @@ router.post("/webflow", async (req, res) => {
       // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
       const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
 
-      const qualifies = evaluateAutoSyncRules(settings, collection, item);
+      const qualifyingAutomations = cmsAutomations.filter((a) => store.isAutomationCmsItemQualified(a, collection, item));
       console.log(
-        `Auto Sync evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies=${qualifies}`,
-        JSON.stringify({
-          autoSyncEnabled: settings.autoSync.enabled,
-          allCollectionsEnabled: settings.autoSync.allCollectionsEnabled,
-          collectionInAllowList: settings.autoSync.enabledCollectionIds.includes(collectionId),
-          conditions: settings.autoSync.fieldConditions[collectionId] || [],
-          itemIsDraft: item.isDraft,
-          itemIsArchived: item.isArchived,
-        })
+        `Automation evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies for ${qualifyingAutomations.length} automation(s)`
       );
-      if (qualifies) {
-        autoSyncQueue.enqueue({ collection, item });
+      for (const automation of qualifyingAutomations) {
+        autoSyncQueue.enqueue({ automation, collection, item });
       }
-      results.push({ itemId, qualified: qualifies });
+      results.push({ itemId, qualified: qualifyingAutomations.length > 0, automationIds: qualifyingAutomations.map((a) => a.id) });
     } catch (err) {
       results.push({ itemId, error: err.message });
     }

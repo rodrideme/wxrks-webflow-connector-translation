@@ -64,24 +64,6 @@ router.put("/:id/field-exclusions", async (req, res) => {
 });
 
 /**
- * PUT /api/collections/:id/auto-sync-conditions
- * body: { conditions: AutoSyncCondition[] }
- * Level 3 of the Auto Sync rule tree: optional per-field conditions (ALL
- * must match) that further restrict which published entries in this
- * collection qualify, on top of the collection being enabled for Auto Sync
- * at Level 2. Mirrors the field-exclusions endpoint above.
- */
-router.put("/:id/auto-sync-conditions", async (req, res) => {
-  try {
-    const { conditions } = req.body || {};
-    const updated = await store.setAutoSyncFieldConditions(req.params.id, conditions || []);
-    res.json({ collectionId: req.params.id, conditions: updated });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
-/**
  * GET /api/collections/:id/items
  * List items with translation status per configured target locale, plus
  * each item's translatable word count (same field-filtering logic

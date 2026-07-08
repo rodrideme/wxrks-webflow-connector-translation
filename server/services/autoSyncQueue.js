@@ -1,37 +1,65 @@
 /**
- * Auto Sync's debounce/batch queue. Qualifying published items accumulate
- * here (in-memory, matching the existing non-persisted syncJobs pattern in
- * store.js) and get flushed into a single shared wxrks project at specific
- * clock times each day (settings.autoSync.flushTimes, e.g. ["00:00",
- * "12:00"]) -- not a sliding/resetting debounce, so latency stays bounded
- * even during a burst of edits, and the user can see/edit exactly when it
- * happens rather than an opaque "every N hours" cadence. A manual "flush
- * now" is also available (see flush() below, called directly from a route).
+ * Automation's debounce/batch queue. Qualifying CMS items (from the live
+ * webhook) and Pages/Components (from automationScheduler's polling scans)
+ * accumulate here in-memory and get flushed into one shared wxrks project
+ * per automation at that automation's own scheduled clock times
+ * (automation.flushTimes, e.g. ["00:00", "12:00"]) -- not a sliding/
+ * resetting debounce, so latency stays bounded even during a burst of
+ * edits. A manual "flush now" is also available per automation (see
+ * flush() below, called from routes/automations.js).
  *
- * If the process restarts before a flush, queued-but-unflushed items are
- * lost -- acceptable, since the reconciliation safety net
- * (autoSyncReconciliation.js) re-scans for anything published since the
- * last checkpoint and re-enqueues it on its own schedule regardless.
+ * If the process restarts before a flush, queued-but-unflushed CMS items are
+ * lost -- acceptable, since autoSyncReconciliation.js re-scans for anything
+ * published since the last checkpoint and re-enqueues it regardless. Pages/
+ * Components have no separate safety net since their scheduled poll IS the
+ * primary mechanism and will simply pick up the same content next cycle.
  */
 
 const store = require("../store");
 const wxrks = require("../services/wxrks");
-const { syncItemIntoBatch, requestBatchApproval } = require("./syncCore");
+const { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval } = require("./syncCore");
 
-// Map keyed by `${collectionId}:${itemId}` -> { collection, item, enqueuedAt }.
-// Re-enqueuing the same key before the next flush overwrites rather than
-// duplicates -- a rapid publish->unpublish->publish within one window still
-// results in exactly one sync of that item, using its latest state at flush
-// time.
+// Map keyed by `${automationId}:cms:${collectionId}:${itemId}` /
+// `${automationId}:page:${pageId}` / `${automationId}:component:${componentId}`
+// -> { automationId, entityType, collection?, item?, page?, component?,
+// nodes?, enqueuedAt }. Re-enqueuing the same key before the next flush
+// overwrites rather than duplicates. Two automations targeting overlapping
+// content dedup independently since the automation id is part of the key.
 const pending = new Map();
-let scheduleTimer = null;
 let lastFlushAt = null;
-let currentFlushTimes = [];
-let currentTimezone = "UTC";
-let lastFiredMinuteKey = null;
+let scheduleTimer = null;
+// automationId -> minuteKey of its last fire, guards against firing twice
+// for the same minute across the two 30s ticks that fall within it.
+const lastFiredMinuteKeyByAutomation = new Map();
 
-function enqueue({ collection, item }) {
-  pending.set(`${collection.id}:${item.id}`, { collection, item, enqueuedAt: new Date().toISOString() });
+function enqueue({ automation, collection, item }) {
+  pending.set(`${automation.id}:cms:${collection.id}:${item.id}`, {
+    automationId: automation.id,
+    entityType: "cms",
+    collection,
+    item,
+    enqueuedAt: new Date().toISOString(),
+  });
+}
+
+function enqueuePage({ automation, page }) {
+  pending.set(`${automation.id}:page:${page.id}`, {
+    automationId: automation.id,
+    entityType: "page",
+    page,
+    enqueuedAt: new Date().toISOString(),
+  });
+}
+
+function enqueueComponent({ automation, component, nodes, contentHash }) {
+  pending.set(`${automation.id}:component:${component.id}`, {
+    automationId: automation.id,
+    entityType: "component",
+    component,
+    nodes,
+    contentHash,
+    enqueuedAt: new Date().toISOString(),
+  });
 }
 
 /**
@@ -54,21 +82,34 @@ function formatInTimeZone(date, timeZone) {
 
 /**
  * Checks every 30s (well under a minute) whether the current wall-clock time
- * in the configured timezone matches one of the configured flushTimes
- * ("HH:mm"), and flushes if so. lastFiredMinuteKey guards against firing
- * twice for the same minute across the two 30s ticks that fall within it.
+ * (in the app's global timezone) matches any enabled automation's flushTimes,
+ * firing that automation's cycle if so. Re-queries the automations list
+ * fresh on every tick (cheap -- a handful of rows) rather than being
+ * restarted on every settings change, so it can simply run unconditionally
+ * from server boot with no enable/disable start/stop dance.
  */
-function startFlushLoop(flushTimes, timezone = "UTC") {
+function startFlushLoop() {
   stopFlushLoop();
-  currentFlushTimes = flushTimes || [];
-  currentTimezone = timezone;
-  scheduleTimer = setInterval(() => {
-    const now = new Date();
-    const hhmm = formatInTimeZone(now, currentTimezone);
-    const minuteKey = now.toISOString().slice(0, 16);
-    if (currentFlushTimes.includes(hhmm) && minuteKey !== lastFiredMinuteKey) {
-      lastFiredMinuteKey = minuteKey;
-      flush().catch((err) => console.error("Auto Sync flush failed:", err.message));
+  scheduleTimer = setInterval(async () => {
+    try {
+      const { runAutomationCycle } = require("./automationScheduler");
+      const { timezone } = await store.getSettings();
+      const now = new Date();
+      const hhmm = formatInTimeZone(now, timezone);
+      const minuteKey = now.toISOString().slice(0, 16);
+
+      const automations = await store.listAutomations();
+      for (const automation of automations) {
+        if (!automation.enabled) continue;
+        if (!automation.flushTimes.includes(hhmm)) continue;
+        if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
+        lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
+        runAutomationCycle(automation).catch((err) =>
+          console.error(`Automation "${automation.name}" cycle failed:`, err.message)
+        );
+      }
+    } catch (err) {
+      console.error("Automation flush loop tick failed:", err.message);
     }
   }, 30 * 1000);
 }
@@ -100,28 +141,37 @@ function nextFlushAt(flushTimes, timezone = "UTC", from = new Date()) {
   return null;
 }
 
-async function flush() {
+/**
+ * Flushes one automation's pending entries into a single shared wxrks
+ * project. Called from the scheduled tick above, from
+ * automationScheduler.runAutomationCycle (after a Pages/Components scan),
+ * and on-demand via POST /api/automations/:id/flush.
+ */
+async function flush(automationId) {
   lastFlushAt = new Date().toISOString();
-  if (pending.size === 0) return;
+  const batch = [...pending.entries()].filter(([key]) => key.startsWith(`${automationId}:`));
+  if (batch.length === 0) return { itemsSynced: 0 };
 
-  const batch = [...pending.values()];
-  // Clear before awaiting so new webhook events arriving during the flush go
-  // into the *next* window, not lost or double-counted.
-  pending.clear();
+  // Clear before awaiting so new events arriving during the flush go into
+  // the *next* window, not lost or double-counted.
+  for (const [key] of batch) pending.delete(key);
+
+  const automation = await store.getAutomation(automationId);
+  if (!automation) return { itemsSynced: 0 };
 
   const settings = await store.getSettings();
-  const { sourceLocale, targetLocales, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } =
-    settings;
-  if (targetLocales.length === 0) return; // nothing configured to translate into -- same guard as bulk/item
+  const { sourceLocale, targetLocales, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } = settings;
+  if (targetLocales.length === 0) return { itemsSynced: 0 };
 
-  const orgUnitUUID = settingsOrgUnitUUID || (await wxrks.getOrgUnit());
+  const orgUnitUUID = automation.orgUnitOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
   const project = await wxrks.createProject({
-    reference: `Auto Sync ${new Date().toISOString()}`,
+    reference: `Automation "${automation.name}" ${new Date().toISOString()}`,
     sourceLocale,
     orgUnitUUID,
   });
   await store.createProjectMapping(project.uuid, {
-    mode: "auto",
+    mode: "automation",
+    automationName: automation.name,
     sourceLocale,
     targetLocales,
     orgUnitUUID,
@@ -131,54 +181,104 @@ async function flush() {
   });
 
   let itemsSynced = 0;
-  for (const { collection, item } of batch) {
+  for (const [, entry] of batch) {
     try {
-      const result = await syncItemIntoBatch({
-        projectUuid: project.uuid,
-        collection,
-        item,
-        targetLocales,
-        namePattern: workUnitNamePattern,
-      });
-      if (!result.skipped) {
-        itemsSynced += 1;
-        await store.markAutoSynced(collection.id, item.id, item.lastPublished);
+      if (entry.entityType === "cms") {
+        const result = await syncItemIntoBatch({
+          projectUuid: project.uuid,
+          collection: entry.collection,
+          item: entry.item,
+          targetLocales,
+          namePattern: workUnitNamePattern,
+        });
+        if (!result.skipped) {
+          itemsSynced += 1;
+          await store.markAutomationItemSynced(automationId, entry.collection.id, entry.item.id, entry.item.lastPublished);
+        }
+      } else if (entry.entityType === "page") {
+        const webflow = require("./webflow");
+        const nodes = await webflow.getPageDom(entry.page.id, { locale: sourceLocale });
+        const result = await syncPageIntoBatch({
+          projectUuid: project.uuid,
+          page: entry.page,
+          nodes,
+          targetLocales,
+          namePattern: settings.pagesWorkUnitNamePattern,
+        });
+        if (!result.skipped) {
+          itemsSynced += 1;
+          await store.markAutomationPageSynced(automationId, entry.page.id, entry.page.lastUpdated);
+        }
+      } else if (entry.entityType === "component") {
+        const result = await syncComponentIntoBatch({
+          projectUuid: project.uuid,
+          component: entry.component,
+          nodes: entry.nodes,
+          targetLocales,
+          namePattern: settings.componentsWorkUnitNamePattern,
+        });
+        if (!result.skipped) {
+          itemsSynced += 1;
+          await store.markAutomationComponentSynced(automationId, entry.component.id, entry.contentHash);
+        }
       }
     } catch (err) {
-      console.error(`Auto Sync item failed (${collection.id}/${item.id}):`, err.message);
-      // No per-item retry queue -- reconciliation picks it back up on its
-      // own next pass, since markAutoSynced was never called for it.
+      console.error(`Automation "${automation.name}" item failed:`, err.message);
+      // No per-item retry queue -- CMS gets picked back up by reconciliation;
+      // Pages/Components get picked back up on the next scheduled scan since
+      // their checkpoint/hash was never advanced for this entry.
     }
   }
 
   await store.setLastSync({
-    mode: "auto",
-    summary: { itemsProcessed: batch.length, itemsSynced, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales },
+    mode: "automation",
+    summary: {
+      itemsProcessed: batch.length,
+      itemsSynced,
+      wxrksProjectUUID: project.uuid,
+      orgUnitUUID,
+      targetLocales,
+      automationName: automation.name,
+    },
   });
 
   if (autoApprove && itemsSynced > 0) {
     requestBatchApproval(project.uuid);
   }
+
+  return { itemsSynced };
 }
 
 module.exports = {
   enqueue,
+  enqueuePage,
+  enqueueComponent,
   startFlushLoop,
   stopFlushLoop,
   flush,
   nextFlushAt,
-  pendingCount: () => pending.size,
-  pendingSince: () => [...pending.values()].map((v) => v.enqueuedAt).sort()[0] || null,
-  pendingItems: () =>
-    [...pending.values()]
-      .map((v) => ({
-        collectionId: v.collection.id,
-        collectionName: v.collection.displayName || v.collection.singularName || v.collection.id,
-        itemId: v.item.id,
-        itemName: v.item.fieldData?.name || v.item.fieldData?.slug || v.item.id,
+  pendingCount: (automationId) =>
+    automationId ? [...pending.keys()].filter((k) => k.startsWith(`${automationId}:`)).length : pending.size,
+  pendingSince: (automationId) =>
+    [...pending.entries()]
+      .filter(([key]) => !automationId || key.startsWith(`${automationId}:`))
+      .map(([, v]) => v.enqueuedAt)
+      .sort()[0] || null,
+  pendingItems: (automationId) =>
+    [...pending.entries()]
+      .filter(([key]) => !automationId || key.startsWith(`${automationId}:`))
+      .map(([, v]) => ({
+        entityType: v.entityType,
+        collectionId: v.collection?.id,
+        collectionName: v.collection?.displayName || v.collection?.singularName,
+        itemId: v.item?.id,
+        itemName: v.item?.fieldData?.name || v.item?.fieldData?.slug,
+        pageId: v.page?.id,
+        pageTitle: v.page?.title,
+        componentId: v.component?.id,
+        componentName: v.component?.name,
         enqueuedAt: v.enqueuedAt,
       }))
       .sort((a, b) => a.enqueuedAt.localeCompare(b.enqueuedAt)),
   lastFlushAt: () => lastFlushAt,
-  currentFlushTimes: () => currentFlushTimes,
 };

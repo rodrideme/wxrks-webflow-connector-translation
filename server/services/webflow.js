@@ -201,6 +201,66 @@ async function listStaticPages() {
   return pages.filter((p) => !p.collectionId);
 }
 
+// Sentinel for pages with a null `parentId` (not nested in any folder) --
+// selectable in the folder picker like a normal folder, so top-level pages
+// aren't silently unreachable by a Pages automation.
+const NO_FOLDER_ID = "__root__";
+
+/**
+ * A page id also answers via GET /pages/:id even when that id is actually a
+ * FOLDER, not a real page (confirmed live) -- Webflow has no dedicated
+ * folder-listing endpoint, so folder metadata (title/slug) is resolved this
+ * way, one call per distinct folder id referenced by some page's `parentId`.
+ */
+async function getPageFolder(folderId) {
+  const { data } = await client().get(`/pages/${folderId}`);
+  return data;
+}
+
+/**
+ * Discovers every folder actually in use (confirmed live: `GET
+ * /sites/:id/pages` never returns the folder objects themselves, only pages
+ * that reference a folder id via a non-null `parentId`), resolves each
+ * folder's title/slug, and counts how many static pages sit in it (or at
+ * top level, under NO_FOLDER_ID). Used by the Automation wizard's Pages
+ * scope picker.
+ */
+async function listPageFolders() {
+  const pages = await listStaticPages();
+  const folderIds = [...new Set(pages.map((p) => p.parentId).filter(Boolean))];
+  const folders = await Promise.all(folderIds.map(getPageFolder));
+
+  const pageCountByFolder = pages.reduce((acc, p) => {
+    const key = p.parentId || NO_FOLDER_ID;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const result = folders.map((f) => ({
+    id: f.id,
+    title: f.title,
+    slug: f.slug,
+    pageCount: pageCountByFolder[f.id] || 0,
+  }));
+
+  if (pageCountByFolder[NO_FOLDER_ID]) {
+    result.push({ id: NO_FOLDER_ID, title: "No folder (top-level pages)", slug: null, pageCount: pageCountByFolder[NO_FOLDER_ID] });
+  }
+
+  return result;
+}
+
+/**
+ * Filters a page list down to those inside one of the given folder ids
+ * (NO_FOLDER_ID matches pages with a null parentId). Shared by the
+ * Automation wizard's live scope preview and automationScheduler's polling
+ * scan, so both agree on exactly what a Pages automation's scope includes.
+ */
+function filterPagesByFolderScope(pages, pageFolderIds) {
+  const scopeSet = new Set(pageFolderIds);
+  return pages.filter((p) => scopeSet.has(p.parentId || NO_FOLDER_ID));
+}
+
 /**
  * Fetches a page's DOM content (a flat node tree, NOT field-keyed like CMS
  * items -- see webflowDom.js for text extraction). Paginated (confirmed
@@ -559,6 +619,10 @@ module.exports = {
   updatePageDom,
   buildPageResourceFileName,
   DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
+  NO_FOLDER_ID,
+  getPageFolder,
+  listPageFolders,
+  filterPagesByFolderScope,
   listComponents,
   getComponentDom,
   updateComponentDom,

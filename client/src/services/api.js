@@ -18,12 +18,6 @@ const api = {
   getCollectionItems: (collectionId) => request(`/collections/${collectionId}/items`),
   getBacklog: () => request("/backlog"),
   getSyncStatus: () => request("/sync/status"),
-  previewBulkSync: (translateFromDate) =>
-    request("/sync/bulk", { method: "POST", body: JSON.stringify({ translateFromDate, dryRun: true }) }),
-  syncBulk: (translateFromDate) =>
-    request("/sync/bulk", { method: "POST", body: JSON.stringify({ translateFromDate }) }),
-  getBulkSyncJob: (jobId) => request(`/sync/bulk/${jobId}`),
-  cancelBulkSyncJob: (jobId) => request(`/sync/bulk/${jobId}/cancel`, { method: "POST" }),
   syncItem: (collectionId, itemIds) =>
     request("/sync/item", { method: "POST", body: JSON.stringify({ collectionId, itemIds }) }),
   getSettings: () => request("/settings"),
@@ -39,28 +33,22 @@ const api = {
       method: "PUT",
       body: JSON.stringify({ excludedFields }),
     }),
-  updateAutoSyncFieldConditions: (collectionId, conditions) =>
-    request(`/collections/${collectionId}/auto-sync-conditions`, {
-      method: "PUT",
-      body: JSON.stringify({ conditions }),
-    }),
-  getAutoSyncStatus: () => request("/sync/auto/status"),
-  flushAutoSyncNow: () => request("/sync/auto/flush", { method: "POST" }),
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
   getPages: () => request("/sync/pages/list"),
-  previewPagesBulkSync: () => request("/sync/pages/bulk", { method: "POST", body: JSON.stringify({ dryRun: true }) }),
-  syncPagesBulk: () => request("/sync/pages/bulk", { method: "POST", body: JSON.stringify({}) }),
-  getPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}`),
-  cancelPagesBulkSyncJob: (jobId) => request(`/sync/pages/bulk/${jobId}/cancel`, { method: "POST" }),
+  getPageFolders: () => request("/sync/pages/folders"),
   syncPagesItem: (pageIds) => request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds }) }),
   getComponents: () => request("/sync/components/list"),
-  previewComponentsBulkSync: () =>
-    request("/sync/components/bulk", { method: "POST", body: JSON.stringify({ dryRun: true }) }),
-  syncComponentsBulk: () => request("/sync/components/bulk", { method: "POST", body: JSON.stringify({}) }),
-  getComponentsBulkSyncJob: (jobId) => request(`/sync/components/bulk/${jobId}`),
-  cancelComponentsBulkSyncJob: (jobId) => request(`/sync/components/bulk/${jobId}/cancel`, { method: "POST" }),
   syncComponentsItem: (componentIds) =>
     request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds }) }),
+  listAutomations: () => request("/automations"),
+  createAutomation: (automation) => request("/automations", { method: "POST", body: JSON.stringify(automation) }),
+  updateAutomation: (id, automation) =>
+    request(`/automations/${id}`, { method: "PUT", body: JSON.stringify(automation) }),
+  deleteAutomation: (id) => request(`/automations/${id}`, { method: "DELETE" }),
+  pauseAutomation: (id) => request(`/automations/${id}/pause`, { method: "POST" }),
+  resumeAutomation: (id) => request(`/automations/${id}/resume`, { method: "POST" }),
+  flushAutomationNow: (id) => request(`/automations/${id}/flush`, { method: "POST" }),
+  getAutomationStatus: (id) => request(`/automations/${id}/status`),
 };
 
 export default api;

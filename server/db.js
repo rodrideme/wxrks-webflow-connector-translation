@@ -43,6 +43,25 @@ async function migrate() {
 
   // Forward migration for tables created before the `updates` column existed.
   await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS updates JSONB NOT NULL DEFAULT '[]'`);
+
+  // Forward migration: attribution for project_mappings created by an
+  // automation run. Not a foreign key -- automations are deletable and
+  // history must stay attributable after deletion.
+  await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS automation_name TEXT`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      content_scope JSONB NOT NULL,
+      flush_times JSONB NOT NULL DEFAULT '["00:00","12:00"]',
+      org_unit_override TEXT,
+      checkpoint JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
 }
 
 module.exports = { query, migrate, pool };

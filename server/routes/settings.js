@@ -1,8 +1,6 @@
 const express = require("express");
 const store = require("../store");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
-const autoSyncQueue = require("../services/autoSyncQueue");
-const autoSyncReconciliation = require("../services/autoSyncReconciliation");
 
 const router = express.Router();
 
@@ -39,14 +37,11 @@ router.get("/", async (req, res) => {
 
 /**
  * PUT /api/settings
- * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, enabledCollectionIds?, autoSync? }
- * Env-backed connection secrets are not editable here — they're deploy-time config.
- *
- * `autoSync` is sent as a full object by the client (same pattern as the
- * rest of settings) but its `webhook` sub-object is server-owned bookkeeping
- * (see store.updateAutoSyncWebhookState) -- it's intentionally NOT
- * overwritten here even if the client's copy is stale, since background
- * webhook lifecycle code can update it concurrently with a settings save.
+ * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, enabledCollectionIds?, pages?, components? }
+ * Env-backed connection secrets are not editable here — they're deploy-time
+ * config. Automation config (schedule, content scope, org-unit override)
+ * lives in the `automations` table now -- see routes/automations.js, not
+ * this endpoint.
  */
 router.put("/", async (req, res) => {
   const {
@@ -59,7 +54,6 @@ router.put("/", async (req, res) => {
     enabledCollectionIds,
     workUnitNamePattern,
     timezone,
-    autoSync,
     pages,
     pagesWorkUnitNamePattern,
     components,
@@ -81,41 +75,8 @@ router.put("/", async (req, res) => {
   if (componentsWorkUnitNamePattern !== undefined) patch.componentsWorkUnitNamePattern = componentsWorkUnitNamePattern;
 
   try {
-    const before = await store.getSettings();
-
-    if (autoSync !== undefined) {
-      // Never let a client PUT clobber the server-owned webhook bookkeeping.
-      patch.autoSync = { ...autoSync, webhook: before.autoSync.webhook };
-    }
-
-    const updated = await store.updateSettings(patch);
-
-    const scheduleChanged =
-      JSON.stringify(before.autoSync.flushTimes) !== JSON.stringify(updated.autoSync.flushTimes) ||
-      before.timezone !== updated.timezone;
-
-    if (autoSync !== undefined) {
-      const wasEnabled = before.autoSync.enabled;
-      const nowEnabled = updated.autoSync.enabled;
-
-      if (!wasEnabled && nowEnabled) {
-        await autoSyncWebhook.ensureWebhookRegistered();
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
-        autoSyncReconciliation.startReconciliationLoop();
-      } else if (wasEnabled && !nowEnabled) {
-        await autoSyncWebhook.teardownWebhook();
-        autoSyncQueue.stopFlushLoop();
-        autoSyncReconciliation.stopReconciliationLoop();
-      } else if (nowEnabled && scheduleChanged) {
-        // Flush-schedule or timezone edit takes effect immediately, no restart needed.
-        autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
-      }
-    } else if (updated.autoSync.enabled && scheduleChanged) {
-      // Timezone changed via a PUT that didn't touch autoSync itself.
-      autoSyncQueue.startFlushLoop(updated.autoSync.flushTimes, updated.timezone);
-    }
-
-    res.json(await store.getSettings()); // re-fetch: webhook state may have changed above
+    await store.updateSettings(patch);
+    res.json(await store.getSettings());
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -123,7 +84,7 @@ router.put("/", async (req, res) => {
 
 /**
  * POST /api/settings/autosync/reregister-webhook
- * Manual recovery action for the Sync Panel's Auto Sync tab, surfaced when
+ * Manual recovery action, surfaced on the Automation list page when
  * reconciliation infers the Webflow webhook was silently deactivated.
  * Deliberately not automatic (see autoSyncReconciliation.js) -- a
  * repeatedly-failing target URL re-registering itself in a loop is worse

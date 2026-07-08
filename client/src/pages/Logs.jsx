@@ -8,7 +8,7 @@ import Chip from "../components/Chip.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
 
-function modeLabel(mode) {
+function modeLabel(mode, automationName) {
   if (mode === "pages-bulk") return "Pages · Bulk Sync";
   if (mode === "pages-item") return "Pages · Item Sync";
   if (mode === "components-bulk") return "Components · Bulk Sync";
@@ -16,6 +16,7 @@ function modeLabel(mode) {
   if (mode === "bulk") return "Bulk Sync";
   if (mode === "item") return "Item Sync";
   if (mode === "auto") return "Auto Sync";
+  if (mode === "automation") return automationName ? `Automation · ${automationName}` : "Automation";
   return mode;
 }
 
@@ -102,7 +103,7 @@ export default function Logs() {
               <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Sent to wxrks</p>
               <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-md border border-border bg-surface-sunken p-3.5 text-[13px] sm:grid-cols-3">
                 <Field label="Created" value={formatDateTime(batch.createdAt, timezone)} />
-                <Field label="Mode" value={modeLabel(batch.mode)} />
+                <Field label="Mode" value={modeLabel(batch.mode, batch.automationName)} />
                 <Field label="wxrks status" value={batch.wxrksStatus} />
                 <Field label="Org unit" value={batch.orgUnitUUID ? orgUnitName(batch.orgUnitUUID) : "—"} />
                 <Field label="Source" value={batch.sourceLocale} mono />

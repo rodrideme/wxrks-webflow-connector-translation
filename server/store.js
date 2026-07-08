@@ -6,12 +6,14 @@
  * regardless of where its progress was recorded.
  */
 
+const crypto = require("crypto");
 const db = require("./db");
 const {
   DEFAULT_WORK_UNIT_NAME_PATTERN,
   DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
 } = require("./services/webflow");
+const { evaluateCondition } = require("./services/autoSyncRules");
 
 const DEFAULT_SETTINGS = {
   sourceLocale: process.env.SOURCE_LOCALE || "en",
@@ -37,11 +39,11 @@ const DEFAULT_SETTINGS = {
   // unit file name (wxrks has no separate "name" field -- it derives the
   // work unit name from the uploaded file name).
   workUnitNamePattern: DEFAULT_WORK_UNIT_NAME_PATTERN,
-  // Static Pages sync (v1: manual Bulk/Item Sync only, no Auto Sync yet --
-  // see the pages translation plan for why). Mirrors the CMS collection
-  // enable-tree shape (allCollectionsEnabled/enabledCollectionIds) but is
-  // entirely separate, since pages have no field schema and a different
-  // Webflow API surface (DOM node tree, not fieldData).
+  // Static Pages manual Select & Send scope (separate from Automation's
+  // per-automation `content_scope.pageFolderIds`). Mirrors the CMS
+  // collection enable-tree shape (allCollectionsEnabled/enabledCollectionIds)
+  // but is entirely separate, since pages have no field schema and a
+  // different Webflow API surface (DOM node tree, not fieldData).
   pages: {
     allPagesEnabled: true,
     enabledPageIds: [],
@@ -49,9 +51,7 @@ const DEFAULT_SETTINGS = {
   // Placeholder: {page}. Kept separate from workUnitNamePattern since the
   // token vocabulary differs (a page has no collection/entry distinction).
   pagesWorkUnitNamePattern: DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
-  // Components sync (v1: manual Bulk/Item Sync only, same reasoning as
-  // Pages). Sibling enable-tree shape again; components have no field
-  // schema of their own either.
+  // Components manual Select & Send scope, same reasoning as Pages above.
   components: {
     allComponentsEnabled: true,
     enabledComponentIds: [],
@@ -59,43 +59,19 @@ const DEFAULT_SETTINGS = {
   // Placeholder: {component}. Components have no slug/entry token, only a
   // free-text `name` (e.g. "<Footer>", "Dark CTA") -- always slugified.
   componentsWorkUnitNamePattern: DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
-  // Auto Sync: automatically translate content when it's published, based on
-  // a 3-level rule tree (master enable -> per-collection allow-list ->
-  // optional per-field conditions). Separate from allCollectionsEnabled/
-  // enabledCollectionIds above -- a collection can be enabled for manual
-  // sync, auto sync, both, or neither.
-  autoSync: {
-    enabled: false,
-    // Exact UTC clock times ("HH:mm") the queued batch flushes at each day --
-    // not just an interval count, so the user can see and edit precisely
-    // when it happens rather than an opaque "every N hours" cadence.
-    flushTimes: ["00:00", "12:00"],
-    allCollectionsEnabled: false,
-    enabledCollectionIds: [],
-    // { [collectionId]: AutoSyncCondition[] }, ALL conditions must match (AND)
-    fieldConditions: {},
-    // Webflow webhook lifecycle bookkeeping -- not directly user-edited, but
-    // persisted here (singleton state like the rest of settings) rather than
-    // a new table. Written via updateAutoSyncWebhookState, not updateSettings,
-    // since it's mutated by server-side background code (registration,
-    // reconciliation) as well as the Settings save path.
-    webhook: {
-      webflowWebhookId: null,
-      signingSecret: null,
-      registeredAt: null,
-      lastEventAt: null,
-      status: "not_registered", // "not_registered" | "active" | "deactivated" | "error"
-      lastError: null,
-    },
-  },
-  // Reconciliation checkpoint + per-item dedup bookkeeping for Auto Sync.
-  // Sibling of `autoSync` (not nested inside it) so it survives autoSync
-  // being disabled/re-enabled without special-casing -- it's operational
-  // bookkeeping, not a user-facing setting.
-  autoSyncReconciliation: {
-    lastCheckpoint: null, // ISO date string
-    // { [collectionId]: { [itemId]: isoTimestampOfLastAutoSync } }
-    lastSyncedAt: {},
+  // Automation (formerly "Auto Sync"): Webflow webhook lifecycle bookkeeping,
+  // global because Webflow registers one webhook per trigger type per site
+  // regardless of how many automations exist. Individual automations
+  // (content scope, schedule, org-unit override, checkpoint/dedup state)
+  // live in the `automations` table, not here -- see store.js's automation
+  // CRUD functions below.
+  autoSyncWebhook: {
+    webflowWebhookId: null,
+    signingSecret: null,
+    registeredAt: null,
+    lastEventAt: null,
+    status: "not_registered", // "not_registered" | "active" | "deactivated" | "error"
+    lastError: null,
   },
 };
 
@@ -118,6 +94,10 @@ function mappingRowToObject(row) {
     // Webhook-triggered "translations pushed back to Webflow" events, kept
     // separate from `items` (which records what was *sent* to wxrks).
     updates: row.updates || [],
+    // Set only for mode "automation" -- the automation's name at the time it
+    // ran (not a foreign key: automations are deletable and history must
+    // stay attributable after deletion).
+    automationName: row.automation_name || null,
   };
 }
 
@@ -125,12 +105,12 @@ async function createProjectMapping(wxrksProjectUUID, mapping) {
   const { rows } = await db.query(
     `INSERT INTO project_mappings
        (wxrks_project_uuid, mode, source_locale, target_locales, org_unit_uuid,
-        work_unit_name_pattern, collection_ids, items, status, wxrks_status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING *`,
     [
       wxrksProjectUUID,
-      mapping.mode || "bulk",
+      mapping.mode || "item",
       mapping.sourceLocale,
       JSON.stringify(mapping.targetLocales || []),
       mapping.orgUnitUUID,
@@ -139,6 +119,7 @@ async function createProjectMapping(wxrksProjectUUID, mapping) {
       JSON.stringify(mapping.items || []),
       mapping.status || "in_progress",
       mapping.wxrksStatus || "DRAFT",
+      mapping.automationName || null,
     ]
   );
   return mappingRowToObject(rows[0]);
@@ -253,20 +234,14 @@ async function listActiveProjects() {
 }
 
 function mergeSettings(stored) {
-  // A plain top-level spread is enough for flat fields, but `autoSync` (and
-  // its own `webhook` sub-object) are nested -- a stored row that only ever
-  // had a partial `autoSync` written (e.g. before `webhook` existed) would
-  // otherwise lose those nested defaults entirely instead of falling back to
-  // them.
+  // A plain top-level spread is enough for flat fields, but nested objects
+  // need their own merge so a stored row that only ever had a partial
+  // sub-object written (e.g. before a field existed) doesn't lose those
+  // nested defaults entirely instead of falling back to them.
   const merged = { ...DEFAULT_SETTINGS, ...stored };
-  merged.autoSync = {
-    ...DEFAULT_SETTINGS.autoSync,
-    ...(stored.autoSync || {}),
-    webhook: { ...DEFAULT_SETTINGS.autoSync.webhook, ...(stored.autoSync?.webhook || {}) },
-  };
-  merged.autoSyncReconciliation = {
-    ...DEFAULT_SETTINGS.autoSyncReconciliation,
-    ...(stored.autoSyncReconciliation || {}),
+  merged.autoSyncWebhook = {
+    ...DEFAULT_SETTINGS.autoSyncWebhook,
+    ...(stored.autoSyncWebhook || {}),
   };
   merged.pages = {
     ...DEFAULT_SETTINGS.pages,
@@ -331,59 +306,165 @@ async function setFieldExclusions(collectionId, excludedFields) {
   return excludedFields;
 }
 
-// Pure helper, mirrors isCollectionEnabled but for the separate Auto Sync
-// collection allow-list (a collection can be manual-sync-only, auto-sync-
-// only, both, or neither).
-function isAutoSyncCollectionEnabled(settings, collectionId) {
-  return settings.autoSync.allCollectionsEnabled || settings.autoSync.enabledCollectionIds.includes(collectionId);
-}
-
-async function setAutoSyncFieldConditions(collectionId, conditions) {
-  const settings = await getSettings();
-  const fieldConditions = { ...settings.autoSync.fieldConditions, [collectionId]: conditions };
-  await updateSettings({ autoSync: { ...settings.autoSync, fieldConditions } });
-  return conditions;
-}
-
 /**
  * Read-modify-write onto the freshly-read current settings, used only by
  * server-side webhook lifecycle code (registration, reconciliation's
  * deactivation inference) -- kept separate from the general updateSettings()
  * PUT path so a client Settings save racing a server-side webhook-status
- * update can't clobber it (the client always resends the full `autoSync`
- * object it has locally, which could be stale for this specific
- * sub-object).
+ * update can't clobber it.
  */
 async function updateAutoSyncWebhookState(patch) {
   const settings = await getSettings();
-  const webhook = { ...settings.autoSync.webhook, ...patch };
-  await updateSettings({ autoSync: { ...settings.autoSync, webhook } });
-  return webhook;
+  const autoSyncWebhook = { ...settings.autoSyncWebhook, ...patch };
+  await updateSettings({ autoSyncWebhook });
+  return autoSyncWebhook;
+}
+
+// ---------------------------------------------------------------------------
+// Automations: a real table (not settings JSONB) since each automation's
+// checkpoint/flush needs to read-modify-write independently without
+// contending with other automations' or unrelated settings' concurrent
+// writes -- the same reasoning that made project_mappings its own table.
+
+function automationRowToObject(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    enabled: row.enabled,
+    contentScope: row.content_scope,
+    flushTimes: row.flush_times,
+    orgUnitOverride: row.org_unit_override,
+    checkpoint: row.checkpoint,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+async function listAutomations() {
+  const { rows } = await db.query(`SELECT * FROM automations ORDER BY created_at ASC`);
+  return rows.map(automationRowToObject);
+}
+
+async function getAutomation(id) {
+  const { rows } = await db.query(`SELECT * FROM automations WHERE id = $1`, [id]);
+  return rows[0] ? automationRowToObject(rows[0]) : undefined;
+}
+
+async function createAutomation({ id, name, enabled, contentScope, flushTimes, orgUnitOverride }) {
+  const { rows } = await db.query(
+    `INSERT INTO automations (id, name, enabled, content_scope, flush_times, org_unit_override, checkpoint)
+     VALUES ($1, $2, $3, $4, $5, $6, '{}')
+     RETURNING *`,
+    [
+      id || crypto.randomUUID(),
+      name,
+      enabled !== undefined ? enabled : true,
+      JSON.stringify(contentScope),
+      JSON.stringify(flushTimes || ["00:00", "12:00"]),
+      orgUnitOverride || null,
+    ]
+  );
+  return automationRowToObject(rows[0]);
+}
+
+const AUTOMATION_PATCH_COLUMNS = {
+  name: "name",
+  enabled: "enabled",
+  contentScope: "content_scope",
+  flushTimes: "flush_times",
+  orgUnitOverride: "org_unit_override",
+  checkpoint: "checkpoint",
+};
+const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "flushTimes", "checkpoint"]);
+
+async function updateAutomation(id, patch) {
+  const keys = Object.keys(patch).filter((k) => AUTOMATION_PATCH_COLUMNS[k]);
+  if (keys.length === 0) return getAutomation(id);
+
+  const setClauses = keys.map((key, i) => `${AUTOMATION_PATCH_COLUMNS[key]} = $${i + 2}`);
+  const values = keys.map((key) => (AUTOMATION_JSON_PATCH_KEYS.has(key) ? JSON.stringify(patch[key]) : patch[key]));
+
+  const { rows } = await db.query(
+    `UPDATE automations SET ${setClauses.join(", ")}, updated_at = now() WHERE id = $1 RETURNING *`,
+    [id, ...values]
+  );
+  return rows[0] ? automationRowToObject(rows[0]) : undefined;
+}
+
+async function deleteAutomation(id) {
+  await db.query(`DELETE FROM automations WHERE id = $1`, [id]);
 }
 
 /**
- * True if this exact (collection, item) publish has already been
- * auto-synced -- prevents the live webhook and reconciliation's gap-catch-up
- * scan from double-syncing the same publish.
+ * Whether a CMS item qualifies for this automation, mirroring the old global
+ * evaluateAutoSyncRules but scoped to one automation row: Level 1 enabled ->
+ * Level 2 "all content" short-circuits true, else collection allow-list ->
+ * Level 3 optional per-field conditions (AND semantics), via
+ * autoSyncRules.js's pure evaluateCondition.
  */
-function isAlreadyAutoSynced(settings, collectionId, itemId, lastPublishedIso) {
-  const lastSyncedAt = settings.autoSyncReconciliation.lastSyncedAt?.[collectionId]?.[itemId];
+function isAutomationCmsItemQualified(automation, collection, itemLike) {
+  if (!automation.enabled) return false;
+  if (itemLike.isDraft || itemLike.isArchived) return false;
+
+  const { contentScope } = automation;
+  if (contentScope.type === "all") return true;
+  if (contentScope.type !== "cms") return false;
+
+  const collectionQualifies =
+    contentScope.allCollectionsEnabled || contentScope.enabledCollectionIds.includes(collection.id);
+  if (!collectionQualifies) return false;
+
+  const conditions = contentScope.fieldConditions[collection.id] || [];
+  return conditions.every((cond) => evaluateCondition(cond, itemLike.fieldData));
+}
+
+function isAutomationItemAlreadySynced(automation, collectionId, itemId, lastPublishedIso) {
+  const lastSyncedAt = automation.checkpoint.lastSyncedAt?.[collectionId]?.[itemId];
   if (!lastSyncedAt || !lastPublishedIso) return false;
   return new Date(lastPublishedIso) <= new Date(lastSyncedAt);
 }
 
-async function markAutoSynced(collectionId, itemId, lastPublishedIso) {
-  const settings = await getSettings();
+async function markAutomationItemSynced(automationId, collectionId, itemId, lastPublishedIso) {
+  const automation = await getAutomation(automationId);
+  if (!automation) return;
   const lastSyncedAt = {
-    ...settings.autoSyncReconciliation.lastSyncedAt,
-    [collectionId]: {
-      ...(settings.autoSyncReconciliation.lastSyncedAt[collectionId] || {}),
-      [itemId]: lastPublishedIso,
-    },
+    ...automation.checkpoint.lastSyncedAt,
+    [collectionId]: { ...(automation.checkpoint.lastSyncedAt?.[collectionId] || {}), [itemId]: lastPublishedIso },
   };
-  await updateSettings({
-    autoSyncReconciliation: { ...settings.autoSyncReconciliation, lastSyncedAt },
-  });
+  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedAt } });
+}
+
+function isAutomationPageAlreadySynced(automation, pageId, lastUpdatedIso) {
+  const lastSyncedAt = automation.checkpoint.lastSyncedPages?.[pageId];
+  if (!lastSyncedAt || !lastUpdatedIso) return false;
+  return new Date(lastUpdatedIso) <= new Date(lastSyncedAt);
+}
+
+async function markAutomationPageSynced(automationId, pageId, lastUpdatedIso) {
+  const automation = await getAutomation(automationId);
+  if (!automation) return;
+  const lastSyncedPages = { ...automation.checkpoint.lastSyncedPages, [pageId]: lastUpdatedIso };
+  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedPages } });
+}
+
+// Components carry no modification timestamp at all (confirmed live against
+// the real Webflow API), so dedup compares a content hash instead of a date.
+function isAutomationComponentAlreadySynced(automation, componentId, contentHash) {
+  const lastHash = automation.checkpoint.lastSyncedComponentHashes?.[componentId];
+  return lastHash === contentHash;
+}
+
+async function markAutomationComponentSynced(automationId, componentId, contentHash) {
+  const automation = await getAutomation(automationId);
+  if (!automation) return;
+  const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes, [componentId]: contentHash };
+  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedComponentHashes } });
+}
+
+async function advanceAutomationCheckpoint(automationId, isoTimestamp) {
+  const automation = await getAutomation(automationId);
+  if (!automation) return;
+  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastCheckpoint: isoTimestamp } });
 }
 
 function createSyncJob(job) {
@@ -482,11 +563,20 @@ module.exports = {
   isComponentEnabled,
   getFieldExclusions,
   setFieldExclusions,
-  isAutoSyncCollectionEnabled,
-  setAutoSyncFieldConditions,
   updateAutoSyncWebhookState,
-  isAlreadyAutoSynced,
-  markAutoSynced,
+  listAutomations,
+  getAutomation,
+  createAutomation,
+  updateAutomation,
+  deleteAutomation,
+  isAutomationCmsItemQualified,
+  isAutomationItemAlreadySynced,
+  markAutomationItemSynced,
+  isAutomationPageAlreadySynced,
+  markAutomationPageSynced,
+  isAutomationComponentAlreadySynced,
+  markAutomationComponentSynced,
+  advanceAutomationCheckpoint,
   setLastSync,
   getLastSync,
   setDebugWebhookPayload,
