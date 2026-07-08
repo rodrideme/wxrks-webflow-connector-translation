@@ -27,6 +27,20 @@ function cadenceSummary(cadence) {
   return `Runs every day at ${cadence.time}`;
 }
 
+// Real wxrks work-unit workflow values (POST /project/:uuid/work-unit?bulk=true's `workflows` array).
+// TRANSLATION is always first and can't be removed; the rest are optional add-on steps.
+const WORKFLOW_LABELS = {
+  TRANSLATION: "Automatic Translation",
+  PROOFREADING: "Proofreading",
+  REVIEW: "Review",
+  REVIEW_2: "Review 2",
+  REVIEW_3: "Review 3",
+  ICR: "ICR",
+  REGIONAL_APPROVAL: "Regional Approval",
+  DTP: "DTP",
+};
+const WORKFLOW_ORDER = Object.keys(WORKFLOW_LABELS);
+
 /**
  * The redesign's single "Send to wxrks" flow -- Settings → Run → Review --
  * handling both a one-time send and recurring-automation creation, decided
@@ -58,7 +72,8 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   const [time, setTime] = useState("09:00");
   const [weekday, setWeekday] = useState("Mon");
   const [includeExisting, setIncludeExisting] = useState(false);
-  const [automationName, setAutomationName] = useState("");
+  const [workflowSteps, setWorkflowSteps] = useState(["TRANSLATION"]);
+  const [addStepOpen, setAddStepOpen] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -81,9 +96,19 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     setIncludeExisting(false);
     setProjectName("");
     setAdvOpen(false);
-    setAutomationName("");
+    setWorkflowSteps(["TRANSLATION"]);
+    setAddStepOpen(false);
     setError(null);
   }, [open]);
+
+  function addWorkflowStep(step) {
+    setWorkflowSteps((prev) => (prev.includes(step) ? prev : [...prev, step]));
+    setAddStepOpen(false);
+  }
+
+  function removeWorkflowStep(step) {
+    setWorkflowSteps((prev) => prev.filter((s) => s !== step));
+  }
 
   function selectOrgUnit(uuid) {
     setOrgUnitUUID(uuid);
@@ -123,10 +148,10 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             ? { scope: "all" }
             : { scope: "leaves", leaves: selection.groups.map((g) => ({ kind: g.kind, id: g.leafId, filters: g.filters || [] })) };
         const automation = await api.createAutomation({
-          name: automationName || `${contentLabel} · ${new Date().toLocaleDateString()}`,
+          name: `${contentLabel} · ${new Date().toLocaleDateString()}`,
           contentScope,
           cadence,
-          workflows: ["TRANSLATION"],
+          workflows: workflowSteps,
           projectName: projectName || null,
           includeExisting,
           orgUnitOverride: orgUnitUUID !== settings?.orgUnitUUID ? orgUnitUUID : null,
@@ -141,7 +166,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       // the background), rather than blocking until every item is done.
       // A selection spanning multiple kinds/leaves becomes multiple jobs/
       // projects, tracked together by the parent's job poller.
-      const options = { workflows: ["TRANSLATION"], projectName: projectName || undefined };
+      const options = { workflows: workflowSteps, projectName: projectName || undefined };
       const sourceGroups = (scope === "all" ? allSummary.groups : selection.groups).filter((g) => g.ids.length > 0);
       const jobs = [];
       for (const g of sourceGroups) {
@@ -163,7 +188,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   if (!settings) return open ? <Modal open={open} onClose={onClose} title="Send for translation"><p className="text-sm text-ink-faint">Loading…</p></Modal> : null;
 
   return (
-    <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-2xl">
+    <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-4xl">
       <div className="mb-5 flex items-center gap-2">
         {["Settings", "Run", "Review"].map((label, i) => (
           <div key={label} className="flex items-center gap-2">
@@ -219,16 +244,56 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
 
           <div>
             <div className="mb-1.5 text-sm font-medium text-ink-soft">Workflow</div>
-            <div className="flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-ink bg-ink px-3 py-1 text-xs font-semibold text-canvas">
-                <span className="font-mono text-[9px] opacity-60">1</span>Automatic Translation
-              </span>
-              <span className="text-ink-faint">→</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border-strong px-3 py-1 text-xs font-semibold text-ink-faint">
-                + Add step
-              </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {workflowSteps.map((step, i) => (
+                <div key={step} className="flex items-center gap-1.5">
+                  {i > 0 && <span className="text-ink-faint">→</span>}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-ink bg-ink px-3 py-1 text-xs font-semibold text-canvas">
+                    <span className="font-mono text-[9px] opacity-60">{i + 1}</span>
+                    {WORKFLOW_LABELS[step]}
+                    {step !== "TRANSLATION" && (
+                      <button
+                        type="button"
+                        onClick={() => removeWorkflowStep(step)}
+                        aria-label={`Remove ${WORKFLOW_LABELS[step]}`}
+                        className="ml-0.5 opacity-70 hover:opacity-100"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                </div>
+              ))}
+              {workflowSteps.length < WORKFLOW_ORDER.length && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-ink-faint">→</span>
+                  <button
+                    type="button"
+                    onClick={() => setAddStepOpen((v) => !v)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border-strong px-3 py-1 text-xs font-semibold text-ink-faint hover:border-ink-faint hover:text-ink"
+                  >
+                    + Add step
+                  </button>
+                </div>
+              )}
             </div>
-            <p className="mt-1 text-xs text-ink-faint">Additional workflow steps (e.g. human review) aren't configurable yet.</p>
+            {/* Rendered in normal flow (not an absolutely-positioned popover) so it
+                can't get clipped by the modal body's overflow-y-auto -- it simply
+                pushes the rest of the step content down instead. */}
+            {addStepOpen && (
+              <div className="mt-2 flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface-sunken p-2">
+                {WORKFLOW_ORDER.filter((s) => !workflowSteps.includes(s)).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => addWorkflowStep(s)}
+                    className="rounded-full border border-border-strong bg-surface px-3 py-1 text-xs font-semibold text-ink hover:border-ink-faint"
+                  >
+                    + {WORKFLOW_LABELS[s]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="border-t border-border pt-3">
@@ -365,13 +430,6 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                   <div className="mt-0.5 text-[11.5px] text-ink-faint">Leave off to only translate future content.</div>
                 </span>
               </label>
-
-              <input
-                value={automationName}
-                onChange={(e) => setAutomationName(e.target.value)}
-                placeholder="Automation name (optional)"
-                className={inputClass}
-              />
             </div>
           )}
         </div>
@@ -397,7 +455,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             <div className="text-[13.5px] font-semibold text-ink">
               {orgUnits.find((o) => o.uuid === orgUnitUUID)?.name || "—"} · {targetLocales.length} languages
             </div>
-            <div className="mt-0.5 text-xs text-ink-soft">Workflow: Automatic Translation</div>
+            <div className="mt-0.5 text-xs text-ink-soft">Workflow: {workflowSteps.map((s) => WORKFLOW_LABELS[s]).join(" → ")}</div>
             <div className="mt-0.5 text-xs text-ink-soft">Project name: {projectName || `${contentLabel} · ${new Date().toLocaleDateString()}`}</div>
           </div>
         </div>

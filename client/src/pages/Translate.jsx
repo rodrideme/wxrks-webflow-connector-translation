@@ -3,6 +3,7 @@ import api from "../services/api.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import ContentBrowserRail from "../components/ContentBrowserRail.jsx";
+import LoadingState from "../components/LoadingState.jsx";
 import TranslateActionBar from "../components/TranslateActionBar.jsx";
 import SendToWxrksModal from "../components/SendToWxrksModal.jsx";
 import { itemMatchesFilters } from "../leafHelpers.js";
@@ -288,9 +289,35 @@ export default function Translate() {
     });
   }
 
+  // Changing a leaf's filters must never silently turn a rule-based pick
+  // into an "individual selection" -- if the leaf's current selection
+  // exactly matches its OLD filtered set (whole leaf, or a prior filter's
+  // matches), resync it to the NEW filtered set so it stays rule-based.
+  // A genuine manual partial pick (some items unchecked by hand) is left
+  // untouched -- that's the one case that should stay "individual".
   function updateFilters(leaf, fn) {
     const key = leafKeyOf(leaf.kind, leaf.id);
-    setFiltersByLeaf((prev) => ({ ...prev, [key]: fn(prev[key] || []) }));
+    const oldFilters = filtersByLeaf[key] || [];
+    const items = itemsForLeaf(leaf).filter(passesDateFilter);
+    const oldMatchingIds = items.filter((it) => itemMatchesFilters(it, oldFilters)).map((it) => it.id);
+    const selectedIds = items.filter((it) => isEntitySelected(leaf.kind, it.id)).map((it) => it.id);
+    const wasRuleBased = oldMatchingIds.length > 0 && selectedIds.length === oldMatchingIds.length && oldMatchingIds.every((id) => selectedIds.includes(id));
+
+    const nextFilters = fn(oldFilters);
+    setFiltersByLeaf((prev) => ({ ...prev, [key]: nextFilters }));
+
+    if (wasRuleBased) {
+      const newMatchingIds = new Set(items.filter((it) => itemMatchesFilters(it, nextFilters)).map((it) => it.id));
+      setSelected((prevSel) => {
+        const nextSel = { ...prevSel };
+        items.forEach((it) => {
+          const k = leafKeyOf(leaf.kind, it.id);
+          if (newMatchingIds.has(it.id)) nextSel[k] = true;
+          else delete nextSel[k];
+        });
+        return nextSel;
+      });
+    }
   }
 
   function addFilter() {
@@ -584,7 +611,7 @@ export default function Translate() {
                       </table>
                     </div>
                   ) : activeLeaf.kind === "collection" && !itemsByCollection[activeLeaf.id] ? (
-                    <p className="p-4 text-sm text-ink-faint">Loading…</p>
+                    <LoadingState label={`Loading ${activeLeaf.label}`} />
                   ) : (
                     <p className="p-4 text-sm text-ink-faint">No items{itemFilter !== "all" ? " match this filter" : ""}.</p>
                   )}
@@ -598,7 +625,7 @@ export default function Translate() {
       {mode === "all" && (
         <Card>
           {allItemsLoading ? (
-            <p className="p-4 text-sm text-ink-faint">Computing totals…</p>
+            <LoadingState label="Computing totals across your site" />
           ) : (
             <table className="w-full text-left text-sm">
               <thead>

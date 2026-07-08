@@ -19,12 +19,16 @@ export default function Modal({ open, onClose, title, children, width = "max-w-2
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/40 px-4 py-10" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-10"
+      style={{ backgroundColor: "rgba(10, 11, 20, 0.55)" }}
+      onClick={onClose}
+    >
       <div
-        className={`w-full ${width} overflow-hidden rounded-lg border border-border bg-surface shadow-card`}
+        className={`flex max-h-[85vh] w-full ${width} flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-card`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <div className="flex flex-none items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
           <button
             type="button"
@@ -35,7 +39,7 @@ export default function Modal({ open, onClose, title, children, width = "max-w-2
             ✕
           </button>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto px-5 py-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
       </div>
     </div>
   );

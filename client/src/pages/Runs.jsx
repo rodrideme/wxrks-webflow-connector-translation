@@ -66,21 +66,29 @@ export default function Runs() {
   const [logType, setLogType] = useState("all"); // all | one-time | recurring
   const [detailAutomation, setDetailAutomation] = useState(null);
   const [flushing, setFlushing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
   function loadAutomations() {
-    api
+    setRefreshing(true);
+    return api
       .listAutomations()
       .then((res) => {
         setAutomations(res.automations || []);
         setPendingItems(res.pendingItems || []);
         setWebhook(res.webhook);
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err.message))
+      .finally(() => setRefreshing(false));
   }
 
   useEffect(() => {
     loadAutomations();
+    const interval = setInterval(loadAutomations, 8000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     Promise.all([
       api.getSyncHistory(),
       api.getCollections().catch(() => ({ collections: [] })),
@@ -232,6 +240,13 @@ export default function Runs() {
           <span className="flex items-center gap-2 text-[13px] font-semibold text-ink">
             <span className="h-1.5 w-1.5 rounded-full bg-status-auto-dot" />
             Pending queue
+            <button
+              onClick={loadAutomations}
+              disabled={refreshing}
+              className="ml-1 text-[11.5px] font-semibold text-accent-text hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
           </span>
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] text-ink-faint">
@@ -402,7 +417,11 @@ export default function Runs() {
       )}
 
       {detailAutomation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6" onClick={() => setDetailAutomation(null)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ backgroundColor: "rgba(10, 11, 20, 0.55)" }}
+          onClick={() => setDetailAutomation(null)}
+        >
           <div className="w-full max-w-md rounded-lg border border-border bg-surface shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <div>

@@ -92,3 +92,46 @@ body {
     animation: none !important;
   }
 }
+
+/* Lightweight orbiting dots for LoadingState -- three independent periods
+   so the motion never quite repeats in sync, without any JS/canvas cost. */
+@keyframes loading-orbit-a {
+  from {
+    transform: rotate(0deg) translateX(22px) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(22px) rotate(-360deg);
+  }
+}
+@keyframes loading-orbit-b {
+  from {
+    transform: rotate(120deg) translateX(22px) rotate(-120deg);
+  }
+  to {
+    transform: rotate(480deg) translateX(22px) rotate(-480deg);
+  }
+}
+@keyframes loading-orbit-c {
+  from {
+    transform: rotate(240deg) translateX(22px) rotate(-240deg);
+  }
+  to {
+    transform: rotate(600deg) translateX(22px) rotate(-600deg);
+  }
+}
+.loading-orbit-a {
+  animation: loading-orbit-a 2.6s linear infinite;
+}
+.loading-orbit-b {
+  animation: loading-orbit-b 3.4s linear infinite;
+}
+.loading-orbit-c {
+  animation: loading-orbit-c 1.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-orbit-a,
+  .loading-orbit-b,
+  .loading-orbit-c {
+    animation: none !important;
+  }
+}
