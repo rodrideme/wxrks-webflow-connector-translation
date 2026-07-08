@@ -19,7 +19,7 @@ function modeLabel(mode) {
   return mode;
 }
 
-export default function History() {
+export default function Logs() {
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
   const [pages, setPages] = useState([]);
@@ -48,7 +48,7 @@ export default function History() {
       .catch((err) => setError(err.message));
   }, []);
 
-  // Deep-link support: /history#<wxrksProjectUUID> scrolls straight to that
+  // Deep-link support: /logs#<wxrksProjectUUID> scrolls straight to that
   // batch's card (used by the Dashboard's active-projects list).
   useEffect(() => {
     if (!history || !window.location.hash) return;
@@ -81,7 +81,7 @@ export default function History() {
 
   return (
     <div>
-      <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">History</h1>
+      <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Logs</h1>
       {history.length === 0 && <p className="text-sm text-ink-soft">No sync batches yet.</p>}
 
       <div className="flex flex-col gap-5">

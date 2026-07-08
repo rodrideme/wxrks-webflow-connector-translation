@@ -2,8 +2,9 @@ import { NavLink } from "react-router-dom";
 
 const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
-  { to: "/sync", label: "Sync Panel", icon: "⇄" },
-  { to: "/history", label: "History", icon: "☰" },
+  { to: "/translate", label: "Translate", icon: "⇄" },
+  { to: "/logs", label: "Logs", icon: "☰" },
+  { to: "/templates", label: "Templates", icon: "▤" },
   { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 

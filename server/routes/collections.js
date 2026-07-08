@@ -83,19 +83,30 @@ router.put("/:id/auto-sync-conditions", async (req, res) => {
 
 /**
  * GET /api/collections/:id/items
- * List items with translation status per configured target locale.
+ * List items with translation status per configured target locale, plus
+ * each item's translatable word count (same field-filtering logic
+ * syncCore.js uses, computed for free since fieldData is already fetched).
  * Status per locale: "published" (translated) | "draft" (pending) | "missing".
  */
 router.get("/:id/items", async (req, res) => {
   const { id } = req.params;
 
   try {
-    const { sourceLocale, targetLocales } = await store.getSettings();
+    const [{ sourceLocale, targetLocales }, collection, exclusions] = await Promise.all([
+      store.getSettings(),
+      webflow.getCollection(id),
+      store.getFieldExclusions(id),
+    ]);
     const sourceItems = await webflow.listAllItems(id, { locale: sourceLocale });
 
     const localeItemLists = await Promise.all(
       targetLocales.map((locale) => webflow.listAllItems(id, { locale }))
     );
+
+    // fieldData is already in memory from listAllItems above -- computing
+    // word count here is free (no extra Webflow calls), unlike Pages/
+    // Components' list endpoints where it would mean a DOM fetch per row.
+    const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
 
     const items = sourceItems.map((sourceItem) => {
       const localeStatus = {};
@@ -108,6 +119,8 @@ router.get("/:id/items", async (req, res) => {
         }
       });
 
+      const translatableFields = webflow.filterTranslatableFields(sourceItem.fieldData, fieldTypeBySlug, exclusions);
+
       return {
         id: sourceItem.id,
         name: sourceItem.fieldData?.name || sourceItem.fieldData?.slug || sourceItem.id,
@@ -116,6 +129,7 @@ router.get("/:id/items", async (req, res) => {
         isArchived: sourceItem.isArchived,
         isDraft: sourceItem.isDraft,
         localeStatus,
+        wordCount: webflow.countWords(translatableFields),
       };
     });
 

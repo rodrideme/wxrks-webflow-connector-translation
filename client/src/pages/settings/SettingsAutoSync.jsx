@@ -99,7 +99,7 @@ export default function SettingsAutoSync({ settings, markDirty }) {
         </label>
         <p className={`mt-1 ${hintClass}`}>
           Changing this evenly spaces the times below across the day -- edit any individual time afterward if
-          you want a different schedule. All times are in {settings.timezone} (Settings → General).
+          you want a different schedule. All times are in {settings.timezone} (Settings page).
         </p>
 
         <div className="mt-3 flex flex-col gap-2">
