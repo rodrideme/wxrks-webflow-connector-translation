@@ -13,17 +13,6 @@ import { localeStatusPill } from "../statusHelpers.jsx";
 const NO_FOLDER_ID = "__root__";
 const JOB_POLL_INTERVAL_MS = 1200;
 
-const DOT_COLOR = {
-  synced: "bg-status-success-dot border-status-success-dot",
-  stale: "bg-status-progress-dot border-status-progress-dot",
-  failed: "bg-status-error-dot border-status-error-dot",
-  new: "bg-transparent border-border-strong",
-};
-function LocaleDot({ status, locale }) {
-  const cls = DOT_COLOR[status] || DOT_COLOR.new;
-  return <span title={`${locale.toUpperCase()} — ${status || "new"}`} className={`inline-block h-[9px] w-[9px] rounded-full border-[1.5px] ${cls}`} />;
-}
-
 const DATE_FILTER_OPTS = [
   { value: "", label: "Any time" },
   { value: "2026-05-01", label: "After 1 May 2026" },
@@ -590,11 +579,6 @@ export default function Translate() {
                             <th className="px-3 py-2">Name</th>
                             {activeLeaf.kind === "collection" && <th className="px-3 py-2 text-right">Words</th>}
                             <th className="px-3 py-2">Status</th>
-                            {settings?.targetLocales.map((locale) => (
-                              <th key={locale} className="px-2 py-2 text-center">
-                                {locale.toUpperCase()}
-                              </th>
-                            ))}
                             <th className="px-3 py-2 text-right">Last update</th>
                           </tr>
                         </thead>
@@ -616,11 +600,6 @@ export default function Translate() {
                                 <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-ink-soft">{item.wordCount?.toLocaleString() ?? "—"}</td>
                               )}
                               <td className="px-3 py-2.5">{localeStatusPill(item.state)}</td>
-                              {settings?.targetLocales.map((locale) => (
-                                <td key={locale} className="px-2 py-2.5 text-center">
-                                  <LocaleDot status={item.localeStatus?.[locale]} locale={locale} />
-                                </td>
-                              ))}
                               <td className="px-3 py-2.5 text-right font-mono text-xs text-ink-faint">{formatDateOnly(item.lastPublished || item.lastUpdated, settings?.timezone)}</td>
                             </tr>
                           ))}
