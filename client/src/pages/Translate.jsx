@@ -49,7 +49,14 @@ export default function Translate() {
   const [selected, setSelected] = useState({}); // `${kind}:${id}` -> true
   const [itemFilter, setItemFilter] = useState("all"); // all | needs | failed
 
-  const [allItemsLoading, setAllItemsLoading] = useState(false);
+  // Starts true (rather than false + flip-on-effect) so the very first
+  // render -- before the mount effect below has even resolved once -- shows
+  // the loading state instead of a table built from still-empty collections/
+  // pages/components arrays. initialDataLoaded gates both this and the
+  // per-leaf loading check for non-collection leaves (Pages/Components,
+  // which load once up front rather than lazily per leaf).
+  const [allItemsLoading, setAllItemsLoading] = useState(true);
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [phase, setPhase] = useState("idle"); // idle | running | done
@@ -60,10 +67,12 @@ export default function Translate() {
 
   useEffect(() => {
     api.getSettings().then(setSettings);
-    api.getCollections().then((res) => setCollections(res.collections || []));
-    api.getPages().then((res) => setPages(res.pages || [])).catch((err) => setError(err.message));
-    api.getPageFolders().then((res) => setPageFolders(res.folders || [])).catch(() => {});
-    api.getComponents().then((res) => setComponents(res.components || [])).catch((err) => setError(err.message));
+    Promise.all([
+      api.getCollections().then((res) => setCollections(res.collections || [])).catch((err) => setError(err.message)),
+      api.getPages().then((res) => setPages(res.pages || [])).catch((err) => setError(err.message)),
+      api.getPageFolders().then((res) => setPageFolders(res.folders || [])).catch(() => {}),
+      api.getComponents().then((res) => setComponents(res.components || [])).catch((err) => setError(err.message)),
+    ]).finally(() => setInitialDataLoaded(true));
   }, []);
 
   function leafKeyOf(kind, id) {
@@ -99,15 +108,18 @@ export default function Translate() {
   // compute real aggregate stats (mirrors the old Bulk Sync dry-run's same
   // full enumeration -- an explicit, occasional action, not a hot path).
   useEffect(() => {
-    if (mode !== "all" || collections.length === 0) return;
+    if (mode !== "all" || !initialDataLoaded) return;
     const missing = collections.filter((c) => !itemsByCollection[c.id]);
-    if (missing.length === 0) return;
+    if (missing.length === 0) {
+      setAllItemsLoading(false);
+      return;
+    }
     setAllItemsLoading(true);
     Promise.all(missing.map((c) => loadCollectionItems(c.id)))
       .catch((err) => setError(err.message))
       .finally(() => setAllItemsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, collections]);
+  }, [mode, collections, initialDataLoaded]);
 
   function itemsForLeaf(leaf) {
     if (!leaf) return [];
@@ -401,8 +413,13 @@ export default function Translate() {
           setResult({
             itemsSynced,
             errors,
-            wxrksProjectUUID: startedJobs[0]?.wxrksProjectUUID,
-            wxrksProjectUUIDs: startedJobs.map((j) => j.wxrksProjectUUID),
+            // From the freshly-polled jobs, not the startedJobs closure --
+            // an automation's first-run job doesn't know its wxrksProjectUUID
+            // until the background flush creates the project, well after
+            // this poller started (unlike a one-time send, which already
+            // knows it at job-start time).
+            wxrksProjectUUID: updated[0]?.wxrksProjectUUID,
+            wxrksProjectUUIDs: updated.map((j) => j.wxrksProjectUUID),
           });
           setPhase("done");
         }
@@ -611,6 +628,8 @@ export default function Translate() {
                       </table>
                     </div>
                   ) : activeLeaf.kind === "collection" && !itemsByCollection[activeLeaf.id] ? (
+                    <LoadingState label={`Loading ${activeLeaf.label}`} />
+                  ) : activeLeaf.kind !== "collection" && !initialDataLoaded ? (
                     <LoadingState label={`Loading ${activeLeaf.label}`} />
                   ) : (
                     <p className="p-4 text-sm text-ink-faint">No items{itemFilter !== "all" ? " match this filter" : ""}.</p>

@@ -179,23 +179,37 @@ function nextFlushAt(cadence, timezone = "UTC", from = new Date()) {
  * Flushes one automation's pending entries into a single shared wxrks
  * project. Called from the scheduled tick above, from
  * automationScheduler.runAutomationCycle (after a Pages/Components scan),
- * and on-demand via POST /api/automations/:id/flush.
+ * on-demand via POST /api/automations/:id/flush, and (with a jobId) from
+ * automationScheduler.startFirstSyncJob for the "include existing content on
+ * the first run" immediate backfill -- the optional `jobId` mirrors that
+ * into store's sync-job tracking (progress + cancel), the same mechanism a
+ * one-time send already uses, so the wizard can show the identical
+ * progress-bar-with-cancel UI instead of the flush happening invisibly.
  */
-async function flush(automationId) {
+async function flush(automationId, { jobId } = {}) {
   lastFlushAt = new Date().toISOString();
   const batch = [...pending.entries()].filter(([key]) => key.startsWith(`${automationId}:`));
-  if (batch.length === 0) return { itemsSynced: 0 };
+  if (batch.length === 0) {
+    if (jobId) store.updateSyncJob(jobId, { status: "completed" });
+    return { itemsSynced: 0 };
+  }
 
   // Clear before awaiting so new events arriving during the flush go into
   // the *next* window, not lost or double-counted.
   for (const [key] of batch) pending.delete(key);
 
   const automation = await store.getAutomation(automationId);
-  if (!automation) return { itemsSynced: 0 };
+  if (!automation) {
+    if (jobId) store.updateSyncJob(jobId, { status: "completed" });
+    return { itemsSynced: 0 };
+  }
 
   const settings = await store.getSettings();
   const { sourceLocale, targetLocales, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } = settings;
-  if (targetLocales.length === 0) return { itemsSynced: 0 };
+  if (targetLocales.length === 0) {
+    if (jobId) store.updateSyncJob(jobId, { status: "completed" });
+    return { itemsSynced: 0 };
+  }
 
   const orgUnitUUID = automation.orgUnitOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
   const project = await wxrks.createProject({
@@ -213,9 +227,12 @@ async function flush(automationId) {
     status: "in_progress",
     wxrksStatus: "DRAFT",
   });
+  if (jobId) store.updateSyncJob(jobId, { wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 
   let itemsSynced = 0;
   for (const [, entry] of batch) {
+    if (jobId && store.getSyncJob(jobId)?.cancelled) break;
+
     try {
       if (entry.entityType === "cms") {
         const result = await syncItemIntoBatch({
@@ -230,6 +247,7 @@ async function flush(automationId) {
           itemsSynced += 1;
           await store.markAutomationItemSynced(automationId, entry.collection.id, entry.item.id, entry.item.lastPublished);
         }
+        if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.item.id, ...result });
       } else if (entry.entityType === "page") {
         const webflow = require("./webflow");
         const nodes = await webflow.getPageDom(entry.page.id, { locale: sourceLocale });
@@ -245,6 +263,7 @@ async function flush(automationId) {
           itemsSynced += 1;
           await store.markAutomationPageSynced(automationId, entry.page.id, entry.page.lastUpdated);
         }
+        if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
         const result = await syncComponentIntoBatch({
           projectUuid: project.uuid,
@@ -258,12 +277,14 @@ async function flush(automationId) {
           itemsSynced += 1;
           await store.markAutomationComponentSynced(automationId, entry.component.id, entry.contentHash);
         }
+        if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.component.id, ...result });
       }
     } catch (err) {
       console.error(`Automation "${automation.name}" item failed:`, err.message);
       // No per-item retry queue -- CMS gets picked back up by reconciliation;
       // Pages/Components get picked back up on the next scheduled scan since
       // their checkpoint/hash was never advanced for this entry.
+      if (jobId) store.appendSyncJobResult(jobId, { error: err.message });
     }
   }
 
@@ -278,6 +299,11 @@ async function flush(automationId) {
       automationName: automation.name,
     },
   });
+
+  if (jobId) {
+    const finalJob = store.getSyncJob(jobId);
+    store.updateSyncJob(jobId, { status: finalJob?.cancelled ? "cancelled" : "completed" });
+  }
 
   if (autoApprove && itemsSynced > 0) {
     requestBatchApproval(project.uuid);

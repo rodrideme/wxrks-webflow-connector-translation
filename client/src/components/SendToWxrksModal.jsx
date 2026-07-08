@@ -157,6 +157,22 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           orgUnitOverride: orgUnitUUID !== settings?.orgUnitUUID ? orgUnitUUID : null,
         });
         onRecurringCreated?.(automation);
+        // "Include existing content on the first run" backfills immediately
+        // rather than waiting for the schedule -- when that backfill found
+        // something to send, the server hands back a job to poll so the
+        // wizard can show the same progress-bar-with-cancel UI a one-time
+        // send already gets, instead of it happening invisibly.
+        if (automation.firstSyncJob) {
+          onJobsStarted([
+            {
+              jobId: automation.firstSyncJob.jobId,
+              total: automation.firstSyncJob.total,
+              wxrksProjectUUID: null,
+              kind: "automation",
+              label: contentLabel,
+            },
+          ]);
+        }
         onClose();
         return;
       }

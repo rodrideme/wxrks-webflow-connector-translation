@@ -101,13 +101,25 @@ async function runAutomationCycle(automation) {
  * wizard's checkbox copy promises. Mirrors runAutomationCycle but also scans
  * CMS collections (reconciliation's per-automation scan, reused directly
  * since its cutoff/qualification logic already does the right thing for a
- * checkpoint-less automation) and flushes once at the end so a scope
- * spanning multiple content kinds still lands in a single wxrks project.
+ * checkpoint-less automation) so a scope spanning multiple content kinds
+ * still lands in a single wxrks project.
+ *
+ * Split into two phases so the caller (routes/automations.js) can await just
+ * the scan and hand the wizard a jobId to poll -- the same progress-bar-
+ * with-cancel UI a one-time send already uses -- rather than the whole
+ * backfill happening invisibly in the background with no way to watch it or
+ * cancel it:
+ *   1. scanForFirstSync: enumerates matching content and enqueues it. Awaited
+ *      by the route before responding (this is also the phase that
+ *      determines `total`, which a progress bar needs up front).
+ *   2. startFirstSyncJob: runs (1), then registers a sync job and hands
+ *      autoSyncQueue.flush that job's id so it tracks progress/cancellation
+ *      exactly like routes/sync.js's one-time item sync does. Returns
+ *      { jobId, total } for the route to include in its response, or null
+ *      if nothing currently matches (nothing to show progress for).
  */
-async function runFirstSyncNow(automation) {
+async function scanForFirstSync(automation) {
   const settings = await store.getSettings();
-  const scanCutoff = new Date();
-
   const allCollections = await webflow.listCollections();
   await autoSyncReconciliation.reconcileAutomation(automation, allCollections);
 
@@ -117,9 +129,39 @@ async function runFirstSyncNow(automation) {
   if (needsComponentsScan(automation)) {
     await scanAndEnqueueComponents(automation, settings);
   }
+  return settings;
+}
 
-  await autoSyncQueue.flush(automation.id);
-  await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
+async function startFirstSyncJob(automation) {
+  const scanCutoff = new Date();
+  const settings = await scanForFirstSync(automation);
+
+  const total = autoSyncQueue.pendingCount(automation.id);
+  if (total === 0) {
+    await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
+    return null;
+  }
+
+  const jobId = crypto.randomUUID();
+  const orgUnitUUID = automation.orgUnitOverride || settings.orgUnitUUID;
+  store.createSyncJob({
+    id: jobId,
+    mode: "automation",
+    total,
+    wxrksProjectUUID: null, // set once flush() creates the project
+    orgUnitUUID,
+    targetLocales: settings.targetLocales,
+  });
+
+  // Fire-and-forget from here -- the route responds with {jobId, total} as
+  // soon as this function returns; actual per-item processing (and
+  // advancing the checkpoint once done) continues after.
+  autoSyncQueue
+    .flush(automation.id, { jobId })
+    .then(() => store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString()))
+    .catch((err) => console.error(`Automation "${automation.name}" first-run flush failed:`, err.message));
+
+  return { jobId, total };
 }
 
 /**
@@ -150,4 +192,4 @@ async function scanAndEnqueueForPublishEvent() {
   }
 }
 
-module.exports = { runAutomationCycle, runFirstSyncNow, scanAndEnqueueForPublishEvent };
+module.exports = { runAutomationCycle, startFirstSyncJob, scanAndEnqueueForPublishEvent };

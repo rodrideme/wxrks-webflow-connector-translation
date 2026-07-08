@@ -103,14 +103,20 @@ router.post("/", async (req, res) => {
       orgUnitOverride,
     });
 
+    // Backfill currently-matching content right away rather than waiting for
+    // this automation's own cadence tick (up to a day away) or the hourly
+    // CMS reconciliation safety net. The scan phase is awaited here (it's
+    // also what determines the item count a progress bar needs) so the
+    // response can hand the wizard a jobId to poll -- the actual per-item
+    // wxrks upload then continues in the background, same as a one-time
+    // send's job.
+    let firstSyncJob = null;
     if (automation.includeExisting) {
-      // Backfill currently-matching content right away rather than waiting
-      // for this automation's own cadence tick (up to a day away) or the
-      // hourly CMS reconciliation safety net -- runs in the background so
-      // the wizard doesn't block on what can be a large sync.
-      automationScheduler
-        .runFirstSyncNow(automation)
-        .catch((err) => console.error(`Automation "${automation.name}" first-run sync failed:`, err.message));
+      try {
+        firstSyncJob = await automationScheduler.startFirstSyncJob(automation);
+      } catch (err) {
+        console.error(`Automation "${automation.name}" first-run sync failed:`, err.message);
+      }
     }
 
     // Best-effort: the automation is already saved at this point, and a
@@ -124,7 +130,7 @@ router.post("/", async (req, res) => {
       console.error("Webhook registration sync failed after creating automation:", err.message);
     }
 
-    res.json(automation);
+    res.json({ ...automation, firstSyncJob });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
