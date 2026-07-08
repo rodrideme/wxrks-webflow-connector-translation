@@ -46,12 +46,14 @@ function enqueue({ automation, collection, item }) {
   });
 }
 
-function enqueuePage({ automation, page }) {
-  const everSynced = Boolean(automation.checkpoint.lastSyncedPages?.[page.id]);
+function enqueuePage({ automation, page, nodes, contentHash }) {
+  const everSynced = Boolean(automation.checkpoint.lastSyncedPageHashes?.[page.id]);
   pending.set(`${automation.id}:page:${page.id}`, {
     automationId: automation.id,
     entityType: "page",
     page,
+    nodes,
+    contentHash,
     trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
@@ -249,19 +251,17 @@ async function flush(automationId, { jobId } = {}) {
         }
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.item.id, ...result });
       } else if (entry.entityType === "page") {
-        const webflow = require("./webflow");
-        const nodes = await webflow.getPageDom(entry.page.id, { locale: sourceLocale });
         const result = await syncPageIntoBatch({
           projectUuid: project.uuid,
           page: entry.page,
-          nodes,
+          nodes: entry.nodes,
           targetLocales,
           namePattern: settings.pagesWorkUnitNamePattern,
           workflows: automation.workflows,
         });
         if (!result.skipped) {
           itemsSynced += 1;
-          await store.markAutomationPageSynced(automationId, entry.page.id, entry.page.lastUpdated);
+          await store.markAutomationPageSynced(automationId, entry.page.id, entry.contentHash);
         }
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {

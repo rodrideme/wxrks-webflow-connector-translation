@@ -28,34 +28,41 @@ function needsComponentsScan(automation) {
   return automation.contentScope.scope === "all" || (automation.contentScope.leaves || []).some((l) => l.kind === "components");
 }
 
+function hashNodes(nodes) {
+  const translatableText = webflowDom.extractTextNodes(nodes);
+  return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
+}
+
 /**
  * Per-page (not a single automation-wide cutoff): a page never seen before
  * either establishes a translate-nothing baseline (includeExisting: false --
  * "future content only") or gets enqueued immediately (includeExisting:
- * true -- backfill). A page seen before is enqueued only if it changed
- * since its own last delivery. This is more robust than one global
- * first-run flag: a page added to scope later (new folder, new page) still
- * gets correct first-encounter treatment on its own.
+ * true -- backfill). A page seen before is enqueued only if its translatable
+ * content actually changed since its own last delivery -- dedup hashes each
+ * page's translatable DOM content rather than trusting Webflow's
+ * `lastUpdated` field, which (confirmed live) gets bumped for every page on
+ * a full "Publish site" action regardless of whether that page's content
+ * changed, which was flooding the pending queue with the entire site after
+ * any full-site publish. This is more robust than one global first-run flag:
+ * a page added to scope later (new folder, new page) still gets correct
+ * first-encounter treatment on its own.
  */
-async function scanAndEnqueuePages(automation) {
+async function scanAndEnqueuePages(automation, { sourceLocale }) {
   const allPages = await webflow.listStaticPages();
   const inScope =
     automation.contentScope.scope === "all" ? allPages : webflow.filterPagesByFolderScope(allPages, leafIds(automation, "pagesFolder"));
 
   for (const page of inScope) {
-    const everSeen = Boolean(automation.checkpoint.lastSyncedPages?.[page.id]);
+    const everSeen = Boolean(automation.checkpoint.lastSyncedPageHashes?.[page.id]);
+    const nodes = await webflow.getPageDom(page.id, { locale: sourceLocale });
+    const contentHash = hashNodes(nodes);
     if (!everSeen && !automation.includeExisting) {
-      await store.markAutomationPageSynced(automation.id, page.id, page.lastUpdated);
+      await store.markAutomationPageSynced(automation.id, page.id, contentHash);
       continue;
     }
-    if (store.isAutomationPageAlreadySynced(automation, page.id, page.lastUpdated)) continue;
-    autoSyncQueue.enqueuePage({ automation, page });
+    if (store.isAutomationPageAlreadySynced(automation, page.id, contentHash)) continue;
+    autoSyncQueue.enqueuePage({ automation, page, nodes, contentHash });
   }
-}
-
-function hashNodes(nodes) {
-  const translatableText = webflowDom.extractTextNodes(nodes);
-  return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
 }
 
 async function scanAndEnqueueComponents(automation, { sourceLocale }) {
@@ -82,7 +89,7 @@ async function runAutomationCycle(automation) {
   const scanCutoff = new Date(); // captured before scanning -- anything changed mid-scan is picked up next cycle
 
   if (needsPagesScan(automation)) {
-    await scanAndEnqueuePages(automation);
+    await scanAndEnqueuePages(automation, settings);
   }
   if (needsComponentsScan(automation)) {
     await scanAndEnqueueComponents(automation, settings);
@@ -124,7 +131,7 @@ async function scanForFirstSync(automation) {
   await autoSyncReconciliation.reconcileAutomation(automation, allCollections);
 
   if (needsPagesScan(automation)) {
-    await scanAndEnqueuePages(automation);
+    await scanAndEnqueuePages(automation, settings);
   }
   if (needsComponentsScan(automation)) {
     await scanAndEnqueueComponents(automation, settings);
@@ -184,7 +191,7 @@ async function scanAndEnqueueForPublishEvent() {
 
   for (const automation of relevant) {
     if (needsPagesScan(automation)) {
-      await scanAndEnqueuePages(automation);
+      await scanAndEnqueuePages(automation, settings);
     }
     if (needsComponentsScan(automation)) {
       await scanAndEnqueueComponents(automation, settings);

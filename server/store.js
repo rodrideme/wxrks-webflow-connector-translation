@@ -554,17 +554,22 @@ async function markAutomationItemSynced(automationId, collectionId, itemId, last
   await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedAt } });
 }
 
-function isAutomationPageAlreadySynced(automation, pageId, lastUpdatedIso) {
-  const lastSyncedAt = automation.checkpoint.lastSyncedPages?.[pageId];
-  if (!lastSyncedAt || !lastUpdatedIso) return false;
-  return new Date(lastUpdatedIso) <= new Date(lastSyncedAt);
+// Content-hash based, like Components below -- NOT a lastUpdated timestamp
+// comparison. Confirmed live: a full "Publish site" action in Webflow bumps
+// every page's lastUpdated regardless of whether that specific page's
+// translatable content actually changed, which was flooding the pending
+// queue with the entire site after any full-site publish. Hashing what's
+// actually translatable is immune to that.
+function isAutomationPageAlreadySynced(automation, pageId, contentHash) {
+  const lastHash = automation.checkpoint.lastSyncedPageHashes?.[pageId];
+  return lastHash === contentHash;
 }
 
-async function markAutomationPageSynced(automationId, pageId, lastUpdatedIso) {
+async function markAutomationPageSynced(automationId, pageId, contentHash) {
   const automation = await getAutomation(automationId);
   if (!automation) return;
-  const lastSyncedPages = { ...automation.checkpoint.lastSyncedPages, [pageId]: lastUpdatedIso };
-  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedPages } });
+  const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes, [pageId]: contentHash };
+  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedPageHashes } });
 }
 
 // Components carry no modification timestamp at all (confirmed live against
