@@ -12,7 +12,7 @@ const router = express.Router();
  * Syncs one or more component definitions into a single wxrks project.
  */
 router.post("/item", async (req, res) => {
-  const { componentId, componentIds } = req.body || {};
+  const { componentId, componentIds, workflows, projectName } = req.body || {};
   const ids = componentIds && componentIds.length > 0 ? componentIds : componentId ? [componentId] : [];
 
   try {
@@ -36,7 +36,7 @@ router.post("/item", async (req, res) => {
     const componentsById = new Map(allComponents.map((c) => [c.id, c]));
 
     const project = await wxrks.createProject({
-      reference: `Components Item Sync / ${new Date().toISOString()}`,
+      reference: projectName || `Components Item Sync / ${new Date().toISOString()}`,
       sourceLocale,
       orgUnitUUID,
     });
@@ -62,6 +62,7 @@ router.post("/item", async (req, res) => {
           nodes,
           targetLocales,
           namePattern: componentsWorkUnitNamePattern,
+          workflows,
         });
         results.push({ webflowComponentId: id, ...result });
       } catch (err) {
@@ -94,20 +95,49 @@ router.post("/item", async (req, res) => {
 
 /**
  * GET /api/sync/components/list
- * All components, with per-component enabled state, for the Sync Panel /
- * Settings Components tab checklists.
+ * All components, with per-component enabled state and (new/failed/synced)
+ * per-locale delivery status, for Translate's content browser and the
+ * Templates Components tab checklist. No "stale" state here -- Webflow's
+ * component objects carry no modification timestamp at all (confirmed
+ * live), so without an expensive per-component DOM hash there's no cheap
+ * way to tell "changed since last delivery" apart from "still up to date";
+ * once delivered (and not failed) a component just reads as synced.
  */
 router.get("/list", async (req, res) => {
   try {
-    const settings = await store.getSettings();
-    const components = await webflow.listComponents();
+    const [settings, components, deliveryStatus] = await Promise.all([
+      store.getSettings(),
+      webflow.listComponents(),
+      store.getDeliveryStatusByEntity("webflowComponentId"),
+    ]);
     res.json({
-      components: components.map((c) => ({
-        id: c.id,
-        name: c.name,
-        group: c.group,
-        enabled: store.isComponentEnabled(settings, c.id),
-      })),
+      components: components.map((c) => {
+        const localeStatus = {};
+        const localeErrors = {};
+        settings.targetLocales.forEach((locale) => {
+          const { status, error } = store.computeLocaleStatus({
+            delivery: deliveryStatus[c.id]?.[locale],
+            localeExists: false,
+          });
+          localeStatus[locale] = status;
+          if (error) localeErrors[locale] = error;
+        });
+        const localeStates = Object.values(localeStatus);
+        const state = localeStates.includes("failed")
+          ? "failed"
+          : localeStates.every((s) => s === "synced")
+          ? "synced"
+          : "new";
+        return {
+          id: c.id,
+          name: c.name,
+          group: c.group,
+          enabled: store.isComponentEnabled(settings, c.id),
+          state,
+          localeStatus,
+          localeErrors,
+        };
+      }),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });

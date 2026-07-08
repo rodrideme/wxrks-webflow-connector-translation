@@ -154,8 +154,8 @@ export default function Dashboard() {
               </div>
             </div>
             {lastSync.summary?.wxrksProjectUUID && (
-              <Link to={`/logs#${lastSync.summary.wxrksProjectUUID}`} className={linkClass + " flex-none text-[13px]"}>
-                View in Logs →
+              <Link to={`/runs#${lastSync.summary.wxrksProjectUUID}`} className={linkClass + " flex-none text-[13px]"}>
+                View in Runs →
               </Link>
             )}
           </>
@@ -202,8 +202,8 @@ export default function Dashboard() {
                   <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
                     wxrks ↗
                   </a>
-                  <Link to={`/logs#${p.wxrksProjectUUID}`} className={linkClass}>
-                    Logs
+                  <Link to={`/runs#${p.wxrksProjectUUID}`} className={linkClass}>
+                    Runs
                   </Link>
                 </div>
               </div>

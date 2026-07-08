@@ -233,6 +233,53 @@ async function listActiveProjects() {
   return rows.map(mappingRowToObject);
 }
 
+/**
+ * Per-entity, per-locale delivery status derived from every project
+ * mapping's `updates[]` log (real push-back attempts, whether they
+ * succeeded or errored) -- the source of truth for the new/stale/failed/
+ * synced status model. `idField` is whichever of `webflowItemId`/
+ * `webflowPageId`/`webflowComponentId` identifies the entity kind being
+ * asked about. Keeps only the most recent attempt per (entity, locale),
+ * since an earlier failure followed by a later success should read as
+ * synced, not failed.
+ */
+async function getDeliveryStatusByEntity(idField) {
+  const mappings = await listProjectMappings();
+  const statusMap = {};
+  for (const mapping of mappings) {
+    for (const update of mapping.updates || []) {
+      for (const resultEntry of update.resultsByItem || []) {
+        const entityId = resultEntry[idField];
+        if (!entityId) continue;
+        for (const rl of resultEntry.resultsByLocale || []) {
+          const existing = statusMap[entityId]?.[rl.locale];
+          if (!existing || new Date(update.updatedAt) > new Date(existing.updatedAt)) {
+            statusMap[entityId] = { ...statusMap[entityId], [rl.locale]: { error: rl.error || null, updatedAt: update.updatedAt } };
+          }
+        }
+      }
+    }
+  }
+  return statusMap;
+}
+
+/**
+ * Combines a delivery-log entry (if any) with the source's own last-updated
+ * timestamp into one of the design's four states: failed (last delivery
+ * attempt errored), new (never delivered, and Webflow shows no non-draft
+ * locale content either), stale (delivered before, but the source has
+ * changed since), synced (up to date). `localeExists`/`localeIsDraft` only
+ * apply to CMS items (Pages/Components have no per-locale item to check,
+ * so pass `localeExists: true, localeIsDraft: false` for those -- their
+ * "ever delivered" signal comes entirely from the delivery log instead).
+ */
+function computeLocaleStatus({ delivery, sourceLastUpdated, localeExists, localeIsDraft }) {
+  if (delivery?.error) return { status: "failed", error: delivery.error };
+  if (!delivery) return { status: localeExists && !localeIsDraft ? "synced" : "new" };
+  if (sourceLastUpdated && new Date(sourceLastUpdated) > new Date(delivery.updatedAt)) return { status: "stale" };
+  return { status: "synced" };
+}
+
 function mergeSettings(stored) {
   // A plain top-level spread is enough for flat fields, but nested objects
   // need their own merge so a stored row that only ever had a partial
@@ -326,13 +373,29 @@ async function updateAutoSyncWebhookState(patch) {
 // contending with other automations' or unrelated settings' concurrent
 // writes -- the same reasoning that made project_mappings its own table.
 
+// Best-effort one-way conversion of the old flush_times shape (a bare list
+// of daily "HH:mm" times) into the new cadence shape, for rows created
+// before cadence existed. A single time -> daily at that time; more than
+// one -> approximated as hourly, evenly spaced from the earliest time
+// (mirrors how those times were originally generated).
+function flushTimesToCadence(flushTimes) {
+  const times = [...(flushTimes || ["09:00"])].sort();
+  if (times.length <= 1) return { kind: "daily", time: times[0] || "09:00" };
+  const everyHours = Math.max(1, Math.round(24 / times.length));
+  return { kind: "hourly", everyHours, startTime: times[0] };
+}
+
 function automationRowToObject(row) {
   return {
     id: row.id,
     name: row.name,
     enabled: row.enabled,
+    archived: row.archived,
     contentScope: row.content_scope,
-    flushTimes: row.flush_times,
+    cadence: row.cadence || flushTimesToCadence(row.flush_times),
+    workflows: row.workflows || ["TRANSLATION"],
+    projectName: row.project_name || null,
+    includeExisting: row.include_existing,
     orgUnitOverride: row.org_unit_override,
     checkpoint: row.checkpoint,
     createdAt: row.created_at.toISOString(),
@@ -350,17 +413,31 @@ async function getAutomation(id) {
   return rows[0] ? automationRowToObject(rows[0]) : undefined;
 }
 
-async function createAutomation({ id, name, enabled, contentScope, flushTimes, orgUnitOverride }) {
+async function createAutomation({
+  id,
+  name,
+  enabled,
+  contentScope,
+  cadence,
+  workflows,
+  projectName,
+  includeExisting,
+  orgUnitOverride,
+}) {
   const { rows } = await db.query(
-    `INSERT INTO automations (id, name, enabled, content_scope, flush_times, org_unit_override, checkpoint)
-     VALUES ($1, $2, $3, $4, $5, $6, '{}')
+    `INSERT INTO automations
+       (id, name, enabled, content_scope, cadence, workflows, project_name, include_existing, org_unit_override, checkpoint)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')
      RETURNING *`,
     [
       id || crypto.randomUUID(),
       name,
       enabled !== undefined ? enabled : true,
       JSON.stringify(contentScope),
-      JSON.stringify(flushTimes || ["00:00", "12:00"]),
+      JSON.stringify(cadence || { kind: "daily", time: "09:00" }),
+      JSON.stringify(workflows || ["TRANSLATION"]),
+      projectName || null,
+      includeExisting || false,
       orgUnitOverride || null,
     ]
   );
@@ -370,12 +447,16 @@ async function createAutomation({ id, name, enabled, contentScope, flushTimes, o
 const AUTOMATION_PATCH_COLUMNS = {
   name: "name",
   enabled: "enabled",
+  archived: "archived",
   contentScope: "content_scope",
-  flushTimes: "flush_times",
+  cadence: "cadence",
+  workflows: "workflows",
+  projectName: "project_name",
+  includeExisting: "include_existing",
   orgUnitOverride: "org_unit_override",
   checkpoint: "checkpoint",
 };
-const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "flushTimes", "checkpoint"]);
+const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "cadence", "workflows", "checkpoint"]);
 
 async function updateAutomation(id, patch) {
   const keys = Object.keys(patch).filter((k) => AUTOMATION_PATCH_COLUMNS[k]);
@@ -396,26 +477,39 @@ async function deleteAutomation(id) {
 }
 
 /**
- * Whether a CMS item qualifies for this automation, mirroring the old global
- * evaluateAutoSyncRules but scoped to one automation row: Level 1 enabled ->
- * Level 2 "all content" short-circuits true, else collection allow-list ->
- * Level 3 optional per-field conditions (AND semantics), via
- * autoSyncRules.js's pure evaluateCondition.
+ * Whether one piece of content (a CMS item, a page, or "any component")
+ * qualifies for this automation. Generalizes the old CMS-only
+ * isAutomationCmsItemQualified into a leaf+filter model shared by all three
+ * content kinds: Level 1 enabled -> Level 2 "all content" short-circuits
+ * true, else the entity's leaf must be included in contentScope.leaves ->
+ * Level 3 optional per-field conditions on that leaf (CMS collections
+ * only -- Pages/Components leaves carry no filters, matching Webflow's
+ * real data shape), via autoSyncRules.js's pure evaluateCondition.
+ *
+ * `entity` shapes by kind:
+ *   collection: { leafId: collectionId, itemLike: {fieldData, isDraft, isArchived} }
+ *   pagesFolder: { leafId: folderId }  -- pages carry no per-item draft/archived state
+ *   components: {}  -- always all-or-nothing, no leafId
  */
-function isAutomationCmsItemQualified(automation, collection, itemLike) {
-  if (!automation.enabled) return false;
-  if (itemLike.isDraft || itemLike.isArchived) return false;
+function isAutomationContentQualified(automation, kind, entity) {
+  if (!automation.enabled || automation.archived) return false;
 
   const { contentScope } = automation;
-  if (contentScope.type === "all") return true;
-  if (contentScope.type !== "cms") return false;
+  if (contentScope.scope === "all") {
+    if (kind === "collection" && (entity.itemLike.isDraft || entity.itemLike.isArchived)) return false;
+    return true;
+  }
 
-  const collectionQualifies =
-    contentScope.allCollectionsEnabled || contentScope.enabledCollectionIds.includes(collection.id);
-  if (!collectionQualifies) return false;
+  const leaf = (contentScope.leaves || []).find((l) => l.kind === kind && (kind === "components" || l.id === entity.leafId));
+  if (!leaf) return false;
 
-  const conditions = contentScope.fieldConditions[collection.id] || [];
-  return conditions.every((cond) => evaluateCondition(cond, itemLike.fieldData));
+  if (kind === "collection") {
+    if (entity.itemLike.isDraft || entity.itemLike.isArchived) return false;
+    const conditions = leaf.filters || [];
+    return conditions.every((cond) => evaluateCondition(cond, entity.itemLike.fieldData));
+  }
+
+  return true;
 }
 
 function isAutomationItemAlreadySynced(automation, collectionId, itemId, lastPublishedIso) {
@@ -556,6 +650,8 @@ module.exports = {
   updateProjectMapping,
   listProjectMappings,
   listActiveProjects,
+  getDeliveryStatusByEntity,
+  computeLocaleStatus,
   getSettings,
   updateSettings,
   isCollectionEnabled,
@@ -569,7 +665,7 @@ module.exports = {
   createAutomation,
   updateAutomation,
   deleteAutomation,
-  isAutomationCmsItemQualified,
+  isAutomationContentQualified,
   isAutomationItemAlreadySynced,
   markAutomationItemSynced,
   isAutomationPageAlreadySynced,

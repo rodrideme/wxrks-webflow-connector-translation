@@ -11,7 +11,7 @@ const store = require("../store");
  * dict and building the mapping fields (entityType + whichever id(s)
  * apply) before calling this.
  */
-async function syncTranslatableContentIntoBatch({ projectUuid, translatableContent, filename, targetLocales, mappingFields }) {
+async function syncTranslatableContentIntoBatch({ projectUuid, translatableContent, filename, targetLocales, mappingFields, workflows }) {
   if (Object.keys(translatableContent).length === 0) {
     return { skipped: true, reason: "no translatable content" };
   }
@@ -20,7 +20,7 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
   const fileContent = Buffer.from(JSON.stringify(translatableContent), "utf-8");
   await wxrks.uploadResourceContent(projectUuid, resource.resourceId, fileContent, filename);
 
-  await wxrks.createWorkUnitsBulk(projectUuid, [{ resourceId: resource.resourceId, targetLocales }]);
+  await wxrks.createWorkUnitsBulk(projectUuid, [{ resourceId: resource.resourceId, targetLocales, workflows }]);
 
   const fieldKeys = Object.keys(translatableContent);
   const wordCount = webflow.countWords(translatableContent);
@@ -44,7 +44,7 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
  * rather than creating one project per item, and each item gets exactly
  * one work unit rather than one per field.
  */
-async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales, namePattern }) {
+async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales, namePattern, workflows }) {
   const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
   const exclusions = await store.getFieldExclusions(collection.id);
   const translatableFields = webflow.filterTranslatableFields(item.fieldData, fieldTypeBySlug, exclusions);
@@ -55,6 +55,7 @@ async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales,
     translatableContent: translatableFields,
     filename,
     targetLocales,
+    workflows,
     mappingFields: { entityType: "cmsItem", webflowCollectionId: collection.id, webflowItemId: item.id },
   });
 }
@@ -66,7 +67,7 @@ async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales,
  * pattern as syncItemIntoBatch receiving a pre-fetched `item`). v1 scope:
  * only `type: "text"` nodes are extracted (see webflowDom.js).
  */
-async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern }) {
+async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern, workflows }) {
   const translatableNodes = webflowDom.extractTextNodes(nodes);
   const filename = webflow.buildPageResourceFileName(namePattern, { page });
 
@@ -75,6 +76,7 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
     translatableContent: translatableNodes,
     filename,
     targetLocales,
+    workflows,
     mappingFields: { entityType: "page", webflowPageId: page.id },
   });
 }
@@ -86,7 +88,7 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
  * `nodes` is the component's full primary-locale DOM node list (pre-fetched
  * via webflow.getComponentDom(component.id, {locale: sourceLocale})).
  */
-async function syncComponentIntoBatch({ projectUuid, component, nodes, targetLocales, namePattern }) {
+async function syncComponentIntoBatch({ projectUuid, component, nodes, targetLocales, namePattern, workflows }) {
   const translatableNodes = webflowDom.extractTextNodes(nodes);
   const filename = webflow.buildComponentResourceFileName(namePattern, { component });
 
@@ -95,6 +97,7 @@ async function syncComponentIntoBatch({ projectUuid, component, nodes, targetLoc
     translatableContent: translatableNodes,
     filename,
     targetLocales,
+    workflows,
     mappingFields: { entityType: "component", webflowComponentId: component.id },
   });
 }

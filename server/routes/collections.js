@@ -89,17 +89,35 @@ router.get("/:id/items", async (req, res) => {
     // word count here is free (no extra Webflow calls), unlike Pages/
     // Components' list endpoints where it would mean a DOM fetch per row.
     const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
+    const deliveryStatus = await store.getDeliveryStatusByEntity("webflowItemId");
 
     const items = sourceItems.map((sourceItem) => {
       const localeStatus = {};
+      const localeErrors = {};
       targetLocales.forEach((locale, idx) => {
         const localeItem = localeItemLists[idx].find((it) => it.id === sourceItem.id);
-        if (!localeItem) {
-          localeStatus[locale] = "missing";
-        } else {
-          localeStatus[locale] = localeItem.isDraft ? "draft" : "published";
-        }
+        const { status, error } = store.computeLocaleStatus({
+          delivery: deliveryStatus[sourceItem.id]?.[locale],
+          sourceLastUpdated: sourceItem.lastPublished,
+          localeExists: Boolean(localeItem),
+          localeIsDraft: localeItem?.isDraft,
+        });
+        localeStatus[locale] = status;
+        if (error) localeErrors[locale] = error;
       });
+
+      // Item-level aggregate, used for the Status column and the "needs
+      // sync"/"failed" filters: any locale failed -> failed; every locale
+      // synced -> synced; every locale never delivered -> new; anything
+      // else (partial/mixed) -> stale.
+      const localeStates = Object.values(localeStatus);
+      const state = localeStates.includes("failed")
+        ? "failed"
+        : localeStates.every((s) => s === "synced")
+        ? "synced"
+        : localeStates.every((s) => s === "new")
+        ? "new"
+        : "stale";
 
       const translatableFields = webflow.filterTranslatableFields(sourceItem.fieldData, fieldTypeBySlug, exclusions);
 
@@ -110,8 +128,14 @@ router.get("/:id/items", async (req, res) => {
         lastPublished: sourceItem.lastPublished,
         isArchived: sourceItem.isArchived,
         isDraft: sourceItem.isDraft,
+        state,
         localeStatus,
+        localeErrors,
         wordCount: webflow.countWords(translatableFields),
+        // Raw field values, already in memory from listAllItems above (zero
+        // extra Webflow calls) -- lets Translate's top-level filter builder
+        // filter by any real field client-side without a second round trip.
+        fieldData: sourceItem.fieldData,
       };
     });
 

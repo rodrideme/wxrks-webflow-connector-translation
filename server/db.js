@@ -62,6 +62,18 @@ async function migrate() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // Forward migration: the "Sync Panel - Ledger" redesign replaces
+  // flush_times (a bare list of daily clock times) with `cadence` (a
+  // richer {kind: hourly|daily|weekly, ...} shape supporting a weekly
+  // schedule, which flush_times alone couldn't express), and adds real
+  // per-automation workflow-step / project-name / first-run-backfill /
+  // archived-state fields that were previously only global (or nonexistent).
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS cadence JSONB`);
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS workflows JSONB NOT NULL DEFAULT '["TRANSLATION"]'`);
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS project_name TEXT`);
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS include_existing BOOLEAN NOT NULL DEFAULT false`);
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`);
 }
 
 module.exports = { query, migrate, pool };

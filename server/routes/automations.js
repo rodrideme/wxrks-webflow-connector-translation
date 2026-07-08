@@ -6,17 +6,24 @@ const automationScheduler = require("../services/automationScheduler");
 
 const router = express.Router();
 
+function needsWebhook(automation) {
+  return (
+    automation.enabled &&
+    !automation.archived &&
+    (automation.contentScope.scope === "all" || (automation.contentScope.leaves || []).some((l) => l.kind === "collection"))
+  );
+}
+
 /**
  * Registers/tears down the shared Webflow webhook based on whether any
- * enabled cms/all automation exists. Called after every mutation below --
- * both underlying calls are idempotent (ensureWebhookRegistered lists
- * existing webhooks first; teardownWebhook is a no-op if nothing's
- * registered), so calling this unconditionally is safe.
+ * enabled, non-archived automation includes CMS content. Called after every
+ * mutation below -- both underlying calls are idempotent
+ * (ensureWebhookRegistered lists existing webhooks first; teardownWebhook is
+ * a no-op if nothing's registered), so calling this unconditionally is safe.
  */
 async function syncWebhookRegistrationToAutomationsState() {
   const automations = await store.listAutomations();
-  const anyNeedsWebhook = automations.some((a) => a.enabled && (a.contentScope.type === "all" || a.contentScope.type === "cms"));
-  if (anyNeedsWebhook) {
+  if (automations.some(needsWebhook)) {
     await autoSyncWebhook.ensureWebhookRegistered();
   } else {
     await autoSyncWebhook.teardownWebhook();
@@ -25,8 +32,8 @@ async function syncWebhookRegistrationToAutomationsState() {
 
 /**
  * GET /api/automations
- * Lists every automation, enriched with its next scheduled flush time and
- * the shared webhook's current health, for the Automation list page.
+ * Lists every automation, enriched with its next scheduled run time and
+ * the shared webhook's current health, for the Runs page.
  */
 router.get("/", async (req, res) => {
   try {
@@ -34,9 +41,12 @@ router.get("/", async (req, res) => {
     res.json({
       automations: automations.map((a) => ({
         ...a,
-        nextFlushAt: a.enabled ? autoSyncQueue.nextFlushAt(a.flushTimes, settings.timezone) : null,
+        nextFlushAt: a.enabled && !a.archived ? autoSyncQueue.nextFlushAt(a.cadence, settings.timezone) : null,
         pendingCount: autoSyncQueue.pendingCount(a.id),
       })),
+      // Aggregated across every automation -- the Runs page shows one
+      // unified pending queue rather than one per automation.
+      pendingItems: autoSyncQueue.pendingItems(),
       webhook: settings.autoSyncWebhook,
     });
   } catch (err) {
@@ -46,15 +56,23 @@ router.get("/", async (req, res) => {
 
 /**
  * POST /api/automations
- * body: { name, contentScope, flushTimes, orgUnitOverride? }
+ * body: { name, contentScope, cadence, workflows?, projectName?, includeExisting?, orgUnitOverride? }
  */
 router.post("/", async (req, res) => {
   try {
-    const { name, contentScope, flushTimes, orgUnitOverride } = req.body || {};
+    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
     if (!name || !contentScope) {
       return res.status(400).json({ error: "name and contentScope are required" });
     }
-    const automation = await store.createAutomation({ name, contentScope, flushTimes, orgUnitOverride });
+    const automation = await store.createAutomation({
+      name,
+      contentScope,
+      cadence,
+      workflows,
+      projectName,
+      includeExisting,
+      orgUnitOverride,
+    });
     await syncWebhookRegistrationToAutomationsState();
     res.json(automation);
   } catch (err) {
@@ -64,15 +82,18 @@ router.post("/", async (req, res) => {
 
 /**
  * PUT /api/automations/:id
- * body: { name?, contentScope?, flushTimes?, orgUnitOverride? }
+ * body: { name?, contentScope?, cadence?, workflows?, projectName?, includeExisting?, orgUnitOverride? }
  */
 router.put("/:id", async (req, res) => {
   try {
-    const { name, contentScope, flushTimes, orgUnitOverride } = req.body || {};
+    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
     const patch = {};
     if (name !== undefined) patch.name = name;
     if (contentScope !== undefined) patch.contentScope = contentScope;
-    if (flushTimes !== undefined) patch.flushTimes = flushTimes;
+    if (cadence !== undefined) patch.cadence = cadence;
+    if (workflows !== undefined) patch.workflows = workflows;
+    if (projectName !== undefined) patch.projectName = projectName;
+    if (includeExisting !== undefined) patch.includeExisting = includeExisting;
     if (orgUnitOverride !== undefined) patch.orgUnitOverride = orgUnitOverride;
 
     const automation = await store.updateAutomation(req.params.id, patch);
@@ -120,8 +141,37 @@ router.post("/:id/resume", async (req, res) => {
 });
 
 /**
+ * POST /api/automations/:id/archive
+ * POST /api/automations/:id/unarchive
+ * Archived automations are permanently stopped (unlike paused, which is
+ * meant to be temporary) but kept around for history/reference, matching
+ * the design's 3-state model (Running/Paused/Archived).
+ */
+router.post("/:id/archive", async (req, res) => {
+  try {
+    const automation = await store.updateAutomation(req.params.id, { archived: true });
+    if (!automation) return res.status(404).json({ error: "Automation not found" });
+    await syncWebhookRegistrationToAutomationsState();
+    res.json(automation);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.post("/:id/unarchive", async (req, res) => {
+  try {
+    const automation = await store.updateAutomation(req.params.id, { archived: false });
+    if (!automation) return res.status(404).json({ error: "Automation not found" });
+    await syncWebhookRegistrationToAutomationsState();
+    res.json(automation);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/automations/:id/flush
- * Manual "flush now" -- runs the same cycle the scheduled times trigger,
+ * Manual "flush now" -- runs the same cycle the scheduled cadence triggers,
  * immediately, without waiting for the next scheduled time.
  */
 router.post("/:id/flush", async (req, res) => {
@@ -130,6 +180,28 @@ router.post("/:id/flush", async (req, res) => {
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await automationScheduler.runAutomationCycle(automation);
     res.json({ flushed: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/automations/flush-all
+ * The Runs page shows one unified pending queue across every automation
+ * (matching the design) with a single "Translate queue now" action --
+ * flushes each automation's own queue in turn rather than requiring the
+ * user to flush them one at a time.
+ */
+router.post("/flush-all", async (req, res) => {
+  try {
+    const automations = await store.listAutomations();
+    let itemsSynced = 0;
+    for (const automation of automations) {
+      if (autoSyncQueue.pendingCount(automation.id) === 0) continue;
+      const result = await autoSyncQueue.flush(automation.id);
+      itemsSynced += result.itemsSynced;
+    }
+    res.json({ flushed: true, itemsSynced });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -148,7 +220,7 @@ router.get("/:id/status", async (req, res) => {
       pendingCount: autoSyncQueue.pendingCount(automation.id),
       pendingSince: autoSyncQueue.pendingSince(automation.id),
       pendingItems: autoSyncQueue.pendingItems(automation.id),
-      nextFlushAt: automation.enabled ? autoSyncQueue.nextFlushAt(automation.flushTimes, settings.timezone) : null,
+      nextFlushAt: automation.enabled && !automation.archived ? autoSyncQueue.nextFlushAt(automation.cadence, settings.timezone) : null,
     });
   } catch (err) {
     res.status(502).json({ error: err.message });

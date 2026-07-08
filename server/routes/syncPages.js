@@ -12,7 +12,7 @@ const router = express.Router();
  * Syncs one or more static pages into a single wxrks project.
  */
 router.post("/item", async (req, res) => {
-  const { pageId, pageIds } = req.body || {};
+  const { pageId, pageIds, workflows, projectName } = req.body || {};
   const ids = pageIds && pageIds.length > 0 ? pageIds : pageId ? [pageId] : [];
 
   try {
@@ -36,7 +36,7 @@ router.post("/item", async (req, res) => {
     const pagesById = new Map(allPages.map((p) => [p.id, p]));
 
     const project = await wxrks.createProject({
-      reference: `Pages Item Sync / ${new Date().toISOString()}`,
+      reference: projectName || `Pages Item Sync / ${new Date().toISOString()}`,
       sourceLocale,
       orgUnitUUID,
     });
@@ -62,6 +62,7 @@ router.post("/item", async (req, res) => {
           nodes,
           targetLocales,
           namePattern: pagesWorkUnitNamePattern,
+          workflows,
         });
         results.push({ webflowPageId: id, ...result });
       } catch (err) {
@@ -94,21 +95,55 @@ router.post("/item", async (req, res) => {
 
 /**
  * GET /api/sync/pages/list
- * All static pages, with per-page enabled state, for the Select & Send /
- * Templates Pages tab checklists.
+ * All static pages, with per-page enabled state and (new/stale/failed/
+ * synced) per-locale delivery status, for Translate's content browser and
+ * the Templates Pages tab checklist. Status comes entirely from our own
+ * delivery log compared against page.lastUpdated -- no per-locale DOM
+ * fetch needed (that's the expensive N+1 this app deliberately avoids for
+ * Pages/Components list views), since we don't need to know whether a
+ * locale-specific override exists in Webflow, only whether *we* delivered
+ * one and whether the source has changed since.
  */
 router.get("/list", async (req, res) => {
   try {
-    const settings = await store.getSettings();
-    const pages = await webflow.listStaticPages();
+    const [settings, pages, deliveryStatus] = await Promise.all([
+      store.getSettings(),
+      webflow.listStaticPages(),
+      store.getDeliveryStatusByEntity("webflowPageId"),
+    ]);
     res.json({
-      pages: pages.map((p) => ({
-        id: p.id,
-        title: p.title,
-        slug: p.slug,
-        lastUpdated: p.lastUpdated,
-        enabled: store.isPageEnabled(settings, p.id),
-      })),
+      pages: pages.map((p) => {
+        const localeStatus = {};
+        const localeErrors = {};
+        settings.targetLocales.forEach((locale) => {
+          const { status, error } = store.computeLocaleStatus({
+            delivery: deliveryStatus[p.id]?.[locale],
+            sourceLastUpdated: p.lastUpdated,
+            localeExists: false,
+          });
+          localeStatus[locale] = status;
+          if (error) localeErrors[locale] = error;
+        });
+        const localeStates = Object.values(localeStatus);
+        const state = localeStates.includes("failed")
+          ? "failed"
+          : localeStates.every((s) => s === "synced")
+          ? "synced"
+          : localeStates.every((s) => s === "new")
+          ? "new"
+          : "stale";
+        return {
+          id: p.id,
+          title: p.title,
+          slug: p.slug,
+          folderId: p.parentId || null,
+          lastUpdated: p.lastUpdated,
+          enabled: store.isPageEnabled(settings, p.id),
+          state,
+          localeStatus,
+          localeErrors,
+        };
+      }),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });

@@ -25,28 +25,29 @@ const autoSyncQueue = require("./autoSyncQueue");
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
+function isCmsRelevant(automation) {
+  return automation.contentScope.scope === "all" || (automation.contentScope.leaves || []).some((l) => l.kind === "collection");
+}
+
 async function reconcileAutomation(automation, allCollections) {
   const settings = await store.getSettings();
   const cutoff = automation.checkpoint.lastCheckpoint
     ? new Date(automation.checkpoint.lastCheckpoint)
+    : automation.includeExisting
+    ? new Date(0)
     : new Date(Date.now() - FIRST_RUN_LOOKBACK_MS);
   const nextCheckpoint = new Date();
 
+  const collectionLeafIds = new Set((automation.contentScope.leaves || []).filter((l) => l.kind === "collection").map((l) => l.id));
   const relevantCollections =
-    automation.contentScope.type === "all"
-      ? allCollections
-      : allCollections.filter(
-          (c) =>
-            automation.contentScope.allCollectionsEnabled ||
-            automation.contentScope.enabledCollectionIds.includes(c.id)
-        );
+    automation.contentScope.scope === "all" ? allCollections : allCollections.filter((c) => collectionLeafIds.has(c.id));
 
   let missedCount = 0;
   for (const collection of relevantCollections) {
     const items = await webflow.listAllItems(collection.id, { locale: settings.sourceLocale });
     for (const item of items) {
       if (!item.lastPublished || new Date(item.lastPublished) < cutoff) continue;
-      if (!store.isAutomationCmsItemQualified(automation, collection, item)) continue;
+      if (!store.isAutomationContentQualified(automation, "collection", { leafId: collection.id, itemLike: item })) continue;
       if (store.isAutomationItemAlreadySynced(automation, collection.id, item.id, item.lastPublished)) continue;
 
       autoSyncQueue.enqueue({ automation, collection, item });
@@ -60,9 +61,7 @@ async function reconcileAutomation(automation, allCollections) {
 
 async function reconcile() {
   const automations = await store.listAutomations();
-  const relevantAutomations = automations.filter(
-    (a) => a.enabled && (a.contentScope.type === "cms" || a.contentScope.type === "all")
-  );
+  const relevantAutomations = automations.filter((a) => a.enabled && !a.archived && isCmsRelevant(a));
   if (relevantAutomations.length === 0) return;
 
   const allCollections = await webflow.listCollections();

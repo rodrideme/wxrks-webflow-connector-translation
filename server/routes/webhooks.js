@@ -267,7 +267,12 @@ router.post("/webflow", async (req, res) => {
   await store.updateAutoSyncWebhookState({ lastEventAt: new Date().toISOString() });
 
   const automations = await store.listAutomations();
-  const cmsAutomations = automations.filter((a) => a.enabled && (a.contentScope.type === "cms" || a.contentScope.type === "all"));
+  const cmsAutomations = automations.filter(
+    (a) =>
+      a.enabled &&
+      !a.archived &&
+      (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
+  );
   if (cmsAutomations.length === 0) {
     return res.status(200).json({ ignored: true, reason: "No enabled CMS/All Content automations" });
   }
@@ -297,7 +302,9 @@ router.post("/webflow", async (req, res) => {
       // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
       const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
 
-      const qualifyingAutomations = cmsAutomations.filter((a) => store.isAutomationCmsItemQualified(a, collection, item));
+      const qualifyingAutomations = cmsAutomations.filter((a) =>
+        store.isAutomationContentQualified(a, "collection", { leafId: collectionId, itemLike: item })
+      );
       console.log(
         `Automation evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies for ${qualifyingAutomations.length} automation(s)`
       );

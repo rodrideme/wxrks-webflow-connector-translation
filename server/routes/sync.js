@@ -13,7 +13,7 @@ const router = express.Router();
  * single wxrks project.
  */
 router.post("/item", async (req, res) => {
-  const { collectionId, itemId, itemIds } = req.body || {};
+  const { collectionId, itemId, itemIds, workflows, projectName } = req.body || {};
   const ids = itemIds && itemIds.length > 0 ? itemIds : itemId ? [itemId] : [];
 
   try {
@@ -36,7 +36,7 @@ router.post("/item", async (req, res) => {
     const collection = await webflow.getCollection(collectionId);
 
     const project = await wxrks.createProject({
-      reference: `Item Sync / ${collection.displayName || collectionId} / ${new Date().toISOString()}`,
+      reference: projectName || `Item Sync / ${collection.displayName || collectionId} / ${new Date().toISOString()}`,
       sourceLocale,
       orgUnitUUID,
     });
@@ -60,6 +60,7 @@ router.post("/item", async (req, res) => {
           item,
           targetLocales,
           namePattern: workUnitNamePattern,
+          workflows,
         });
         results.push({ itemId: id, ...result });
       } catch (err) {

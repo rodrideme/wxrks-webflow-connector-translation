@@ -1,17 +1,16 @@
 import StatusPill from "./components/StatusPill.jsx";
 
 /**
- * Maps a Webflow item's per-locale sync status (server-computed in
- * routes/collections.js: "published" | "draft" | "missing") to the app's
- * fixed status-pill vocabulary. Kept separate from the pill vocabulary's
- * own "draft" variant (which means "not yet sent to wxrks") since
- * Webflow's "draft" here means something different (translated, but the
- * Webflow entry itself is unpublished) -- explicit labels avoid the two
- * meanings colliding under one word.
+ * Maps a per-locale delivery status (server-computed in
+ * routes/collections.js / syncPages.js / syncComponents.js:
+ * "synced" | "stale" | "failed" | "new", derived from project_mappings'
+ * updates[] delivery log compared against the source's own last-updated
+ * time) to the app's fixed status-pill vocabulary.
  */
 export function localeStatusPill(status) {
-  if (status === "published") return <StatusPill variant="success" label="Published" />;
-  if (status === "draft") return <StatusPill variant="progress" label="Draft" />;
-  if (status === "missing") return <StatusPill variant="draft" label="Missing" />;
+  if (status === "synced") return <StatusPill variant="success" label="Synced" />;
+  if (status === "stale") return <StatusPill variant="progress" label="Stale" />;
+  if (status === "failed") return <StatusPill variant="error" label="Failed" />;
+  if (status === "new") return <StatusPill variant="draft" label="New" />;
   return <StatusPill variant="draft" label="—" />;
 }

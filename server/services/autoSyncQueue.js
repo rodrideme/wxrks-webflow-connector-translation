@@ -2,11 +2,11 @@
  * Automation's debounce/batch queue. Qualifying CMS items (from the live
  * webhook) and Pages/Components (from automationScheduler's polling scans)
  * accumulate here in-memory and get flushed into one shared wxrks project
- * per automation at that automation's own scheduled clock times
- * (automation.flushTimes, e.g. ["00:00", "12:00"]) -- not a sliding/
- * resetting debounce, so latency stays bounded even during a burst of
- * edits. A manual "flush now" is also available per automation (see
- * flush() below, called from routes/automations.js).
+ * per automation at that automation's own scheduled cadence (hourly/daily/
+ * weekly, see cadenceMatchesNow below) -- not a sliding/resetting debounce,
+ * so latency stays bounded even during a burst of edits. A manual "flush
+ * now" is also available per automation (see flush() below, called from
+ * routes/automations.js).
  *
  * If the process restarts before a flush, queued-but-unflushed CMS items are
  * lost -- acceptable, since autoSyncReconciliation.js re-scans for anything
@@ -33,42 +33,52 @@ let scheduleTimer = null;
 const lastFiredMinuteKeyByAutomation = new Map();
 
 function enqueue({ automation, collection, item }) {
+  // "Created" if this item has never been delivered under this automation
+  // before, else "Edited" -- matches the design's queue trigger badges.
+  const everSynced = Boolean(automation.checkpoint.lastSyncedAt?.[collection.id]?.[item.id]);
   pending.set(`${automation.id}:cms:${collection.id}:${item.id}`, {
     automationId: automation.id,
     entityType: "cms",
     collection,
     item,
+    trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
 }
 
 function enqueuePage({ automation, page }) {
+  const everSynced = Boolean(automation.checkpoint.lastSyncedPages?.[page.id]);
   pending.set(`${automation.id}:page:${page.id}`, {
     automationId: automation.id,
     entityType: "page",
     page,
+    trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
 }
 
 function enqueueComponent({ automation, component, nodes, contentHash }) {
+  const everSynced = Boolean(automation.checkpoint.lastSyncedComponentHashes?.[component.id]);
   pending.set(`${automation.id}:component:${component.id}`, {
     automationId: automation.id,
     entityType: "component",
     component,
     nodes,
     contentHash,
+    trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
 }
 
 /**
- * Formats a UTC instant as "HH:mm" wall-clock time in the given IANA
- * timezone -- DST-correct via Intl, no date library needed. Used both to
- * check "is it a scheduled flush time right now" and (via nextFlushAt's
- * brute-force scan) to find the next one.
+ * Formats a UTC instant as "HH:mm" wall-clock time (or, with `part:
+ * "weekday"`, a short weekday name like "Mon") in the given IANA timezone --
+ * DST-correct via Intl, no date library needed.
  */
-function formatInTimeZone(date, timeZone) {
+function formatInTimeZone(date, timeZone, part = "time") {
+  if (part === "weekday") {
+    return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(date);
+  }
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
@@ -80,9 +90,34 @@ function formatInTimeZone(date, timeZone) {
   return `${hh}:${mm}`;
 }
 
+// Every "HH:mm" an hourly cadence fires at, evenly spaced every `everyHours`
+// starting from `startTime` (wraps across midnight).
+function hourlyTimes(startTime, everyHours) {
+  const [sh, sm] = (startTime || "00:00").split(":").map(Number);
+  const startMinutes = sh * 60 + sm;
+  const times = [];
+  for (let m = startMinutes; m < startMinutes + 24 * 60; m += Math.max(1, everyHours) * 60) {
+    const wrapped = ((m % (24 * 60)) + 24 * 60) % (24 * 60);
+    const hh = String(Math.floor(wrapped / 60)).padStart(2, "0");
+    const mm = String(wrapped % 60).padStart(2, "0");
+    times.push(`${hh}:${mm}`);
+  }
+  return times;
+}
+
+/**
+ * Whether an automation's cadence fires at this exact wall-clock moment
+ * (hhmm + weekday, both already resolved to the app's timezone).
+ */
+function cadenceMatchesNow(cadence, hhmm, weekday) {
+  if (cadence.kind === "hourly") return hourlyTimes(cadence.startTime, cadence.everyHours).includes(hhmm);
+  if (cadence.kind === "weekly") return cadence.weekday === weekday && cadence.time === hhmm;
+  return cadence.time === hhmm; // "daily"
+}
+
 /**
  * Checks every 30s (well under a minute) whether the current wall-clock time
- * (in the app's global timezone) matches any enabled automation's flushTimes,
+ * (in the app's global timezone) matches any enabled automation's cadence,
  * firing that automation's cycle if so. Re-queries the automations list
  * fresh on every tick (cheap -- a handful of rows) rather than being
  * restarted on every settings change, so it can simply run unconditionally
@@ -96,12 +131,13 @@ function startFlushLoop() {
       const { timezone } = await store.getSettings();
       const now = new Date();
       const hhmm = formatInTimeZone(now, timezone);
+      const weekday = formatInTimeZone(now, timezone, "weekday");
       const minuteKey = now.toISOString().slice(0, 16);
 
       const automations = await store.listAutomations();
       for (const automation of automations) {
-        if (!automation.enabled) continue;
-        if (!automation.flushTimes.includes(hhmm)) continue;
+        if (!automation.enabled || automation.archived) continue;
+        if (!cadenceMatchesNow(automation.cadence, hhmm, weekday)) continue;
         if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
         lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
         runAutomationCycle(automation).catch((err) =>
@@ -120,23 +156,21 @@ function stopFlushLoop() {
 }
 
 /**
- * Next scheduled flush time on or after `from`, given a list of "HH:mm"
- * times interpreted as wall-clock times in `timezone`. Brute-force scans
- * minute-by-minute up to 48h ahead -- simple and DST-correct (via Intl)
- * rather than doing timezone-offset arithmetic by hand; cheap enough since
- * this only runs on-demand (status polling), not in the hot scheduling
- * path above.
+ * Next scheduled flush time on or after `from`, given a cadence. Brute-force
+ * scans minute-by-minute up to 8 days ahead (weekly cadences need more than
+ * 48h of lookahead) -- simple and DST-correct (via Intl) rather than doing
+ * timezone-offset arithmetic by hand; cheap enough since this only runs
+ * on-demand (status polling), not in the hot scheduling path above.
  */
-function nextFlushAt(flushTimes, timezone = "UTC", from = new Date()) {
-  if (!flushTimes || flushTimes.length === 0) return null;
-  const sorted = [...flushTimes].sort();
+function nextFlushAt(cadence, timezone = "UTC", from = new Date()) {
+  if (!cadence) return null;
   const cursor = new Date(from.getTime());
   cursor.setSeconds(0, 0);
-  for (let i = 0; i < 60 * 24 * 2; i++) {
+  for (let i = 0; i < 60 * 24 * 8; i++) {
     cursor.setTime(cursor.getTime() + 60000);
-    if (sorted.includes(formatInTimeZone(cursor, timezone))) {
-      return cursor.toISOString();
-    }
+    const hhmm = formatInTimeZone(cursor, timezone);
+    const weekday = formatInTimeZone(cursor, timezone, "weekday");
+    if (cadenceMatchesNow(cadence, hhmm, weekday)) return cursor.toISOString();
   }
   return null;
 }
@@ -165,7 +199,7 @@ async function flush(automationId) {
 
   const orgUnitUUID = automation.orgUnitOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
   const project = await wxrks.createProject({
-    reference: `Automation "${automation.name}" ${new Date().toISOString()}`,
+    reference: automation.projectName || `Automation "${automation.name}" ${new Date().toISOString()}`,
     sourceLocale,
     orgUnitUUID,
   });
@@ -190,6 +224,7 @@ async function flush(automationId) {
           item: entry.item,
           targetLocales,
           namePattern: workUnitNamePattern,
+          workflows: automation.workflows,
         });
         if (!result.skipped) {
           itemsSynced += 1;
@@ -204,6 +239,7 @@ async function flush(automationId) {
           nodes,
           targetLocales,
           namePattern: settings.pagesWorkUnitNamePattern,
+          workflows: automation.workflows,
         });
         if (!result.skipped) {
           itemsSynced += 1;
@@ -216,6 +252,7 @@ async function flush(automationId) {
           nodes: entry.nodes,
           targetLocales,
           namePattern: settings.componentsWorkUnitNamePattern,
+          workflows: automation.workflows,
         });
         if (!result.skipped) {
           itemsSynced += 1;
@@ -257,6 +294,7 @@ module.exports = {
   stopFlushLoop,
   flush,
   nextFlushAt,
+  hourlyTimes,
   pendingCount: (automationId) =>
     automationId ? [...pending.keys()].filter((k) => k.startsWith(`${automationId}:`)).length : pending.size,
   pendingSince: (automationId) =>
@@ -269,6 +307,7 @@ module.exports = {
       .filter(([key]) => !automationId || key.startsWith(`${automationId}:`))
       .map(([, v]) => ({
         entityType: v.entityType,
+        trigger: v.trigger,
         collectionId: v.collection?.id,
         collectionName: v.collection?.displayName || v.collection?.singularName,
         itemId: v.item?.id,

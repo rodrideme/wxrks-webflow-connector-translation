@@ -18,8 +18,8 @@ const api = {
   getCollectionItems: (collectionId) => request(`/collections/${collectionId}/items`),
   getBacklog: () => request("/backlog"),
   getSyncStatus: () => request("/sync/status"),
-  syncItem: (collectionId, itemIds) =>
-    request("/sync/item", { method: "POST", body: JSON.stringify({ collectionId, itemIds }) }),
+  syncItem: (collectionId, itemIds, options = {}) =>
+    request("/sync/item", { method: "POST", body: JSON.stringify({ collectionId, itemIds, ...options }) }),
   getSettings: () => request("/settings"),
   updateSettings: (settings) =>
     request("/settings", { method: "PUT", body: JSON.stringify(settings) }),
@@ -36,10 +36,11 @@ const api = {
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
   getPages: () => request("/sync/pages/list"),
   getPageFolders: () => request("/sync/pages/folders"),
-  syncPagesItem: (pageIds) => request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds }) }),
+  syncPagesItem: (pageIds, options = {}) =>
+    request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds, ...options }) }),
   getComponents: () => request("/sync/components/list"),
-  syncComponentsItem: (componentIds) =>
-    request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds }) }),
+  syncComponentsItem: (componentIds, options = {}) =>
+    request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds, ...options }) }),
   listAutomations: () => request("/automations"),
   createAutomation: (automation) => request("/automations", { method: "POST", body: JSON.stringify(automation) }),
   updateAutomation: (id, automation) =>
@@ -47,7 +48,10 @@ const api = {
   deleteAutomation: (id) => request(`/automations/${id}`, { method: "DELETE" }),
   pauseAutomation: (id) => request(`/automations/${id}/pause`, { method: "POST" }),
   resumeAutomation: (id) => request(`/automations/${id}/resume`, { method: "POST" }),
+  archiveAutomation: (id) => request(`/automations/${id}/archive`, { method: "POST" }),
+  unarchiveAutomation: (id) => request(`/automations/${id}/unarchive`, { method: "POST" }),
   flushAutomationNow: (id) => request(`/automations/${id}/flush`, { method: "POST" }),
+  flushAllAutomations: () => request("/automations/flush-all", { method: "POST" }),
   getAutomationStatus: (id) => request(`/automations/${id}/status`),
 };
 

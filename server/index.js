@@ -6,6 +6,7 @@ const cors = require("cors");
 
 const db = require("./db");
 const store = require("./store");
+const webflow = require("./services/webflow");
 const collectionsRouter = require("./routes/collections");
 const syncRouter = require("./routes/sync");
 const syncPagesRouter = require("./routes/syncPages");
@@ -86,28 +87,89 @@ async function migrateLegacyAutoSyncIfNeeded() {
     name: "Auto Sync (migrated)",
     enabled: legacy.enabled,
     contentScope: {
-      type: "cms",
-      allCollectionsEnabled: legacy.allCollectionsEnabled,
-      enabledCollectionIds: legacy.enabledCollectionIds,
-      fieldConditions: legacy.fieldConditions,
+      scope: "leaves",
+      leaves: legacy.allCollectionsEnabled
+        ? [] // materialized to real collection ids by migrateAutomationsToLeafShapeIfNeeded below
+        : legacy.enabledCollectionIds.map((id) => ({
+            kind: "collection",
+            id,
+            filters: legacy.fieldConditions[id] || [],
+          })),
     },
-    flushTimes: legacy.flushTimes,
+    cadence: legacy.flushTimes,
     orgUnitOverride: null,
   });
+  // Old "all collections enabled" has no equivalent in the new leaves-only
+  // shape without enumerating real collections -- stash the flag so the
+  // very next migration step (which can make a live Webflow call) expands it.
+  if (legacy.allCollectionsEnabled) {
+    await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves: [], _expandAllCollections: true } });
+  }
   console.log(`Migrated legacy Auto Sync config into automation "${automation.name}" (${automation.id})`);
 
   await store.updateSettings({ autoSync: null, autoSyncReconciliation: null });
 }
 
+/**
+ * Upgrades any automation row still carrying the pre-"Sync Panel - Ledger"
+ * contentScope shape (`{type: "cms"|"all", allCollectionsEnabled,
+ * enabledCollectionIds, fieldConditions}`, or the transitional
+ * `_expandAllCollections` marker above) into the current leaf+filter shape
+ * (`{scope: "all"|"leaves", leaves: [{kind, id, filters}]}`). Cheap no-op
+ * for every row once migrated. `cadence` itself needs no explicit migration
+ * -- store.js's automationRowToObject already derives it from the legacy
+ * flush_times column for any row where the cadence column is still null.
+ */
+async function migrateAutomationsToLeafShapeIfNeeded() {
+  const automations = await store.listAutomations();
+  for (const automation of automations) {
+    const scope = automation.contentScope;
+    const isLegacyShape = scope.type !== undefined;
+    const needsExpansion = scope._expandAllCollections;
+    if (!isLegacyShape && !needsExpansion) continue;
+
+    let leaves = scope.leaves || [];
+    if (isLegacyShape) {
+      if (scope.type === "all") {
+        await store.updateAutomation(automation.id, { contentScope: { scope: "all" } });
+        continue;
+      }
+      leaves = (scope.enabledCollectionIds || []).map((id) => ({
+        kind: "collection",
+        id,
+        filters: (scope.fieldConditions || {})[id] || [],
+      }));
+      if (!scope.allCollectionsEnabled) {
+        await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves } });
+        continue;
+      }
+    }
+
+    // allCollectionsEnabled (old) or _expandAllCollections (transitional):
+    // materialize every real collection as an explicit leaf.
+    try {
+      const collections = await webflow.listCollections();
+      leaves = collections.map((c) => ({ kind: "collection", id: c.id, filters: [] }));
+      await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves } });
+      console.log(`Expanded automation "${automation.name}" (${automation.id}) to ${leaves.length} real collections`);
+    } catch (err) {
+      console.error(`Failed to expand automation "${automation.name}" to real collections:`, err.message);
+    }
+  }
+}
+
 db.migrate()
   .then(async () => {
     await migrateLegacyAutoSyncIfNeeded();
+    await migrateAutomationsToLeafShapeIfNeeded();
 
     // Startup self-heal: register/teardown the shared Webflow webhook based
     // on current automations state, in case a prior process crashed
     // mid-registration or mid-teardown. Cheap and idempotent.
     const automations = await store.listAutomations();
-    const anyNeedsWebhook = automations.some((a) => a.enabled && (a.contentScope.type === "all" || a.contentScope.type === "cms"));
+    const anyNeedsWebhook = automations.some(
+      (a) => a.enabled && !a.archived && (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
+    );
     if (anyNeedsWebhook) {
       autoSyncWebhook.ensureWebhookRegistered().catch((err) => console.error("Automation webhook self-heal failed:", err.message));
     }
