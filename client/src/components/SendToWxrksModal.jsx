@@ -34,11 +34,13 @@ function cadenceSummary(cadence) {
  * sends call the existing per-entity-kind item-sync endpoints (sequentially
  * per kind/leaf, since this app creates one wxrks project per sync call --
  * a selection spanning multiple collections/kinds becomes multiple
- * projects, surfaced together in the result), recurring creates one
- * `automations` row via the contentScope this modal builds from the
- * current selection.
+ * projects/jobs). Each call returns a jobId immediately (processing
+ * continues in the background -- large sends can take minutes), handed to
+ * the parent via onJobsStarted to poll and show real progress + cancel.
+ * Recurring creates one `automations` row via the contentScope this modal
+ * builds from the current selection.
  */
-export default function SendToWxrksModal({ open, onClose, scope, selection, allSummary, ruleBased, onOneTimeResult, onRecurringCreated }) {
+export default function SendToWxrksModal({ open, onClose, scope, selection, allSummary, ruleBased, onJobsStarted, onRecurringCreated }) {
   const [settings, setSettings] = useState(null);
   const [orgUnits, setOrgUnits] = useState([]);
   const [webflowLocales, setWebflowLocales] = useState(null);
@@ -134,30 +136,22 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
         return;
       }
 
-      // One-time: dispatch per kind/leaf, aggregating results across
-      // however many wxrks projects that produces.
+      // One-time: dispatch per kind/leaf -- each call now creates its wxrks
+      // project and returns a jobId immediately (processing continues in
+      // the background), rather than blocking until every item is done.
+      // A selection spanning multiple kinds/leaves becomes multiple jobs/
+      // projects, tracked together by the parent's job poller.
       const options = { workflows: ["TRANSLATION"], projectName: projectName || undefined };
-      const allResults = [];
-      if (scope === "all") {
-        for (const g of allSummary.groups) {
-          if (g.kind === "collection") allResults.push(await api.syncItem(g.leafId, g.ids, options));
-          if (g.kind === "pagesFolder") allResults.push(await api.syncPagesItem(g.ids, options));
-          if (g.kind === "components") allResults.push(await api.syncComponentsItem(g.ids, options));
-        }
-      } else {
-        for (const g of selection.groups) {
-          if (g.kind === "collection") allResults.push(await api.syncItem(g.leafId, g.ids, options));
-          if (g.kind === "pagesFolder") allResults.push(await api.syncPagesItem(g.ids, options));
-          if (g.kind === "components") allResults.push(await api.syncComponentsItem(g.ids, options));
-        }
+      const sourceGroups = (scope === "all" ? allSummary.groups : selection.groups).filter((g) => g.ids.length > 0);
+      const jobs = [];
+      for (const g of sourceGroups) {
+        let res;
+        if (g.kind === "collection") res = await api.syncItem(g.leafId, g.ids, options);
+        else if (g.kind === "pagesFolder") res = await api.syncPagesItem(g.ids, options);
+        else res = await api.syncComponentsItem(g.ids, options);
+        jobs.push({ jobId: res.jobId, total: res.total, wxrksProjectUUID: res.wxrksProjectUUID, kind: g.kind, label: g.label });
       }
-      const aggregate = {
-        itemsSynced: allResults.reduce((sum, r) => sum + (r.itemsSynced || 0), 0),
-        errors: allResults.reduce((sum, r) => sum + (r.errors || 0), 0),
-        wxrksProjectUUID: allResults[0]?.wxrksProjectUUID,
-        wxrksProjectUUIDs: allResults.map((r) => r.wxrksProjectUUID).filter(Boolean),
-      };
-      onOneTimeResult(aggregate);
+      onJobsStarted(jobs);
       onClose();
     } catch (err) {
       setError(err.message);

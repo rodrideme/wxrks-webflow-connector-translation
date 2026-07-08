@@ -20,6 +20,8 @@ const api = {
   getSyncStatus: () => request("/sync/status"),
   syncItem: (collectionId, itemIds, options = {}) =>
     request("/sync/item", { method: "POST", body: JSON.stringify({ collectionId, itemIds, ...options }) }),
+  getSyncJob: (jobId) => request(`/sync/jobs/${jobId}`),
+  cancelSyncJob: (jobId) => request(`/sync/jobs/${jobId}/cancel`, { method: "POST" }),
   getSettings: () => request("/settings"),
   updateSettings: (settings) =>
     request("/settings", { method: "PUT", body: JSON.stringify(settings) }),

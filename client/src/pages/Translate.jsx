@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../services/api.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
@@ -10,6 +10,7 @@ import { formatDateOnly } from "../formatDate.js";
 import { localeStatusPill } from "../statusHelpers.jsx";
 
 const NO_FOLDER_ID = "__root__";
+const JOB_POLL_INTERVAL_MS = 1200;
 
 const DOT_COLOR = {
   synced: "bg-status-success-dot border-status-success-dot",
@@ -51,6 +52,8 @@ export default function Translate() {
 
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [phase, setPhase] = useState("idle"); // idle | running | done
+  const [jobs, setJobs] = useState([]); // active background sync jobs being polled
+  const jobsPollRef = useRef(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
@@ -343,10 +346,66 @@ export default function Translate() {
   const allSummary = { totalItems: allTotalItems, totalWords: allTotalWords, groups: allGroups };
 
   function resetAfterSend() {
+    clearInterval(jobsPollRef.current);
     setPhase("idle");
+    setJobs([]);
     setResult(null);
     setSelected({});
   }
+
+  // One or more background sync jobs were just created (a selection can
+  // span multiple kinds/leaves, each its own wxrks project/job) -- large
+  // sends (a whole collection, "All content") can mean hundreds of real
+  // wxrks API calls and take minutes, so this polls real progress instead
+  // of a fire-and-forget spinner, matching the old Bulk Sync job UX.
+  function handleJobsStarted(startedJobs) {
+    setJobs(startedJobs.map((j) => ({ ...j, processed: 0, status: "running" })));
+    setPhase("running");
+    clearInterval(jobsPollRef.current);
+    jobsPollRef.current = setInterval(async () => {
+      try {
+        const updated = await Promise.all(startedJobs.map((j) => api.getSyncJob(j.jobId)));
+        setJobs(startedJobs.map((j, i) => ({ ...j, ...updated[i] })));
+        const allDone = updated.every((j) => j.status !== "running");
+        if (allDone) {
+          clearInterval(jobsPollRef.current);
+          const itemsSynced = updated.reduce((sum, j) => sum + j.results.filter((r) => !r.skipped && !r.error).length, 0);
+          const errors = updated.reduce((sum, j) => sum + j.results.filter((r) => r.error).length, 0);
+          setResult({
+            itemsSynced,
+            errors,
+            wxrksProjectUUID: startedJobs[0]?.wxrksProjectUUID,
+            wxrksProjectUUIDs: startedJobs.map((j) => j.wxrksProjectUUID),
+          });
+          setPhase("done");
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    }, JOB_POLL_INTERVAL_MS);
+  }
+
+  async function cancelJobs() {
+    clearInterval(jobsPollRef.current);
+    try {
+      await Promise.all(jobs.map((j) => api.cancelSyncJob(j.jobId)));
+    } catch (err) {
+      setError(err.message);
+    }
+    setPhase("idle");
+    setJobs([]);
+  }
+
+  useEffect(() => () => clearInterval(jobsPollRef.current), []);
+
+  const jobProgress =
+    phase === "running"
+      ? {
+          processed: jobs.reduce((sum, j) => sum + (j.processed || 0), 0),
+          total: jobs.reduce((sum, j) => sum + (j.total || 0), 0),
+          jobCount: jobs.length,
+        }
+      : null;
 
   return (
     <div>
@@ -581,9 +640,11 @@ export default function Translate() {
         allTotalItems={allTotalItems}
         allTotalWords={allTotalWords}
         phase={phase}
+        progress={jobProgress}
         result={result}
         onOpenSend={() => setSendModalOpen(true)}
         onReset={resetAfterSend}
+        onCancel={cancelJobs}
       />
 
       <SendToWxrksModal
@@ -593,13 +654,7 @@ export default function Translate() {
         selection={selection}
         allSummary={allSummary}
         ruleBased={ruleBased}
-        onOneTimeResult={(res) => {
-          setPhase("running");
-          setTimeout(() => {
-            setResult(res);
-            setPhase("done");
-          }, 400);
-        }}
+        onJobsStarted={handleJobsStarted}
         onRecurringCreated={() => {
           setError(null);
         }}

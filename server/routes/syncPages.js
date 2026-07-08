@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
@@ -9,7 +10,10 @@ const router = express.Router();
 /**
  * POST /api/sync/pages/item
  * body: { pageId } or { pageIds: [...] }
- * Syncs one or more static pages into a single wxrks project.
+ * Syncs one or more static pages into a single wxrks project. Background
+ * job pattern -- see sync.js's POST /item for why (a large folder/"All
+ * content" send can take minutes). Polled via the shared
+ * GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
 router.post("/item", async (req, res) => {
   const { pageId, pageIds, workflows, projectName } = req.body || {};
@@ -50,44 +54,55 @@ router.post("/item", async (req, res) => {
       wxrksStatus: "DRAFT",
     });
 
-    const results = [];
-    for (const id of ids) {
-      try {
-        const page = pagesById.get(id);
-        if (!page) throw new Error(`Page ${id} not found`);
-        const nodes = await webflow.getPageDom(id, { locale: sourceLocale });
-        const result = await syncPageIntoBatch({
-          projectUuid: project.uuid,
-          page,
-          nodes,
-          targetLocales,
-          namePattern: pagesWorkUnitNamePattern,
-          workflows,
-        });
-        results.push({ webflowPageId: id, ...result });
-      } catch (err) {
-        results.push({ webflowPageId: id, error: err.message });
+    const jobId = crypto.randomUUID();
+    store.createSyncJob({ id: jobId, mode: "pages-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    (async () => {
+      for (const id of ids) {
+        if (store.getSyncJob(jobId).cancelled) break;
+
+        try {
+          const page = pagesById.get(id);
+          if (!page) throw new Error(`Page ${id} not found`);
+          const nodes = await webflow.getPageDom(id, { locale: sourceLocale });
+          const result = await syncPageIntoBatch({
+            projectUuid: project.uuid,
+            page,
+            nodes,
+            targetLocales,
+            namePattern: pagesWorkUnitNamePattern,
+            workflows,
+          });
+          store.appendSyncJobResult(jobId, { webflowPageId: id, ...result });
+        } catch (err) {
+          store.appendSyncJobResult(jobId, { webflowPageId: id, error: err.message });
+        }
       }
-    }
 
-    const itemsSynced = results.filter((r) => !r.skipped && !r.error).length;
-    const summary = {
-      itemsProcessed: results.length,
-      itemsSynced,
-      skipped: results.filter((r) => r.skipped).length,
-      errors: results.filter((r) => r.error).length,
-      estimatedWordCount: results.reduce((sum, r) => sum + (r.wordCount || 0), 0),
-      wxrksProjectUUID: project.uuid,
-      orgUnitUUID,
-      targetLocales,
-    };
-    await store.setLastSync({ mode: "pages-item", summary });
+      const finalJob = store.getSyncJob(jobId);
+      const itemsSynced = finalJob.results.filter((r) => !r.skipped && !r.error).length;
+      const summary = {
+        itemsProcessed: finalJob.processed,
+        itemsSynced,
+        skipped: finalJob.results.filter((r) => r.skipped).length,
+        errors: finalJob.results.filter((r) => r.error).length,
+        estimatedWordCount: finalJob.results.reduce((sum, r) => sum + (r.wordCount || 0), 0),
+        wxrksProjectUUID: project.uuid,
+        orgUnitUUID,
+        targetLocales,
+      };
+      store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
+      await store.setLastSync({ mode: "pages-item", summary });
 
-    if (autoApprove && itemsSynced > 0) {
-      requestBatchApproval(project.uuid);
-    }
-
-    res.json({ ...summary, results, ...(autoApprove ? { approvalRequested: true } : {}) });
+      if (autoApprove && itemsSynced > 0) {
+        requestBatchApproval(project.uuid);
+      }
+    })().catch((err) => {
+      console.error(`Pages item sync job ${jobId} crashed:`, err.message);
+      store.updateSyncJob(jobId, { status: "error", error: err.message });
+    });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

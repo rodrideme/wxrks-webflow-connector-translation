@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
@@ -10,6 +11,8 @@ const router = express.Router();
  * POST /api/sync/components/item
  * body: { componentId } or { componentIds: [...] }
  * Syncs one or more component definitions into a single wxrks project.
+ * Background job pattern -- see sync.js's POST /item for why. Polled via
+ * the shared GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
 router.post("/item", async (req, res) => {
   const { componentId, componentIds, workflows, projectName } = req.body || {};
@@ -50,44 +53,55 @@ router.post("/item", async (req, res) => {
       wxrksStatus: "DRAFT",
     });
 
-    const results = [];
-    for (const id of ids) {
-      try {
-        const component = componentsById.get(id);
-        if (!component) throw new Error(`Component ${id} not found`);
-        const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
-        const result = await syncComponentIntoBatch({
-          projectUuid: project.uuid,
-          component,
-          nodes,
-          targetLocales,
-          namePattern: componentsWorkUnitNamePattern,
-          workflows,
-        });
-        results.push({ webflowComponentId: id, ...result });
-      } catch (err) {
-        results.push({ webflowComponentId: id, error: err.message });
+    const jobId = crypto.randomUUID();
+    store.createSyncJob({ id: jobId, mode: "components-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    (async () => {
+      for (const id of ids) {
+        if (store.getSyncJob(jobId).cancelled) break;
+
+        try {
+          const component = componentsById.get(id);
+          if (!component) throw new Error(`Component ${id} not found`);
+          const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
+          const result = await syncComponentIntoBatch({
+            projectUuid: project.uuid,
+            component,
+            nodes,
+            targetLocales,
+            namePattern: componentsWorkUnitNamePattern,
+            workflows,
+          });
+          store.appendSyncJobResult(jobId, { webflowComponentId: id, ...result });
+        } catch (err) {
+          store.appendSyncJobResult(jobId, { webflowComponentId: id, error: err.message });
+        }
       }
-    }
 
-    const itemsSynced = results.filter((r) => !r.skipped && !r.error).length;
-    const summary = {
-      itemsProcessed: results.length,
-      itemsSynced,
-      skipped: results.filter((r) => r.skipped).length,
-      errors: results.filter((r) => r.error).length,
-      estimatedWordCount: results.reduce((sum, r) => sum + (r.wordCount || 0), 0),
-      wxrksProjectUUID: project.uuid,
-      orgUnitUUID,
-      targetLocales,
-    };
-    await store.setLastSync({ mode: "components-item", summary });
+      const finalJob = store.getSyncJob(jobId);
+      const itemsSynced = finalJob.results.filter((r) => !r.skipped && !r.error).length;
+      const summary = {
+        itemsProcessed: finalJob.processed,
+        itemsSynced,
+        skipped: finalJob.results.filter((r) => r.skipped).length,
+        errors: finalJob.results.filter((r) => r.error).length,
+        estimatedWordCount: finalJob.results.reduce((sum, r) => sum + (r.wordCount || 0), 0),
+        wxrksProjectUUID: project.uuid,
+        orgUnitUUID,
+        targetLocales,
+      };
+      store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
+      await store.setLastSync({ mode: "components-item", summary });
 
-    if (autoApprove && itemsSynced > 0) {
-      requestBatchApproval(project.uuid);
-    }
-
-    res.json({ ...summary, results, ...(autoApprove ? { approvalRequested: true } : {}) });
+      if (autoApprove && itemsSynced > 0) {
+        requestBatchApproval(project.uuid);
+      }
+    })().catch((err) => {
+      console.error(`Components item sync job ${jobId} crashed:`, err.message);
+      store.updateSyncJob(jobId, { status: "error", error: err.message });
+    });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

@@ -1,4 +1,5 @@
 import StatusPill from "./StatusPill.jsx";
+import ProgressBar from "./ProgressBar.jsx";
 
 const btnPrimary =
   "inline-flex items-center gap-1.5 rounded-md bg-accent px-5 py-2 text-[13.5px] font-semibold text-white transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50";
@@ -11,17 +12,26 @@ const btnGhost =
  * git history: that was folded into SyncSidebar two sessions ago, then
  * explicitly reversed by this redesign back into a page-wide bar). Clicking
  * "Translate" opens SendToWxrksModal (confirmation lives in that modal's
- * Review step, not a separate bar phase); after the modal submits a
- * one-time send, this bar shows a simple running/done strip.
+ * Review step, not a separate bar phase); after the modal kicks off one or
+ * more background jobs, this bar polls and shows real progress + Cancel
+ * (large sends -- a whole collection, "All content" -- can mean hundreds of
+ * real wxrks API calls and take minutes, so a fire-and-forget "Sending…"
+ * spinner isn't enough).
  */
-export default function TranslateActionBar({ mode, selCount, selWords, targetCount, ruleBased, allTotalItems, allTotalWords, phase, result, onOpenSend, onReset }) {
+export default function TranslateActionBar({ mode, selCount, selWords, targetCount, ruleBased, allTotalItems, allTotalWords, phase, progress, result, onOpenSend, onReset, onCancel }) {
   const plural = (n) => `item${n === 1 ? "" : "s"}`;
 
   return (
     <div className="sticky bottom-0 z-10 -mx-8 border-t border-border bg-surface px-8 py-3.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
-      {phase === "running" && (
-        <div className="flex items-center gap-3">
-          <StatusPill variant="progress" label="Sending…" />
+      {phase === "running" && progress && (
+        <div className="flex items-center gap-4">
+          <StatusPill variant="progress" label={`Creating ${progress.jobCount > 1 ? `${progress.jobCount} projects` : "project"}…`} />
+          <span className="flex-1">
+            <ProgressBar value={progress.processed} max={progress.total} label={`${progress.processed} / ${progress.total} processed`} />
+          </span>
+          <button onClick={onCancel} className={btnGhost}>
+            Cancel
+          </button>
         </div>
       )}
 
