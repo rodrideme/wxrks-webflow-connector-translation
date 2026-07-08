@@ -6,9 +6,9 @@ import Chip from "./Chip.jsx";
  * (adopted from the Ledger reference's "Project template" sidebar) --
  * always shows what a launch would actually do (org unit, target locales,
  * workflow, volume) instead of that being buried above the fold in the
- * main column. `children` holds the mode-specific action area (Bulk
- * Sync's preview/launch/progress/done -- Item Sync's launch lives in
- * SyncActionBar instead, so nothing is passed there).
+ * main column. `children` holds the mode-specific action area -- Bulk
+ * Sync's preview/launch/progress/done buttons, or Item Sync's
+ * ItemSyncAction (translate/confirm/running/done).
  */
 export default function SyncSidebar({ orgUnitName, targetLocales, volumeLabel, children }) {
   return (

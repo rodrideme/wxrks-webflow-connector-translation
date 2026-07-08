@@ -7,7 +7,7 @@ import ProgressBar from "../components/ProgressBar.jsx";
 import SegmentedControl from "../components/SegmentedControl.jsx";
 import UnderlineTabs from "../components/UnderlineTabs.jsx";
 import SyncSidebar from "../components/SyncSidebar.jsx";
-import SyncActionBar from "../components/SyncActionBar.jsx";
+import ItemSyncAction from "../components/ItemSyncAction.jsx";
 import { formatDateTime, formatDateOnly } from "../formatDate.js";
 
 const POLL_INTERVAL_MS = 1500;
@@ -647,21 +647,20 @@ export default function Translate() {
                   orgUnitName={orgUnitLabel}
                   targetLocales={settings?.targetLocales}
                   volumeLabel={`${selectedItemIds.length} selected · ${selectedItemWords.toLocaleString()}w`}
-                />
+                >
+                  <ItemSyncAction
+                    phase={itemPhase}
+                    entityLabel="item"
+                    selCount={selectedItemIds.length}
+                    selWords={selectedItemWords}
+                    onLaunch={() => setItemPhase("confirm")}
+                    onCancel={() => setItemPhase("idle")}
+                    onConfirm={doLaunchItemSync}
+                    onReset={resetItemSync}
+                    result={result}
+                  />
+                </SyncSidebar>
               </div>
-
-              <SyncActionBar
-                phase={itemPhase}
-                entityLabel="item"
-                selCount={selectedItemIds.length}
-                selWords={selectedItemWords}
-                targetCount={settings?.targetLocales.length || 0}
-                onLaunch={() => setItemPhase("confirm")}
-                onCancel={() => setItemPhase("idle")}
-                onConfirm={doLaunchItemSync}
-                onReset={resetItemSync}
-                result={result}
-              />
             </>
           )}
 
@@ -880,21 +879,20 @@ export default function Translate() {
                   </Card>
                 </div>
 
-                <SyncSidebar orgUnitName={orgUnitLabel} targetLocales={settings?.targetLocales} volumeLabel={`${selectedPageIds.length} selected`} />
+                <SyncSidebar orgUnitName={orgUnitLabel} targetLocales={settings?.targetLocales} volumeLabel={`${selectedPageIds.length} selected`}>
+                  <ItemSyncAction
+                    phase={pagesItemPhase}
+                    entityLabel="page"
+                    selCount={selectedPageIds.length}
+                    selWords={0}
+                    onLaunch={() => setPagesItemPhase("confirm")}
+                    onCancel={() => setPagesItemPhase("idle")}
+                    onConfirm={doLaunchPagesItemSync}
+                    onReset={resetPagesItemSync}
+                    result={pagesResult}
+                  />
+                </SyncSidebar>
               </div>
-
-              <SyncActionBar
-                phase={pagesItemPhase}
-                entityLabel="page"
-                selCount={selectedPageIds.length}
-                selWords={0}
-                targetCount={settings?.targetLocales.length || 0}
-                onLaunch={() => setPagesItemPhase("confirm")}
-                onCancel={() => setPagesItemPhase("idle")}
-                onConfirm={doLaunchPagesItemSync}
-                onReset={resetPagesItemSync}
-                result={pagesResult}
-              />
             </>
           )}
 
@@ -1012,21 +1010,20 @@ export default function Translate() {
                   </Card>
                 </div>
 
-                <SyncSidebar orgUnitName={orgUnitLabel} targetLocales={settings?.targetLocales} volumeLabel={`${selectedComponentIds.length} selected`} />
+                <SyncSidebar orgUnitName={orgUnitLabel} targetLocales={settings?.targetLocales} volumeLabel={`${selectedComponentIds.length} selected`}>
+                  <ItemSyncAction
+                    phase={componentsItemPhase}
+                    entityLabel="component"
+                    selCount={selectedComponentIds.length}
+                    selWords={0}
+                    onLaunch={() => setComponentsItemPhase("confirm")}
+                    onCancel={() => setComponentsItemPhase("idle")}
+                    onConfirm={doLaunchComponentsItemSync}
+                    onReset={resetComponentsItemSync}
+                    result={componentsResult}
+                  />
+                </SyncSidebar>
               </div>
-
-              <SyncActionBar
-                phase={componentsItemPhase}
-                entityLabel="component"
-                selCount={selectedComponentIds.length}
-                selWords={0}
-                targetCount={settings?.targetLocales.length || 0}
-                onLaunch={() => setComponentsItemPhase("confirm")}
-                onCancel={() => setComponentsItemPhase("idle")}
-                onConfirm={doLaunchComponentsItemSync}
-                onReset={resetComponentsItemSync}
-                result={componentsResult}
-              />
             </>
           )}
 
