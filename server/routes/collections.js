@@ -141,6 +141,38 @@ router.get("/:id/items", async (req, res) => {
 });
 
 /**
+ * GET /api/collections/:id/items-summary
+ * Lightweight version of GET /:id/items for the Translate page's "All
+ * content" aggregate, which only ever needs each item's id + word count --
+ * unlike the full endpoint, this skips fetching every target locale's item
+ * list entirely (1 + targetLocales.length real Webflow calls there, vs
+ * just 1 here), since per-locale delivery status isn't used by the
+ * aggregate view at all. Confirmed live: for an 11-collection, 10-locale
+ * site this cuts ~121 Webflow calls down to ~11 for the same aggregate.
+ */
+router.get("/:id/items-summary", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [{ sourceLocale }, collection, exclusions] = await Promise.all([
+      store.getSettings(req.account.id),
+      webflow.getCollection(id),
+      store.getFieldExclusions(req.account.id, id),
+    ]);
+    const sourceItems = await webflow.listAllItems(id, { locale: sourceLocale });
+    const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
+
+    const items = sourceItems.map((sourceItem) => {
+      const translatableFields = webflow.filterTranslatableFields(sourceItem.fieldData, fieldTypeBySlug, exclusions);
+      return { id: sourceItem.id, wordCount: webflow.countWords(translatableFields) };
+    });
+
+    res.json({ items });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
  * Shared handler for GET /api/backlog — all non-source-locale items that are
  * still Draft (= untranslated), across every collection. Scoped by Webflow's
  * own configured site locales, not by settings -- there's no per-collection

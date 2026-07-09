@@ -32,6 +32,12 @@ export default function Translate() {
   const [expandedGroups, setExpandedGroups] = useState({ collections: true, pages: true, components: true });
   const [activeLeaf, setActiveLeaf] = useState(null); // { kind, id, label }
   const [itemsByCollection, setItemsByCollection] = useState({});
+  const [collectionLoadErrors, setCollectionLoadErrors] = useState({}); // collectionId -> error message, after retries exhausted
+  // Separate, lighter-weight state for the "All content" aggregate -- see
+  // loadCollectionSummary below for why this can't just reuse
+  // itemsByCollection.
+  const [collectionSummaries, setCollectionSummaries] = useState({}); // collectionId -> [{id, wordCount}]
+  const [collectionSummaryErrors, setCollectionSummaryErrors] = useState({});
   const [fieldsByCollection, setFieldsByCollection] = useState({});
   const [filtersByLeaf, setFiltersByLeaf] = useState({}); // leafKey -> Condition[]
   const [dateAfter, setDateAfter] = useState("");
@@ -83,11 +89,61 @@ export default function Translate() {
     return `${kind}:${id}`;
   }
 
-  async function loadCollectionItems(collectionId) {
+  // Retries scoped to just this one collection's request -- unlike the
+  // interceptor-level retry tried (and reverted) earlier, this can't
+  // amplify the "All content" aggregate's total latency, since only the
+  // specific collection that hit a transient error pays the extra delay,
+  // not every one of the ~100+ requests the aggregate fires at once.
+  async function loadCollectionItems(collectionId, attempt = 1) {
     if (itemsByCollection[collectionId]) return itemsByCollection[collectionId];
-    const res = await api.getCollectionItems(collectionId);
-    setItemsByCollection((prev) => ({ ...prev, [collectionId]: res.items }));
-    return res.items;
+    try {
+      const res = await api.getCollectionItems(collectionId);
+      setItemsByCollection((prev) => ({ ...prev, [collectionId]: res.items }));
+      setCollectionLoadErrors((prev) => {
+        if (!(collectionId in prev)) return prev;
+        const next = { ...prev };
+        delete next[collectionId];
+        return next;
+      });
+      return res.items;
+    } catch (err) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1200 * attempt));
+        return loadCollectionItems(collectionId, attempt + 1);
+      }
+      setCollectionLoadErrors((prev) => ({ ...prev, [collectionId]: err.message }));
+      throw err;
+    }
+  }
+
+  // Lighter-weight sibling of loadCollectionItems, used only by "All
+  // content" mode's aggregate below -- fetches GET /items-summary (source
+  // locale + word counts only, no per-target-locale fetches) instead of
+  // the full per-item-per-locale endpoint, since the aggregate never
+  // needs locale delivery status. Kept as separate state from
+  // itemsByCollection so opening a specific collection's detail view
+  // (which DOES need the full per-locale data) always does its own real
+  // fetch rather than mistaking a summary-only load for "already loaded".
+  async function loadCollectionSummary(collectionId, attempt = 1) {
+    if (collectionSummaries[collectionId]) return collectionSummaries[collectionId];
+    try {
+      const res = await api.getCollectionItemsSummary(collectionId);
+      setCollectionSummaries((prev) => ({ ...prev, [collectionId]: res.items }));
+      setCollectionSummaryErrors((prev) => {
+        if (!(collectionId in prev)) return prev;
+        const next = { ...prev };
+        delete next[collectionId];
+        return next;
+      });
+      return res.items;
+    } catch (err) {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1200 * attempt));
+        return loadCollectionSummary(collectionId, attempt + 1);
+      }
+      setCollectionSummaryErrors((prev) => ({ ...prev, [collectionId]: err.message }));
+      throw err;
+    }
   }
 
   async function loadCollectionFields(collectionId) {
@@ -103,27 +159,44 @@ export default function Translate() {
   async function openLeaf(kind, id, label) {
     setActiveLeaf({ kind, id, label });
     if (kind === "collection") {
-      await loadCollectionItems(id);
+      try {
+        await loadCollectionItems(id);
+      } catch {
+        return; // recorded in collectionLoadErrors; rendered below with a retry action
+      }
       await loadCollectionFields(id);
     }
   }
 
-  // Switching to "all" mode needs every collection's items loaded to
-  // compute real aggregate stats (mirrors the old Bulk Sync dry-run's same
-  // full enumeration -- an explicit, occasional action, not a hot path).
+  // Switching to "all" mode needs every collection's summary (id + word
+  // count) loaded to compute real aggregate stats (mirrors the old Bulk
+  // Sync dry-run's same full enumeration -- an explicit, occasional
+  // action, not a hot path). allSettled (not all) so one collection's
+  // transient failure doesn't wipe out the whole page with an error while
+  // every other collection's totals loaded fine; that collection's own
+  // error is tracked in collectionSummaryErrors instead (see
+  // loadCollectionSummary's per-collection retry above).
   useEffect(() => {
     if (mode !== "all" || !initialDataLoaded) return;
-    const missing = collections.filter((c) => !itemsByCollection[c.id]);
+    const missing = collections.filter((c) => !collectionSummaries[c.id] && !collectionSummaryErrors[c.id]);
     if (missing.length === 0) {
       setAllItemsLoading(false);
       return;
     }
     setAllItemsLoading(true);
-    Promise.all(missing.map((c) => loadCollectionItems(c.id)))
-      .catch((err) => setError(err.message))
-      .finally(() => setAllItemsLoading(false));
+    Promise.allSettled(missing.map((c) => loadCollectionSummary(c.id))).finally(() => setAllItemsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, collections, initialDataLoaded]);
+
+  const collectionsDoneCount = collections.filter((c) => collectionSummaries[c.id] || collectionSummaryErrors[c.id]).length;
+  const failedCollectionIds = Object.keys(collectionSummaryErrors);
+
+  function retryFailedCollections() {
+    if (failedCollectionIds.length === 0) return;
+    setCollectionSummaryErrors({});
+    setAllItemsLoading(true);
+    Promise.allSettled(failedCollectionIds.map((id) => loadCollectionSummary(id))).finally(() => setAllItemsLoading(false));
+  }
 
   function itemsForLeaf(leaf) {
     if (!leaf) return [];
@@ -380,7 +453,7 @@ export default function Translate() {
 
   // ---- All-content summary ----
   const allGroups = [
-    ...collections.map((c) => ({ kind: "collection", leafId: c.id, label: c.displayName || c.singularName, group: "Collections", ids: (itemsByCollection[c.id] || []).map((it) => it.id), words: (itemsByCollection[c.id] || []).reduce((s, it) => s + (it.wordCount || 0), 0) })),
+    ...collections.map((c) => ({ kind: "collection", leafId: c.id, label: c.displayName || c.singularName, group: "Collections", ids: (collectionSummaries[c.id] || []).map((it) => it.id), words: (collectionSummaries[c.id] || []).reduce((s, it) => s + (it.wordCount || 0), 0) })),
     ...pageFolders.map((f) => ({ kind: "pagesFolder", leafId: f.id, label: f.title, group: "Pages", ids: pages.filter((p) => (p.folderId || NO_FOLDER_ID) === f.id).map((p) => p.id), words: 0 })),
     { kind: "components", leafId: "_", label: "Components", group: "Components", ids: components.map((c) => c.id), words: 0 },
   ];
@@ -621,6 +694,17 @@ export default function Translate() {
                         </tbody>
                       </table>
                     </div>
+                  ) : activeLeaf.kind === "collection" && collectionLoadErrors[activeLeaf.id] ? (
+                    <div className="flex flex-col items-center gap-2 p-8 text-center">
+                      <p className="text-sm text-status-error-fg">Couldn't load {activeLeaf.label}: {collectionLoadErrors[activeLeaf.id]}</p>
+                      <button
+                        type="button"
+                        onClick={() => loadCollectionItems(activeLeaf.id).then(() => loadCollectionFields(activeLeaf.id)).catch(() => {})}
+                        className="text-sm font-semibold text-accent-text hover:underline"
+                      >
+                        Retry
+                      </button>
+                    </div>
                   ) : activeLeaf.kind === "collection" && !itemsByCollection[activeLeaf.id] ? (
                     <LoadingState label={`Loading ${activeLeaf.label}`} />
                   ) : activeLeaf.kind !== "collection" && !initialDataLoaded ? (
@@ -638,33 +722,53 @@ export default function Translate() {
       {mode === "all" && (
         <Card>
           {allItemsLoading ? (
-            <LoadingState label="Computing totals across your site" />
+            <LoadingState
+              label={
+                collections.length > 0
+                  ? `Loading item counts — ${collectionsDoneCount} of ${collections.length} collections`
+                  : "Computing totals across your site"
+              }
+            />
           ) : (
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
-                  <th className="px-4 py-2">Source</th>
-                  <th className="px-4 py-2 text-right">Words</th>
-                  <th className="px-4 py-2 text-right">Items</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {allGroups.map((g) => (
-                  <tr key={`${g.kind}:${g.leafId}`}>
-                    <td className="px-4 py-2.5">
-                      <span className="font-medium text-ink">{g.label}</span> <span className="font-mono text-xs text-ink-faint">{g.group}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-ink-soft">{g.words > 0 ? g.words.toLocaleString() : "—"}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-ink">{g.ids.length}</td>
+            <>
+              {failedCollectionIds.length > 0 && (
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-status-error-bg px-4 py-2.5 text-[12.5px] text-status-error-fg">
+                  <span>
+                    {failedCollectionIds.length} collection{failedCollectionIds.length > 1 ? "s" : ""} couldn't be loaded
+                    (temporary error) — totals below don't include{" "}
+                    {failedCollectionIds.length > 1 ? "them" : "it"}.
+                  </span>
+                  <button type="button" onClick={retryFailedCollections} className="font-semibold underline hover:no-underline">
+                    Retry
+                  </button>
+                </div>
+              )}
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                    <th className="px-4 py-2">Source</th>
+                    <th className="px-4 py-2 text-right">Words</th>
+                    <th className="px-4 py-2 text-right">Items</th>
                   </tr>
-                ))}
-                <tr className="bg-surface-sunken font-semibold">
-                  <td className="px-4 py-2.5">Total</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{allTotalWords.toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{allTotalItems}</td>
-                </tr>
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {allGroups.map((g) => (
+                    <tr key={`${g.kind}:${g.leafId}`}>
+                      <td className="px-4 py-2.5">
+                        <span className="font-medium text-ink">{g.label}</span> <span className="font-mono text-xs text-ink-faint">{g.group}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-ink-soft">{g.words > 0 ? g.words.toLocaleString() : "—"}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-ink">{g.ids.length}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-surface-sunken font-semibold">
+                    <td className="px-4 py-2.5">Total</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{allTotalWords.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{allTotalItems}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       )}
