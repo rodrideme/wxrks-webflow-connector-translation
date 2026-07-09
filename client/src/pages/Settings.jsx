@@ -3,17 +3,22 @@ import api from "../services/api.js";
 import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 import SettingsWxrks from "./settings/SettingsWxrks.jsx";
+import SettingsFieldExclusions from "./settings/SettingsFieldExclusions.jsx";
 
 /**
  * App-level configuration: timezone, naming patterns, automation toggles,
- * and env keys. Org unit + target locales used to live here too, but now
- * that the wizard (Send to wxrks) always sends its own explicit values for
- * every one-time send and automation (see SendToWxrksModal.jsx), this page
- * only shows the source locale read-only -- auto-detected from the
- * connected Webflow site, not something to configure manually. Per-
- * collection sync scope also moved out: the Dashboard's backlog widget now
- * scans every collection and derives locales from Webflow directly instead
- * of from settings (see routes/collections.js's backlogHandler).
+ * wxrks connection, per-field translation exclusions, and env keys. Org
+ * unit + target locales used to live here too, but now that the wizard
+ * (Send to wxrks) always sends its own explicit values for every one-time
+ * send and automation (see SendToWxrksModal.jsx), this page only shows the
+ * source locale read-only -- auto-detected from the connected Webflow
+ * site, not something to configure manually. Per-collection SYNC scope
+ * (enable/disable a whole collection) moved out too: the Dashboard's
+ * backlog widget now scans every collection and derives locales from
+ * Webflow directly instead of from settings (see routes/collections.js's
+ * backlogHandler). Per-FIELD exclusions (SettingsFieldExclusions below)
+ * stayed -- that's a different, still-needed concern with no other UI
+ * surface in the app.
  */
 export default function Settings() {
   const [settings, setSettings] = useState(null);
@@ -82,6 +87,10 @@ export default function Settings() {
             wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked}
             onChange={loadSettings}
           />
+        </div>
+
+        <div className="mt-8">
+          <SettingsFieldExclusions />
         </div>
 
         {error && <p className="mt-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
