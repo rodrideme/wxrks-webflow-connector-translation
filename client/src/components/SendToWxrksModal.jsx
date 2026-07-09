@@ -147,6 +147,9 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           scope === "all"
             ? { scope: "all" }
             : { scope: "leaves", leaves: selection.groups.map((g) => ({ kind: g.kind, id: g.leafId, filters: g.filters || [] })) };
+        const targetLocalesChanged =
+          targetLocales.length !== (settings?.targetLocales || []).length ||
+          targetLocales.some((l) => !(settings?.targetLocales || []).includes(l));
         const automation = await api.createAutomation({
           name: `${contentLabel} · ${new Date().toLocaleDateString()}`,
           contentScope,
@@ -155,6 +158,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           projectName: projectName || null,
           includeExisting,
           orgUnitOverride: orgUnitUUID !== settings?.orgUnitUUID ? orgUnitUUID : null,
+          targetLocalesOverride: targetLocalesChanged ? targetLocales : null,
         });
         onRecurringCreated?.(automation);
         // "Include existing content on the first run" backfills immediately
@@ -182,7 +186,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       // the background), rather than blocking until every item is done.
       // A selection spanning multiple kinds/leaves becomes multiple jobs/
       // projects, tracked together by the parent's job poller.
-      const options = { workflows: workflowSteps, projectName: projectName || undefined };
+      const options = { workflows: workflowSteps, projectName: projectName || undefined, orgUnitUUID, targetLocales };
       const sourceGroups = (scope === "all" ? allSummary.groups : selection.groups).filter((g) => g.ids.length > 0);
       const jobs = [];
       for (const g of sourceGroups) {

@@ -5,7 +5,6 @@ const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
   { to: "/translate", label: "Translate", icon: "⇄" },
   { to: "/runs", label: "Runs", icon: "☰" },
-  { to: "/templates", label: "Templates", icon: "▤" },
   { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 

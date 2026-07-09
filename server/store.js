@@ -47,23 +47,9 @@ const DEFAULT_SETTINGS = {
   // unit file name (wxrks has no separate "name" field -- it derives the
   // work unit name from the uploaded file name).
   workUnitNamePattern: DEFAULT_WORK_UNIT_NAME_PATTERN,
-  // Static Pages manual Select & Send scope (separate from Automation's
-  // per-automation `content_scope.pageFolderIds`). Mirrors the CMS
-  // collection enable-tree shape (allCollectionsEnabled/enabledCollectionIds)
-  // but is entirely separate, since pages have no field schema and a
-  // different Webflow API surface (DOM node tree, not fieldData).
-  pages: {
-    allPagesEnabled: true,
-    enabledPageIds: [],
-  },
   // Placeholder: {page}. Kept separate from workUnitNamePattern since the
   // token vocabulary differs (a page has no collection/entry distinction).
   pagesWorkUnitNamePattern: DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
-  // Components manual Select & Send scope, same reasoning as Pages above.
-  components: {
-    allComponentsEnabled: true,
-    enabledComponentIds: [],
-  },
   // Placeholder: {component}. Components have no slug/entry token, only a
   // free-text `name` (e.g. "<Footer>", "Dark CTA") -- always slugified.
   componentsWorkUnitNamePattern: DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
@@ -332,14 +318,6 @@ function mergeSettings(stored) {
     ...DEFAULT_SETTINGS.sitePublishWebhook,
     ...(stored.sitePublishWebhook || {}),
   };
-  merged.pages = {
-    ...DEFAULT_SETTINGS.pages,
-    ...(stored.pages || {}),
-  };
-  merged.components = {
-    ...DEFAULT_SETTINGS.components,
-    ...(stored.components || {}),
-  };
   return merged;
 }
 
@@ -378,16 +356,6 @@ async function updateSettings(accountId, patch) {
 // and reuse it across a loop, rather than hitting the DB per collection.
 function isCollectionEnabled(settings, collectionId) {
   return settings.allCollectionsEnabled || settings.enabledCollectionIds.includes(collectionId);
-}
-
-// Pure helper, mirrors isCollectionEnabled but for static pages.
-function isPageEnabled(settings, pageId) {
-  return settings.pages.allPagesEnabled || settings.pages.enabledPageIds.includes(pageId);
-}
-
-// Pure helper, mirrors isPageEnabled but for components.
-function isComponentEnabled(settings, componentId) {
-  return settings.components.allComponentsEnabled || settings.components.enabledComponentIds.includes(componentId);
 }
 
 async function getFieldExclusions(accountId, collectionId) {
@@ -629,6 +597,7 @@ function automationRowToObject(row) {
     projectName: row.project_name || null,
     includeExisting: row.include_existing,
     orgUnitOverride: row.org_unit_override,
+    targetLocalesOverride: row.target_locales_override,
     checkpoint: row.checkpoint,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -672,11 +641,12 @@ async function createAutomation(accountId, {
   projectName,
   includeExisting,
   orgUnitOverride,
+  targetLocalesOverride,
 }) {
   const { rows } = await db.query(
     `INSERT INTO automations
-       (id, account_id, name, enabled, content_scope, cadence, workflows, project_name, include_existing, org_unit_override, checkpoint)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '{}')
+       (id, account_id, name, enabled, content_scope, cadence, workflows, project_name, include_existing, org_unit_override, target_locales_override, checkpoint)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}')
      RETURNING *`,
     [
       id || crypto.randomUUID(),
@@ -689,6 +659,7 @@ async function createAutomation(accountId, {
       projectName || null,
       includeExisting || false,
       orgUnitOverride || null,
+      targetLocalesOverride ? JSON.stringify(targetLocalesOverride) : null,
     ]
   );
   return automationRowToObject(rows[0]);
@@ -704,9 +675,10 @@ const AUTOMATION_PATCH_COLUMNS = {
   projectName: "project_name",
   includeExisting: "include_existing",
   orgUnitOverride: "org_unit_override",
+  targetLocalesOverride: "target_locales_override",
   checkpoint: "checkpoint",
 };
-const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "cadence", "workflows", "checkpoint"]);
+const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "cadence", "workflows", "checkpoint", "targetLocalesOverride"]);
 
 async function updateAutomation(accountId, id, patch) {
   const keys = Object.keys(patch).filter((k) => AUTOMATION_PATCH_COLUMNS[k]);
@@ -912,8 +884,6 @@ module.exports = {
   getSettings,
   updateSettings,
   isCollectionEnabled,
-  isPageEnabled,
-  isComponentEnabled,
   getFieldExclusions,
   setFieldExclusions,
   updateAutoSyncWebhookState,

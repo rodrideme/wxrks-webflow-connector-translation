@@ -19,18 +19,30 @@ const router = express.Router();
  * any one-time send regardless of size.
  */
 router.post("/item", async (req, res) => {
-  const { collectionId, itemId, itemIds, workflows, projectName } = req.body || {};
+  const {
+    collectionId,
+    itemId,
+    itemIds,
+    workflows,
+    projectName,
+    orgUnitUUID: orgUnitUUIDOverride,
+    targetLocales: targetLocalesOverride,
+  } = req.body || {};
   const ids = itemIds && itemIds.length > 0 ? itemIds : itemId ? [itemId] : [];
 
   const accountId = req.account.id;
   try {
     const {
       sourceLocale,
-      targetLocales,
+      targetLocales: settingsTargetLocales,
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       workUnitNamePattern,
     } = await store.getSettings(accountId);
+    // The wizard's Settings step lets a user pick a different org unit/set of
+    // target locales for this specific send -- honor that instead of always
+    // falling back to the account's stored defaults.
+    const targetLocales = targetLocalesOverride?.length ? targetLocalesOverride : settingsTargetLocales;
 
     if (!collectionId || ids.length === 0) {
       return res.status(400).json({ error: "collectionId and at least one itemId are required" });
@@ -39,7 +51,7 @@ router.post("/item", async (req, res) => {
       return res.status(400).json({ error: "No target locales configured. Set them in Settings first." });
     }
 
-    const orgUnitUUID = settingsOrgUnitUUID || (await wxrks.getOrgUnit());
+    const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const collection = await webflow.getCollection(collectionId);
 
     const project = await wxrks.createProject({

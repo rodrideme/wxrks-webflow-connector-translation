@@ -26,10 +26,10 @@ const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
 
 /**
  * App-level configuration: timezone, the 3 work-unit naming patterns (CMS/
- * Pages/Components), and the 2 automation toggles. Split out from
- * SettingsGeneral (which moved to Templates.jsx along with org unit/locales/
- * collections/pages/components/auto-sync) since these are app-behavior
- * concerns, not "what gets translated" concerns.
+ * Pages/Components), and the 2 automation toggles. Rendered as the
+ * "Account" tab of Settings.jsx, alongside "Translation" (SettingsGeneral --
+ * org unit/locales) and "Collections" (SettingsCollections), since these
+ * are app-behavior concerns, not "what gets translated" concerns.
  */
 export default function SettingsAccount({ settings, markDirty }) {
   return (

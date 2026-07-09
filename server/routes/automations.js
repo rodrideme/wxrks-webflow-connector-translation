@@ -86,12 +86,12 @@ router.get("/", async (req, res) => {
 
 /**
  * POST /api/automations
- * body: { name, contentScope, cadence, workflows?, projectName?, includeExisting?, orgUnitOverride? }
+ * body: { name, contentScope, cadence, workflows?, projectName?, includeExisting?, orgUnitOverride?, targetLocalesOverride? }
  */
 router.post("/", async (req, res) => {
   try {
     const accountId = req.account.id;
-    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
+    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride, targetLocalesOverride } = req.body || {};
     if (!name || !contentScope) {
       return res.status(400).json({ error: "name and contentScope are required" });
     }
@@ -103,6 +103,7 @@ router.post("/", async (req, res) => {
       projectName,
       includeExisting,
       orgUnitOverride,
+      targetLocalesOverride,
     });
 
     // Backfill currently-matching content right away rather than waiting for
@@ -140,12 +141,12 @@ router.post("/", async (req, res) => {
 
 /**
  * PUT /api/automations/:id
- * body: { name?, contentScope?, cadence?, workflows?, projectName?, includeExisting?, orgUnitOverride? }
+ * body: { name?, contentScope?, cadence?, workflows?, projectName?, includeExisting?, orgUnitOverride?, targetLocalesOverride? }
  */
 router.put("/:id", async (req, res) => {
   try {
     const accountId = req.account.id;
-    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
+    const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride, targetLocalesOverride } = req.body || {};
     const patch = {};
     if (name !== undefined) patch.name = name;
     if (contentScope !== undefined) patch.contentScope = contentScope;
@@ -154,6 +155,7 @@ router.put("/:id", async (req, res) => {
     if (projectName !== undefined) patch.projectName = projectName;
     if (includeExisting !== undefined) patch.includeExisting = includeExisting;
     if (orgUnitOverride !== undefined) patch.orgUnitOverride = orgUnitOverride;
+    if (targetLocalesOverride !== undefined) patch.targetLocalesOverride = targetLocalesOverride;
 
     const automation = await store.updateAutomation(accountId, req.params.id, patch);
     if (!automation) return res.status(404).json({ error: "Automation not found" });

@@ -5,7 +5,6 @@ import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Translate from "./pages/Translate.jsx";
 import Runs from "./pages/Runs.jsx";
-import Templates from "./pages/Templates.jsx";
 import Settings from "./pages/Settings.jsx";
 import { useAuth } from "./context/AuthContext.jsx";
 
@@ -35,7 +34,7 @@ export default function App() {
           <Route path="/select-and-send" element={<Navigate to="/translate" replace />} />
           <Route path="/automation" element={<Navigate to="/runs" replace />} />
           <Route path="/logs" element={<Navigate to="/runs" replace />} />
-          <Route path="/templates" element={<Templates />} />
+          <Route path="/templates" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

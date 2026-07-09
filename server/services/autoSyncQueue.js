@@ -225,7 +225,8 @@ async function flush(automationId, { jobId } = {}) {
   }
 
   const settings = await store.getSettings(automation.accountId);
-  const { sourceLocale, targetLocales, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } = settings;
+  const { sourceLocale, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } = settings;
+  const targetLocales = automation.targetLocalesOverride?.length ? automation.targetLocalesOverride : settings.targetLocales;
   if (targetLocales.length === 0) {
     if (jobId) store.updateSyncJob(jobId, { status: "completed" });
     return { itemsSynced: 0 };

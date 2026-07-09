@@ -16,18 +16,26 @@ const router = express.Router();
  * GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
 router.post("/item", async (req, res) => {
-  const { pageId, pageIds, workflows, projectName } = req.body || {};
+  const {
+    pageId,
+    pageIds,
+    workflows,
+    projectName,
+    orgUnitUUID: orgUnitUUIDOverride,
+    targetLocales: targetLocalesOverride,
+  } = req.body || {};
   const ids = pageIds && pageIds.length > 0 ? pageIds : pageId ? [pageId] : [];
 
   const accountId = req.account.id;
   try {
     const {
       sourceLocale,
-      targetLocales,
+      targetLocales: settingsTargetLocales,
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       pagesWorkUnitNamePattern,
     } = await store.getSettings(accountId);
+    const targetLocales = targetLocalesOverride?.length ? targetLocalesOverride : settingsTargetLocales;
 
     if (ids.length === 0) {
       return res.status(400).json({ error: "At least one pageId is required" });
@@ -36,7 +44,7 @@ router.post("/item", async (req, res) => {
       return res.status(400).json({ error: "No target locales configured. Set them in Settings first." });
     }
 
-    const orgUnitUUID = settingsOrgUnitUUID || (await wxrks.getOrgUnit());
+    const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const allPages = await webflow.listStaticPages();
     const pagesById = new Map(allPages.map((p) => [p.id, p]));
 
@@ -154,7 +162,6 @@ router.get("/list", async (req, res) => {
           slug: p.slug,
           folderId: p.parentId || null,
           lastUpdated: p.lastUpdated,
-          enabled: store.isPageEnabled(settings, p.id),
           state,
           localeStatus,
           localeErrors,

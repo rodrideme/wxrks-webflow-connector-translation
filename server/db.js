@@ -75,6 +75,12 @@ async function migrate() {
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS include_existing BOOLEAN NOT NULL DEFAULT false`);
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`);
 
+  // Mirrors org_unit_override: lets an automation pin its own target
+  // locales instead of always following the account's stored default (see
+  // the wizard's Settings step, which now actually sends this instead of
+  // silently discarding whatever the user picked there).
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS target_locales_override JSONB`);
+
   // Multi-user login (Phase 1): one row per connected Webflow site -- the
   // tenancy boundary every other table gets scoped under. IDs are app-
   // generated TEXT (crypto.randomUUID()), matching this file's existing

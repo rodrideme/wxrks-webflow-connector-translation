@@ -15,18 +15,26 @@ const router = express.Router();
  * the shared GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
 router.post("/item", async (req, res) => {
-  const { componentId, componentIds, workflows, projectName } = req.body || {};
+  const {
+    componentId,
+    componentIds,
+    workflows,
+    projectName,
+    orgUnitUUID: orgUnitUUIDOverride,
+    targetLocales: targetLocalesOverride,
+  } = req.body || {};
   const ids = componentIds && componentIds.length > 0 ? componentIds : componentId ? [componentId] : [];
 
   const accountId = req.account.id;
   try {
     const {
       sourceLocale,
-      targetLocales,
+      targetLocales: settingsTargetLocales,
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       componentsWorkUnitNamePattern,
     } = await store.getSettings(accountId);
+    const targetLocales = targetLocalesOverride?.length ? targetLocalesOverride : settingsTargetLocales;
 
     if (ids.length === 0) {
       return res.status(400).json({ error: "At least one componentId is required" });
@@ -35,7 +43,7 @@ router.post("/item", async (req, res) => {
       return res.status(400).json({ error: "No target locales configured. Set them in Settings first." });
     }
 
-    const orgUnitUUID = settingsOrgUnitUUID || (await wxrks.getOrgUnit());
+    const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const allComponents = await webflow.listComponents();
     const componentsById = new Map(allComponents.map((c) => [c.id, c]));
 
@@ -147,7 +155,6 @@ router.get("/list", async (req, res) => {
           id: c.id,
           name: c.name,
           group: c.group,
-          enabled: store.isComponentEnabled(settings, c.id),
           state,
           localeStatus,
           localeErrors,

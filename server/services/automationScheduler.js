@@ -146,13 +146,14 @@ async function startFirstSyncJob(automation) {
 
   const jobId = crypto.randomUUID();
   const orgUnitUUID = automation.orgUnitOverride || settings.orgUnitUUID;
+  const targetLocales = automation.targetLocalesOverride?.length ? automation.targetLocalesOverride : settings.targetLocales;
   store.createSyncJob({
     id: jobId,
     mode: "automation",
     total,
     wxrksProjectUUID: null, // set once flush() creates the project
     orgUnitUUID,
-    targetLocales: settings.targetLocales,
+    targetLocales,
   });
 
   // Fire-and-forget from here -- the route responds with {jobId, total} as

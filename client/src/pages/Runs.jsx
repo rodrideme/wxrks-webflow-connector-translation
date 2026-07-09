@@ -444,6 +444,8 @@ export default function Runs() {
               <span>{cadenceLabel(detailAutomation.cadence)}</span>
               <span className="font-semibold text-ink-faint">Org unit</span>
               <span>{detailAutomation.orgUnitOverride ? orgUnitName(detailAutomation.orgUnitOverride) : "(global default)"}</span>
+              <span className="font-semibold text-ink-faint">Target locales</span>
+              <span>{detailAutomation.targetLocalesOverride?.length ? detailAutomation.targetLocalesOverride.join(", ") : "(global default)"}</span>
               <span className="font-semibold text-ink-faint">Workflow</span>
               <span>{detailAutomation.workflows.join(" → ")}</span>
             </div>
