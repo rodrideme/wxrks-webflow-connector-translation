@@ -14,6 +14,8 @@
  * covered).
  */
 
+const crypto = require("crypto");
+
 const TEXT_NODE_TYPE = "text";
 
 /**
@@ -48,4 +50,17 @@ function buildNodeUpdates(translatedById = {}) {
   return Object.entries(translatedById).map(([nodeId, text]) => ({ nodeId, text }));
 }
 
-module.exports = { extractTextNodes, buildNodeUpdates };
+/**
+ * Content hash of a node list's translatable text, used to detect real
+ * changes for Pages/Components dedup (see automationScheduler.js and
+ * autoSyncQueue.js) instead of trusting a modification timestamp -- Pages'
+ * `lastUpdated` gets bumped by a full "Publish site" action regardless of
+ * whether that page's content changed, and Components carry no modification
+ * timestamp at all.
+ */
+function hashNodes(nodes) {
+  const translatableText = extractTextNodes(nodes);
+  return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
+}
+
+module.exports = { extractTextNodes, buildNodeUpdates, hashNodes };

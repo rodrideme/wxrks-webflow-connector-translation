@@ -11,7 +11,7 @@
 
 const crypto = require("crypto");
 const webflow = require("./webflow");
-const webflowDom = require("./webflowDom");
+const { hashNodes } = require("./webflowDom");
 const store = require("../store");
 const autoSyncQueue = require("./autoSyncQueue");
 const autoSyncReconciliation = require("./autoSyncReconciliation");
@@ -26,11 +26,6 @@ function needsPagesScan(automation) {
 
 function needsComponentsScan(automation) {
   return automation.contentScope.scope === "all" || (automation.contentScope.leaves || []).some((l) => l.kind === "components");
-}
-
-function hashNodes(nodes) {
-  const translatableText = webflowDom.extractTextNodes(nodes);
-  return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
 }
 
 /**
@@ -61,7 +56,7 @@ async function scanAndEnqueuePages(automation, { sourceLocale }) {
       continue;
     }
     if (store.isAutomationPageAlreadySynced(automation, page.id, contentHash)) continue;
-    autoSyncQueue.enqueuePage({ automation, page, nodes, contentHash });
+    autoSyncQueue.enqueuePage({ automation, page });
   }
 }
 
@@ -80,7 +75,7 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
       continue;
     }
     if (store.isAutomationComponentAlreadySynced(automation, component.id, contentHash)) continue;
-    autoSyncQueue.enqueueComponent({ automation, component, nodes, contentHash });
+    autoSyncQueue.enqueueComponent({ automation, component });
   }
 }
 

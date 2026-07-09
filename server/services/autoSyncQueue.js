@@ -17,6 +17,8 @@
 
 const store = require("../store");
 const wxrks = require("../services/wxrks");
+const webflow = require("./webflow");
+const { hashNodes } = require("./webflowDom");
 const { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval } = require("./syncCore");
 
 // Map keyed by `${automationId}:cms:${collectionId}:${itemId}` /
@@ -46,27 +48,27 @@ function enqueue({ automation, collection, item }) {
   });
 }
 
-function enqueuePage({ automation, page, nodes, contentHash }) {
+// `nodes` deliberately not carried into the pending entry -- flush() always
+// re-fetches content fresh right before actually syncing (see flush()'s
+// comment), so holding a full DOM node list in memory here from scan time
+// would just be dead weight (and, worse, a source of staleness bugs).
+function enqueuePage({ automation, page }) {
   const everSynced = Boolean(automation.checkpoint.lastSyncedPageHashes?.[page.id]);
   pending.set(`${automation.id}:page:${page.id}`, {
     automationId: automation.id,
     entityType: "page",
     page,
-    nodes,
-    contentHash,
     trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
 }
 
-function enqueueComponent({ automation, component, nodes, contentHash }) {
+function enqueueComponent({ automation, component }) {
   const everSynced = Boolean(automation.checkpoint.lastSyncedComponentHashes?.[component.id]);
   pending.set(`${automation.id}:component:${component.id}`, {
     automationId: automation.id,
     entityType: "component",
     component,
-    nodes,
-    contentHash,
     trigger: everSynced ? "Edited" : "Created",
     enqueuedAt: new Date().toISOString(),
   });
@@ -251,10 +253,21 @@ async function flush(automationId, { jobId } = {}) {
         }
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.item.id, ...result });
       } else if (entry.entityType === "page") {
+        // Re-fetched fresh here rather than reusing the nodes/hash captured
+        // at scan time -- confirmed live, a page scanned right at the
+        // instant its site_publish webhook fires can still return stale/
+        // incomplete content (Webflow's read API hadn't finished
+        // propagating it yet), which was translating pages as empty right
+        // after they were created. Fetching once, at the last possible
+        // moment right before syncing, and using that exact fetch for both
+        // the translation and the recorded hash keeps them from ever
+        // disagreeing with each other.
+        const nodes = await webflow.getPageDom(entry.page.id, { locale: sourceLocale });
+        const contentHash = hashNodes(nodes);
         const result = await syncPageIntoBatch({
           projectUuid: project.uuid,
           page: entry.page,
-          nodes: entry.nodes,
+          nodes,
           targetLocales,
           namePattern: settings.pagesWorkUnitNamePattern,
           workflows: automation.workflows,
@@ -265,19 +278,21 @@ async function flush(automationId, { jobId } = {}) {
         // would reappear in the pending queue on every future scan forever.
         // If it's later edited to contain real text, the hash will differ
         // from this "empty" one and correctly re-enqueue it.
-        await store.markAutomationPageSynced(automationId, entry.page.id, entry.contentHash);
+        await store.markAutomationPageSynced(automationId, entry.page.id, contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
+        const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
+        const contentHash = hashNodes(nodes);
         const result = await syncComponentIntoBatch({
           projectUuid: project.uuid,
           component: entry.component,
-          nodes: entry.nodes,
+          nodes,
           targetLocales,
           namePattern: settings.componentsWorkUnitNamePattern,
           workflows: automation.workflows,
         });
         if (!result.skipped) itemsSynced += 1;
-        await store.markAutomationComponentSynced(automationId, entry.component.id, entry.contentHash);
+        await store.markAutomationComponentSynced(automationId, entry.component.id, contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.component.id, ...result });
       }
     } catch (err) {
