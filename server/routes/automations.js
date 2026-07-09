@@ -135,6 +135,9 @@ router.post("/", async (req, res) => {
 
     res.json({ ...automation, firstSyncJob });
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });
@@ -251,6 +254,9 @@ router.post("/:id/flush", async (req, res) => {
     await automationScheduler.runAutomationCycle(automation);
     res.json({ flushed: true });
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });
@@ -273,6 +279,9 @@ router.post("/flush-all", async (req, res) => {
     }
     res.json({ flushed: true, itemsSynced });
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });

@@ -160,6 +160,24 @@ async function migrate() {
     )
   `);
 
+  // Per-account wxrks credentials (Phase 3). No refresh-token concept --
+  // wxrks sessions just re-authenticate with the same accessKey/secret when
+  // the cached session token expires. No api_url column either: every
+  // account is assumed to sit on the same shared WXRKS_API_URL platform,
+  // only credentials + org unit (settings.orgUnitUUID) differ per client.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wxrks_connections (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      access_key_ciphertext BYTEA NOT NULL,
+      access_key_iv BYTEA NOT NULL,
+      secret_ciphertext BYTEA NOT NULL,
+      secret_iv BYTEA NOT NULL,
+      connected_by_user_id TEXT REFERENCES users(id),
+      connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      status TEXT NOT NULL DEFAULT 'active'
+    )
+  `);
+
   // Every pre-existing table becomes account-scoped. Nullable for now (not
   // NOT NULL) since existing rows predate accounts entirely --
   // migrateSingleTenantToAccountOne() (index.js) backfills them at startup

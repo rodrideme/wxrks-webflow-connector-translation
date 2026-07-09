@@ -13,6 +13,9 @@ router.get("/org-units", async (req, res) => {
     const orgUnits = await wxrks.listOrgUnits();
     res.json({ orgUnits });
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });
@@ -29,6 +32,9 @@ router.get("/org-units/:uuid/resources", async (req, res) => {
     const resources = await wxrks.getOrgUnitResources(req.params.uuid);
     res.json(resources);
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });

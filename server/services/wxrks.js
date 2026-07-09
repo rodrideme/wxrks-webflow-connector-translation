@@ -4,58 +4,101 @@ const AdmZip = require("adm-zip");
 
 const WXRKS_API_URL = process.env.WXRKS_API_URL || "https://app.wxrks.com/api/v3";
 
-// Cached session token. Re-authenticated lazily when missing/expired.
-let session = {
-  token: null,
-  expiresAt: null,
-};
-
 const client = axios.create({ baseURL: WXRKS_API_URL });
 
-function isTokenValid() {
-  return Boolean(session.token) && (!session.expiresAt || Date.now() < session.expiresAt);
+// Cached session tokens, keyed by accountId -- each account's wxrks
+// credentials are independent, so their tokens can't share one slot
+// (mirrors services/webflow.js's per-account locale caches from Phase 2).
+const sessionsByAccount = new Map();
+
+function isTokenValid(session) {
+  return Boolean(session?.token) && (!session.expiresAt || Date.now() < session.expiresAt);
+}
+
+/**
+ * This account's own wxrks credentials, or the developer's own env-
+ * configured ones if this IS the developer's own (original) account --
+ * every other account with no stored connection gets a WXRKS_NOT_CONNECTED
+ * error instead of silently reusing someone else's credentials (mirrors
+ * services/webflow.js's resolveConnection(), added in Phase 2, but with no
+ * env-var fallback for any account other than the original one).
+ */
+async function resolveConnection() {
+  const accountContext = require("./accountContext");
+  const store = require("../store");
+  const accountId = accountContext.getAccountId();
+
+  const connection = await store.getWxrksConnection(accountId);
+  if (connection) return connection; // { accessKey, secret }
+
+  const account = await store.getAccount(accountId);
+  if (account?.webflowSiteId && account.webflowSiteId === process.env.WEBFLOW_SITE_ID) {
+    // The original account -- same fallback behavior as before per-account
+    // wxrks credentials existed at all.
+    return {
+      accessKey: process.env.WXRKS_ACCESS_KEY,
+      secret: process.env.WXRKS_SECRET,
+      staticToken: process.env.WXRKS_API_TOKEN || null,
+    };
+  }
+
+  const err = new Error("Connect your wxrks account in Settings before using this feature.");
+  err.code = "WXRKS_NOT_CONNECTED";
+  throw err;
 }
 
 /**
  * POST /auth with { accessKey, secret }. wxrks returns the session token as
  * an X-AUTH-TOKEN response header (not in the JSON body).
  */
-async function authenticate() {
-  const { WXRKS_ACCESS_KEY, WXRKS_SECRET } = process.env;
-  if (!WXRKS_ACCESS_KEY || !WXRKS_SECRET) {
-    throw new Error("WXRKS_ACCESS_KEY / WXRKS_SECRET are not configured");
+async function authenticate(accountId, { accessKey, secret }) {
+  if (!accessKey || !secret) {
+    throw new Error("wxrks accessKey/secret are not configured");
   }
 
-  const response = await client.post("/auth", {
-    accessKey: WXRKS_ACCESS_KEY,
-    secret: WXRKS_SECRET,
-  });
+  const response = await client.post("/auth", { accessKey, secret });
 
   const token = response.headers["x-auth-token"];
   if (!token) {
     throw new Error("wxrks auth response did not include an X-AUTH-TOKEN header");
   }
 
-  session = {
+  sessionsByAccount.set(accountId, {
     token,
     // wxrks doesn't document a TTL; default to 50 minutes and rely on the
     // 401/403 retry below to cover early expiry.
     expiresAt: Date.now() + 50 * 60 * 1000,
-  };
+  });
 
-  return session.token;
+  return token;
+}
+
+/**
+ * One-off credential check -- doesn't touch the cached session or require
+ * an established account context, since it's used to validate credentials
+ * a user just typed in, before they're saved anywhere. Returns nothing on
+ * success; lets wxrks's real rejection (e.g. "Invalid credentials") surface
+ * as a thrown error on failure.
+ */
+async function testCredentials(accessKey, secret) {
+  await client.post("/auth", { accessKey, secret });
 }
 
 async function getToken() {
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
+  const connection = await resolveConnection();
+
   // A static token (e.g. copied from an existing session) takes precedence
   // over the accessKey/secret login flow, but can't be auto-refreshed.
-  if (process.env.WXRKS_API_TOKEN) {
-    return process.env.WXRKS_API_TOKEN;
+  // Only ever set for the original account's env-var fallback.
+  if (connection.staticToken) {
+    return connection.staticToken;
   }
-  if (!isTokenValid()) {
-    await authenticate();
+  if (!isTokenValid(sessionsByAccount.get(accountId))) {
+    await authenticate(accountId, connection);
   }
-  return session.token;
+  return sessionsByAccount.get(accountId).token;
 }
 
 /**
@@ -65,6 +108,8 @@ async function getToken() {
  * be refreshed.
  */
 async function request(config) {
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
   const token = await getToken();
   try {
     return await client.request({
@@ -73,8 +118,9 @@ async function request(config) {
     });
   } catch (err) {
     const status = err.response?.status;
-    if ((status === 401 || status === 403) && !process.env.WXRKS_API_TOKEN) {
-      const freshToken = await authenticate();
+    const connection = await resolveConnection();
+    if ((status === 401 || status === 403) && !connection.staticToken) {
+      const freshToken = await authenticate(accountId, connection);
       return client.request({
         ...config,
         headers: { ...(config.headers || {}), "X-AUTH-TOKEN": freshToken },
@@ -416,6 +462,7 @@ async function waitForWorkUnitTranslation(
 module.exports = {
   authenticate,
   getToken,
+  testCredentials,
   getOrgUnit,
   listOrgUnits,
   getOrgUnitDetails,

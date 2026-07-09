@@ -5,13 +5,15 @@
  * loop driving it in this process anyway -- a restart kills that loop
  * regardless of where its progress was recorded.
  *
- * Multi-user login (Phase 1): every persisted table is now scoped by
- * `account_id` (one account = one connected Webflow site). Nearly every
- * function below takes `accountId` as its first argument and filters/writes
- * through it -- this is what makes two different accounts' data fully
- * isolated from each other, even though Webflow/wxrks API credentials
- * themselves are still global env vars for now (Phase 2 concern, see the
- * plan file).
+ * Multi-user login: every persisted table is scoped by `account_id` (one
+ * account = one connected Webflow site). Nearly every function below takes
+ * `accountId` as its first argument and filters/writes through it -- this
+ * is what makes two different accounts' data fully isolated from each
+ * other. Both Webflow (Phase 2) and wxrks (Phase 3) API credentials are
+ * now per-account too (see webflow_connections/wxrks_connections below),
+ * each falling back to the original global env vars only for the one
+ * account that predates the accounts system entirely -- see
+ * services/webflow.js's/wxrks.js's resolveConnection().
  */
 
 const crypto = require("crypto");
@@ -328,11 +330,21 @@ async function getSettings(accountId) {
   // installs.
   if (rows[0]) return mergeSettings(rows[0].value);
 
+  // WXRKS_ORG_UNIT_UUID is the developer's own org unit -- only seed it as
+  // this account's default when it IS the developer's own (original)
+  // account. Any other (new) account starts with no default org unit
+  // instead of silently pointing at an org unit its own wxrks credentials
+  // (once connected) won't have access to -- see services/wxrks.js's
+  // resolveConnection() for the equivalent credential-side scoping.
+  const account = await getAccount(accountId);
+  const isOriginalAccount = account?.webflowSiteId && account.webflowSiteId === process.env.WEBFLOW_SITE_ID;
+  const defaults = isOriginalAccount ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, orgUnitUUID: "" };
+
   await db.query(
     `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'settings', $2) ON CONFLICT (account_id, key) DO NOTHING`,
-    [accountId, JSON.stringify(DEFAULT_SETTINGS)]
+    [accountId, JSON.stringify(defaults)]
   );
-  return DEFAULT_SETTINGS;
+  return defaults;
 }
 
 async function updateSettings(accountId, patch) {
@@ -491,10 +503,12 @@ async function createSession(userId, accountId, expiresAt) {
 async function getSessionWithUserAndAccount(sessionId) {
   const { rows } = await db.query(
     `SELECT s.*, u.webflow_user_id, u.email, u.first_name, u.last_name,
-            a.name AS account_name, a.webflow_site_id, a.status AS account_status
+            a.name AS account_name, a.webflow_site_id, a.status AS account_status,
+            (wc.account_id IS NOT NULL) AS has_wxrks_connection
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      JOIN accounts a ON a.id = s.account_id
+     LEFT JOIN wxrks_connections wc ON wc.account_id = a.id AND wc.status = 'active'
      WHERE s.id = $1`,
     [sessionId]
   );
@@ -504,10 +518,23 @@ async function getSessionWithUserAndAccount(sessionId) {
     await deleteSession(sessionId);
     return undefined;
   }
+  // Only the developer's own original account (identified the same way
+  // migrateSingleTenantToAccountOne() creates it) may fall back to the
+  // shared env-var wxrks credentials -- every other account must connect
+  // its own, surfaced here so the frontend can gate wxrks-dependent
+  // actions without a live wxrks call (see services/wxrks.js's
+  // resolveConnection() for the matching server-side check).
+  const isOriginalAccount = row.webflow_site_id && row.webflow_site_id === process.env.WEBFLOW_SITE_ID;
   return {
     sessionId: row.id,
     user: { id: row.user_id, webflowUserId: row.webflow_user_id, email: row.email, firstName: row.first_name, lastName: row.last_name },
-    account: { id: row.account_id, name: row.account_name, webflowSiteId: row.webflow_site_id, status: row.account_status },
+    account: {
+      id: row.account_id,
+      name: row.account_name,
+      webflowSiteId: row.webflow_site_id,
+      status: row.account_status,
+      wxrksConnected: row.has_wxrks_connection || isOriginalAccount,
+    },
   };
 }
 
@@ -552,6 +579,52 @@ async function getWebflowConnection(accountId) {
   const tokenCrypto = require("./services/tokenCrypto");
   const accessToken = tokenCrypto.decrypt(rows[0].access_token_ciphertext, rows[0].access_token_iv);
   return { accessToken, webflowSiteId: rows[0].webflow_site_id };
+}
+
+// ---------------------------------------------------------------------------
+// wxrks credentials (Phase 3: consumed by services/wxrks.js's
+// resolveConnection() for real per-account API access). No OAuth flow here
+// -- these are entered manually via the Settings UI, so there's no login-
+// time callback to populate this table automatically the way
+// webflow_connections gets populated; see routes/settings.js's PUT/DELETE
+// /wxrks-connection.
+
+async function upsertWxrksConnection(accountId, { accessKey, secret, connectedByUserId }) {
+  const tokenCrypto = require("./services/tokenCrypto");
+  const { ciphertext: accessKeyCiphertext, iv: accessKeyIv } = tokenCrypto.encrypt(accessKey);
+  const { ciphertext: secretCiphertext, iv: secretIv } = tokenCrypto.encrypt(secret);
+  await db.query(
+    `INSERT INTO wxrks_connections
+       (account_id, access_key_ciphertext, access_key_iv, secret_ciphertext, secret_iv, connected_by_user_id, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'active')
+     ON CONFLICT (account_id) DO UPDATE SET
+       access_key_ciphertext = $2, access_key_iv = $3, secret_ciphertext = $4, secret_iv = $5,
+       connected_by_user_id = $6, status = 'active', connected_at = now()`,
+    [accountId, accessKeyCiphertext, accessKeyIv, secretCiphertext, secretIv, connectedByUserId]
+  );
+}
+
+/**
+ * Decrypted { accessKey, secret } for this account's own wxrks credentials,
+ * or `undefined` if it's never connected any -- see services/wxrks.js's
+ * resolveConnection(), which falls back to the static env-configured
+ * credentials only for the one account that predates the accounts system
+ * (checked via webflowSiteId === process.env.WEBFLOW_SITE_ID), and throws
+ * for every other unconnected account instead of silently reusing them.
+ */
+async function getWxrksConnection(accountId) {
+  const { rows } = await db.query(`SELECT * FROM wxrks_connections WHERE account_id = $1 AND status = 'active'`, [
+    accountId,
+  ]);
+  if (!rows[0]) return undefined;
+  const tokenCrypto = require("./services/tokenCrypto");
+  const accessKey = tokenCrypto.decrypt(rows[0].access_key_ciphertext, rows[0].access_key_iv);
+  const secret = tokenCrypto.decrypt(rows[0].secret_ciphertext, rows[0].secret_iv);
+  return { accessKey, secret };
+}
+
+async function deleteWxrksConnection(accountId) {
+  await db.query(`DELETE FROM wxrks_connections WHERE account_id = $1`, [accountId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +962,9 @@ module.exports = {
   deleteSession,
   upsertWebflowConnection,
   getWebflowConnection,
+  upsertWxrksConnection,
+  getWxrksConnection,
+  deleteWxrksConnection,
   listAutomations,
   getAutomation,
   getAutomationByIdUnscoped,

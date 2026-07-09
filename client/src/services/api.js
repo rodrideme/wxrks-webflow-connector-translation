@@ -41,7 +41,9 @@ async function request(path, options = {}) {
       // call just silently erroring. Not fired for /auth/me itself, which
       // reports "logged out" via a 200 with null fields, never a 401.
       if (res.status === 401) api.onUnauthorized?.();
-      throw new Error(data.error || `Request failed: ${res.status}`);
+      const err = new Error(data.error || `Request failed: ${res.status}`);
+      if (data.code) err.code = data.code;
+      throw err;
     }
     return data;
   }
@@ -74,6 +76,9 @@ const api = {
       body: JSON.stringify({ excludedFields }),
     }),
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
+  saveWxrksConnection: (accessKey, secret) =>
+    request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }),
+  deleteWxrksConnection: () => request("/settings/wxrks-connection", { method: "DELETE" }),
   getPages: () => request("/sync/pages/list"),
   getPageFolders: () => request("/sync/pages/folders"),
   syncPagesItem: (pageIds, options = {}) =>

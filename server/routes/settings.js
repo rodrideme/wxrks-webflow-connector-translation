@@ -1,5 +1,6 @@
 const express = require("express");
 const store = require("../store");
+const wxrks = require("../services/wxrks");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
 
 const router = express.Router();
@@ -17,8 +18,13 @@ function mask(value) {
 router.get("/", async (req, res) => {
   try {
     const settings = await store.getSettings(req.account.id);
+    const account = await store.getAccount(req.account.id);
+    const wxrksConnection = await store.getWxrksConnection(req.account.id);
+    const isOriginalAccount = account?.webflowSiteId && account.webflowSiteId === process.env.WEBFLOW_SITE_ID;
     res.json({
       ...settings,
+      wxrksConnected: Boolean(wxrksConnection) || isOriginalAccount,
+      wxrksAccessKeyMasked: wxrksConnection ? mask(wxrksConnection.accessKey) : isOriginalAccount ? mask(process.env.WXRKS_ACCESS_KEY) : "",
       env: {
         WEBFLOW_SITE_ID: process.env.WEBFLOW_SITE_ID || "",
         WEBFLOW_API_TOKEN: mask(process.env.WEBFLOW_API_TOKEN),
@@ -72,6 +78,44 @@ router.put("/", async (req, res) => {
   try {
     await store.updateSettings(req.account.id, patch);
     res.json(await store.getSettings(req.account.id));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * PUT /api/settings/wxrks-connection
+ * body: { accessKey, secret }
+ * Validates the credentials against wxrks's real /auth endpoint before
+ * ever storing them -- an invalid accessKey/secret pair should never be
+ * silently saved, only to fail confusingly on the next real send.
+ */
+router.put("/wxrks-connection", async (req, res) => {
+  const { accessKey, secret } = req.body || {};
+  if (!accessKey || !secret) {
+    return res.status(400).json({ error: "accessKey and secret are required" });
+  }
+  try {
+    await wxrks.testCredentials(accessKey, secret);
+  } catch (err) {
+    return res.status(400).json({ error: err.response?.data?.message || err.message || "Invalid wxrks credentials" });
+  }
+  try {
+    await store.upsertWxrksConnection(req.account.id, { accessKey, secret, connectedByUserId: req.user.id });
+    res.json({ connected: true, accessKeyMasked: mask(accessKey) });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/settings/wxrks-connection
+ * Disconnects this account's own wxrks credentials.
+ */
+router.delete("/wxrks-connection", async (req, res) => {
+  try {
+    await store.deleteWxrksConnection(req.account.id);
+    res.json({ connected: false });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

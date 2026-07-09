@@ -113,6 +113,9 @@ router.post("/item", async (req, res) => {
       store.updateSyncJob(jobId, { status: "error", error: err.message });
     });
   } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
     res.status(502).json({ error: err.message });
   }
 });

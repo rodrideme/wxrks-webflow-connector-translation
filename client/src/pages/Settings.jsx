@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../services/api.js";
 import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
+import SettingsWxrks from "./settings/SettingsWxrks.jsx";
 
 /**
  * App-level configuration: timezone, naming patterns, automation toggles,
@@ -21,8 +22,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    Promise.all([api.getSettings(), api.getWebflowLocales().catch(() => null)])
+  function loadSettings() {
+    return Promise.all([api.getSettings(), api.getWebflowLocales().catch(() => null)])
       .then(([settingsRes, localesRes]) => {
         setWebflowLocales(localesRes);
 
@@ -33,6 +34,10 @@ export default function Settings() {
         setSettings(next);
       })
       .catch((err) => setError(err.message));
+  }
+
+  useEffect(() => {
+    loadSettings();
   }, []);
 
   function markDirty(patch) {
@@ -70,6 +75,14 @@ export default function Settings() {
 
       <div className="max-w-2xl">
         <SettingsAccount settings={settings} markDirty={markDirty} webflowLocales={webflowLocales} />
+
+        <div className="mt-8">
+          <SettingsWxrks
+            wxrksConnected={settings.wxrksConnected}
+            wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked}
+            onChange={loadSettings}
+          />
+        </div>
 
         {error && <p className="mt-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
         {saved && <p className="mt-4 text-sm font-medium text-status-success-fg">Settings saved.</p>}

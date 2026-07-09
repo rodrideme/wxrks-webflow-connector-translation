@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import Modal from "./Modal.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const inputClass =
   "w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
@@ -55,6 +57,8 @@ const WORKFLOW_ORDER = Object.keys(WORKFLOW_LABELS);
  * builds from the current selection.
  */
 export default function SendToWxrksModal({ open, onClose, scope, selection, allSummary, ruleBased, onJobsStarted, onRecurringCreated }) {
+  const { account } = useAuth();
+  const wxrksConnected = account?.wxrksConnected;
   const [settings, setSettings] = useState(null);
   const [orgUnits, setOrgUnits] = useState([]);
   const [webflowLocales, setWebflowLocales] = useState(null);
@@ -82,6 +86,13 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
 
   useEffect(() => {
     if (!open) return;
+    if (!wxrksConnected) {
+      // Nothing to fetch or submit without wxrks credentials -- the render
+      // below shows a "connect first" message instead of the picker.
+      setStep(0);
+      setError(null);
+      return;
+    }
     api.getSettings().then((s) => {
       setSettings(s);
       setOrgUnitUUID(s.orgUnitUUID || "");
@@ -222,7 +233,23 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     }
   }
 
-  if (!settings) return open ? <Modal open={open} onClose={onClose} title="Send for translation"><p className="text-sm text-ink-faint">Loading…</p></Modal> : null;
+  if (!open) return null;
+
+  if (!wxrksConnected) {
+    return (
+      <Modal open={open} onClose={onClose} title="Send for translation">
+        <p className="text-sm text-ink-soft">
+          This account hasn't connected a wxrks account yet. Connect one in{" "}
+          <Link to="/settings" onClick={onClose} className="font-medium text-accent-text hover:underline">
+            Settings
+          </Link>{" "}
+          before sending content for translation.
+        </p>
+      </Modal>
+    );
+  }
+
+  if (!settings) return <Modal open={open} onClose={onClose} title="Send for translation"><p className="text-sm text-ink-faint">Loading…</p></Modal>;
 
   return (
     <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-4xl">
