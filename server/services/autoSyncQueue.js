@@ -250,6 +250,23 @@ async function flush(automationId, { jobId } = {}) {
   });
   if (jobId) store.updateSyncJob(jobId, { wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 
+  // Accumulated locally and written to the automation's checkpoint ONCE at
+  // the end (below), instead of once per item -- markAutomationItemSynced/
+  // markAutomationPageSynced/markAutomationComponentSynced each do a
+  // read-merge-write against this same in-memory `automation.checkpoint`
+  // snapshot, which never gets updated mid-loop. Calling any of them more
+  // than once per flush (the normal case whenever a batch has more than one
+  // item) meant every write fully overwrote the checkpoint column, silently
+  // discarding every earlier item's hash/timestamp from the same batch --
+  // only the last one processed ever actually persisted, causing already-
+  // delivered items to look "changed" again and get needlessly re-synced on
+  // the next cycle. Mirrors the identical fix in automationScheduler.js's
+  // scan functions.
+  const lastSyncedAt = { ...automation.checkpoint.lastSyncedAt };
+  const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes };
+  const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };
+  let checkpointChanged = false;
+
   let itemsSynced = 0;
   for (const [, entry] of batch) {
     if (jobId && store.getSyncJob(jobId)?.cancelled) break;
@@ -267,7 +284,8 @@ async function flush(automationId, { jobId } = {}) {
         });
         if (!result.skipped) {
           itemsSynced += 1;
-          await store.markAutomationItemSynced(automation, entry.collection.id, entry.item.id, entry.item.lastPublished);
+          lastSyncedAt[entry.collection.id] = { ...lastSyncedAt[entry.collection.id], [entry.item.id]: entry.item.lastPublished };
+          checkpointChanged = true;
         }
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.item.id, ...result });
       } else if (entry.entityType === "page") {
@@ -296,7 +314,8 @@ async function flush(automationId, { jobId } = {}) {
         // would reappear in the pending queue on every future scan forever.
         // If it's later edited to contain real text, the hash will differ
         // from this "empty" one and correctly re-enqueue it.
-        await store.markAutomationPageSynced(automation, entry.page.id, contentHash);
+        lastSyncedPageHashes[entry.page.id] = contentHash;
+        checkpointChanged = true;
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
         const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
@@ -310,7 +329,8 @@ async function flush(automationId, { jobId } = {}) {
           workflows: automation.workflows,
         });
         if (!result.skipped) itemsSynced += 1;
-        await store.markAutomationComponentSynced(automation, entry.component.id, contentHash);
+        lastSyncedComponentHashes[entry.component.id] = contentHash;
+        checkpointChanged = true;
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.component.id, ...result });
       }
     } catch (err) {
@@ -320,6 +340,12 @@ async function flush(automationId, { jobId } = {}) {
       // their checkpoint/hash was never advanced for this entry.
       if (jobId) store.appendSyncJobResult(jobId, { error: err.message });
     }
+  }
+
+  if (checkpointChanged) {
+    await store.updateAutomation(automation.accountId, automation.id, {
+      checkpoint: { ...automation.checkpoint, lastSyncedAt, lastSyncedPageHashes, lastSyncedComponentHashes },
+    });
   }
 
   await store.setLastSync(automation.accountId, {

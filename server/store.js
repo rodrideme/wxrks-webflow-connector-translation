@@ -801,46 +801,6 @@ function isAutomationItemAlreadySynced(automation, collectionId, itemId, lastPub
   return new Date(lastPublishedIso) <= new Date(lastSyncedAt);
 }
 
-// The functions below all take the full `automation` object (not a bare id)
-// since every real caller already has it in scope by the time it needs to
-// mark something synced -- that also gives us `automation.accountId` for
-// free instead of threading a second id through every call site.
-async function markAutomationItemSynced(automation, collectionId, itemId, lastPublishedIso) {
-  const lastSyncedAt = {
-    ...automation.checkpoint.lastSyncedAt,
-    [collectionId]: { ...(automation.checkpoint.lastSyncedAt?.[collectionId] || {}), [itemId]: lastPublishedIso },
-  };
-  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedAt } });
-}
-
-// Content-hash based, like Components below -- NOT a lastUpdated timestamp
-// comparison. Confirmed live: a full "Publish site" action in Webflow bumps
-// every page's lastUpdated regardless of whether that specific page's
-// translatable content actually changed, which was flooding the pending
-// queue with the entire site after any full-site publish. Hashing what's
-// actually translatable is immune to that.
-function isAutomationPageAlreadySynced(automation, pageId, contentHash) {
-  const lastHash = automation.checkpoint.lastSyncedPageHashes?.[pageId];
-  return lastHash === contentHash;
-}
-
-async function markAutomationPageSynced(automation, pageId, contentHash) {
-  const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes, [pageId]: contentHash };
-  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedPageHashes } });
-}
-
-// Components carry no modification timestamp at all (confirmed live against
-// the real Webflow API), so dedup compares a content hash instead of a date.
-function isAutomationComponentAlreadySynced(automation, componentId, contentHash) {
-  const lastHash = automation.checkpoint.lastSyncedComponentHashes?.[componentId];
-  return lastHash === contentHash;
-}
-
-async function markAutomationComponentSynced(automation, componentId, contentHash) {
-  const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes, [componentId]: contentHash };
-  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedComponentHashes } });
-}
-
 async function advanceAutomationCheckpoint(automation, isoTimestamp) {
   await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastCheckpoint: isoTimestamp } });
 }
@@ -973,11 +933,6 @@ module.exports = {
   deleteAutomation,
   isAutomationContentQualified,
   isAutomationItemAlreadySynced,
-  markAutomationItemSynced,
-  isAutomationPageAlreadySynced,
-  markAutomationPageSynced,
-  isAutomationComponentAlreadySynced,
-  markAutomationComponentSynced,
   advanceAutomationCheckpoint,
   setLastSync,
   getLastSync,
