@@ -52,7 +52,7 @@ async function scanAndEnqueuePages(automation, { sourceLocale }) {
     const nodes = await webflow.getPageDom(page.id, { locale: sourceLocale });
     const contentHash = hashNodes(nodes);
     if (!everSeen && !automation.includeExisting) {
-      await store.markAutomationPageSynced(automation.id, page.id, contentHash);
+      await store.markAutomationPageSynced(automation, page.id, contentHash);
       continue;
     }
     if (store.isAutomationPageAlreadySynced(automation, page.id, contentHash)) continue;
@@ -71,7 +71,7 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
     const nodes = await webflow.getComponentDom(component.id, { locale: sourceLocale });
     const contentHash = hashNodes(nodes);
     if (!everSeen && !automation.includeExisting) {
-      await store.markAutomationComponentSynced(automation.id, component.id, contentHash);
+      await store.markAutomationComponentSynced(automation, component.id, contentHash);
       continue;
     }
     if (store.isAutomationComponentAlreadySynced(automation, component.id, contentHash)) continue;
@@ -80,7 +80,7 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
 }
 
 async function runAutomationCycle(automation) {
-  const settings = await store.getSettings();
+  const settings = await store.getSettings(automation.accountId);
   const scanCutoff = new Date(); // captured before scanning -- anything changed mid-scan is picked up next cycle
 
   if (needsPagesScan(automation)) {
@@ -91,7 +91,7 @@ async function runAutomationCycle(automation) {
   }
 
   await autoSyncQueue.flush(automation.id);
-  await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
+  await store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString());
 }
 
 /**
@@ -121,7 +121,7 @@ async function runAutomationCycle(automation) {
  *      if nothing currently matches (nothing to show progress for).
  */
 async function scanForFirstSync(automation) {
-  const settings = await store.getSettings();
+  const settings = await store.getSettings(automation.accountId);
   const allCollections = await webflow.listCollections();
   await autoSyncReconciliation.reconcileAutomation(automation, allCollections);
 
@@ -140,7 +140,7 @@ async function startFirstSyncJob(automation) {
 
   const total = autoSyncQueue.pendingCount(automation.id);
   if (total === 0) {
-    await store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString());
+    await store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString());
     return null;
   }
 
@@ -160,28 +160,29 @@ async function startFirstSyncJob(automation) {
   // advancing the checkpoint once done) continues after.
   autoSyncQueue
     .flush(automation.id, { jobId })
-    .then(() => store.advanceAutomationCheckpoint(automation.id, scanCutoff.toISOString()))
+    .then(() => store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString()))
     .catch((err) => console.error(`Automation "${automation.name}" first-run flush failed:`, err.message));
 
   return { jobId, total };
 }
 
 /**
- * Fired from the site_publish webhook (routes/webhooks.js) -- scans every
- * enabled, non-archived automation that needs Pages/Components and enqueues
- * anything new/changed, WITHOUT flushing or advancing its checkpoint. This
- * mirrors the CMS live webhook's own behavior (enqueue only; sending to
- * wxrks still waits for the automation's own cadence tick or a manual
- * flush) -- Pages/Components previously only got scanned at all on that
- * same cadence tick, so a page/component published between ticks wouldn't
- * even show up in the pending queue until the next one (up to a day away
- * for a daily schedule). Safe to call as often as publishes arrive: both
- * scan functions enqueue idempotently (autoSyncQueue's map overwrites by
- * key) and skip anything already synced.
+ * Fired from the site_publish webhook (routes/webhooks.js's account-scoped
+ * webhook URL identifies which account this is for) -- scans every enabled,
+ * non-archived automation *in that account* that needs Pages/Components and
+ * enqueues anything new/changed, WITHOUT flushing or advancing its
+ * checkpoint. This mirrors the CMS live webhook's own behavior (enqueue
+ * only; sending to wxrks still waits for the automation's own cadence tick
+ * or a manual flush) -- Pages/Components previously only got scanned at all
+ * on that same cadence tick, so a page/component published between ticks
+ * wouldn't even show up in the pending queue until the next one (up to a
+ * day away for a daily schedule). Safe to call as often as publishes
+ * arrive: both scan functions enqueue idempotently (autoSyncQueue's map
+ * overwrites by key) and skip anything already synced.
  */
-async function scanAndEnqueueForPublishEvent() {
-  const settings = await store.getSettings();
-  const automations = await store.listAutomations();
+async function scanAndEnqueueForPublishEvent(accountId) {
+  const settings = await store.getSettings(accountId);
+  const automations = await store.listAutomations(accountId);
   const relevant = automations.filter((a) => a.enabled && !a.archived && (needsPagesScan(a) || needsComponentsScan(a)));
 
   for (const automation of relevant) {

@@ -9,27 +9,38 @@ const TRIGGER_TYPE = "collection_item_published";
 // instead of waiting for their own cadence tick (see routes/webhooks.js and
 // automationScheduler.scanAndEnqueueForPublishEvent).
 const PAGES_TRIGGER_TYPE = "site_publish";
-const WEBHOOK_PATH = "/api/webhooks/webflow";
+
+// Multi-user login (Phase 1): each account registers its own pair of
+// webhooks at its own URL (encoding the account id in the path), the same
+// pattern Stripe Connect/GitHub Apps use -- this is what lets
+// routes/webhooks.js resolve an inbound delivery to the right account
+// (and, for site_publish, is the *only* way to resolve it, since that
+// payload carries no account-identifying field at all).
+function webhookUrl(accountId, triggerType) {
+  const appBaseUrl = process.env.APP_BASE_URL;
+  if (!appBaseUrl) return null;
+  const suffix = triggerType === PAGES_TRIGGER_TYPE ? "site-publish" : "cms-item-published";
+  return `${appBaseUrl.replace(/\/$/, "")}/api/webhooks/webflow/${accountId}/${suffix}`;
+}
 
 /**
- * Registers (or confirms already-registered) one webhook, generic over
- * trigger type/settings-state so the CMS (`collection_item_published`) and
- * Pages/Components (`site_publish`) registrations -- two independent Webflow
- * webhook registrations, each with its own secretKey -- share one
- * implementation. Lists existing webhooks first to avoid leaking duplicate
- * registrations across repeated create/delete/pause/resume calls (Webflow
- * caps registrations at 75 per trigger type per site).
+ * Registers (or confirms already-registered) one account's webhook, generic
+ * over trigger type/settings-state so the CMS (`collection_item_published`)
+ * and Pages/Components (`site_publish`) registrations -- two independent
+ * Webflow webhook registrations per account, each with its own secretKey --
+ * share one implementation. Lists existing webhooks first to avoid leaking
+ * duplicate registrations across repeated create/delete/pause/resume calls
+ * (Webflow caps registrations at 75 per trigger type per site).
  */
-async function ensureRegistered(triggerType, updateState) {
-  const appBaseUrl = process.env.APP_BASE_URL;
-  if (!appBaseUrl) {
+async function ensureRegistered(accountId, triggerType, updateState) {
+  const url = webhookUrl(accountId, triggerType);
+  if (!url) {
     await updateState({
       status: "error",
       lastError: "APP_BASE_URL is not configured -- cannot register a Webflow webhook without a public URL",
     });
     throw new Error("APP_BASE_URL is not configured");
   }
-  const url = `${appBaseUrl.replace(/\/$/, "")}${WEBHOOK_PATH}`;
 
   const existing = await webflow.listWebhooks();
   const alreadyRegistered = existing.find((h) => h.triggerType === triggerType && h.url === url);
@@ -72,22 +83,22 @@ async function teardown(webflowWebhookId, updateState) {
   await updateState({ webflowWebhookId: null, signingSecret: null, registeredAt: null, status: "not_registered", lastError: null });
 }
 
-async function ensureWebhookRegistered() {
-  return ensureRegistered(TRIGGER_TYPE, (patch) => store.updateAutoSyncWebhookState(patch));
+async function ensureWebhookRegistered(accountId) {
+  return ensureRegistered(accountId, TRIGGER_TYPE, (patch) => store.updateAutoSyncWebhookState(accountId, patch));
 }
 
-async function teardownWebhook() {
-  const settings = await store.getSettings();
-  return teardown(settings.autoSyncWebhook.webflowWebhookId, (patch) => store.updateAutoSyncWebhookState(patch));
+async function teardownWebhook(accountId) {
+  const settings = await store.getSettings(accountId);
+  return teardown(settings.autoSyncWebhook.webflowWebhookId, (patch) => store.updateAutoSyncWebhookState(accountId, patch));
 }
 
-async function ensurePagesWebhookRegistered() {
-  return ensureRegistered(PAGES_TRIGGER_TYPE, (patch) => store.updateSitePublishWebhookState(patch));
+async function ensurePagesWebhookRegistered(accountId) {
+  return ensureRegistered(accountId, PAGES_TRIGGER_TYPE, (patch) => store.updateSitePublishWebhookState(accountId, patch));
 }
 
-async function teardownPagesWebhook() {
-  const settings = await store.getSettings();
-  return teardown(settings.sitePublishWebhook.webflowWebhookId, (patch) => store.updateSitePublishWebhookState(patch));
+async function teardownPagesWebhook(accountId) {
+  const settings = await store.getSettings(accountId);
+  return teardown(settings.sitePublishWebhook.webflowWebhookId, (patch) => store.updateSitePublishWebhookState(accountId, patch));
 }
 
 /**

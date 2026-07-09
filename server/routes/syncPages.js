@@ -19,6 +19,7 @@ router.post("/item", async (req, res) => {
   const { pageId, pageIds, workflows, projectName } = req.body || {};
   const ids = pageIds && pageIds.length > 0 ? pageIds : pageId ? [pageId] : [];
 
+  const accountId = req.account.id;
   try {
     const {
       sourceLocale,
@@ -26,7 +27,7 @@ router.post("/item", async (req, res) => {
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       pagesWorkUnitNamePattern,
-    } = await store.getSettings();
+    } = await store.getSettings(accountId);
 
     if (ids.length === 0) {
       return res.status(400).json({ error: "At least one pageId is required" });
@@ -44,7 +45,7 @@ router.post("/item", async (req, res) => {
       sourceLocale,
       orgUnitUUID,
     });
-    await store.createProjectMapping(project.uuid, {
+    await store.createProjectMapping(accountId, project.uuid, {
       mode: "pages-item",
       sourceLocale,
       targetLocales,
@@ -94,7 +95,7 @@ router.post("/item", async (req, res) => {
         targetLocales,
       };
       store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
-      await store.setLastSync({ mode: "pages-item", summary });
+      await store.setLastSync(accountId, { mode: "pages-item", summary });
 
       if (autoApprove && itemsSynced > 0) {
         requestBatchApproval(project.uuid);
@@ -122,9 +123,9 @@ router.post("/item", async (req, res) => {
 router.get("/list", async (req, res) => {
   try {
     const [settings, pages, deliveryStatus] = await Promise.all([
-      store.getSettings(),
+      store.getSettings(req.account.id),
       webflow.listStaticPages(),
-      store.getDeliveryStatusByEntity("webflowPageId"),
+      store.getDeliveryStatusByEntity(req.account.id, "webflowPageId"),
     ]);
     res.json({
       pages: pages.map((p) => {

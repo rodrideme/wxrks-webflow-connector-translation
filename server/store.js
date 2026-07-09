@@ -4,6 +4,14 @@
  * stays in-memory: it's only meaningful for the lifetime of the background
  * loop driving it in this process anyway -- a restart kills that loop
  * regardless of where its progress was recorded.
+ *
+ * Multi-user login (Phase 1): every persisted table is now scoped by
+ * `account_id` (one account = one connected Webflow site). Nearly every
+ * function below takes `accountId` as its first argument and filters/writes
+ * through it -- this is what makes two different accounts' data fully
+ * isolated from each other, even though Webflow/wxrks API credentials
+ * themselves are still global env vars for now (Phase 2 concern, see the
+ * plan file).
  */
 
 const crypto = require("crypto");
@@ -96,6 +104,7 @@ const syncJobs = new Map();
 function mappingRowToObject(row) {
   return {
     wxrksProjectUUID: row.wxrks_project_uuid,
+    accountId: row.account_id,
     mode: row.mode,
     sourceLocale: row.source_locale,
     targetLocales: row.target_locales,
@@ -116,15 +125,16 @@ function mappingRowToObject(row) {
   };
 }
 
-async function createProjectMapping(wxrksProjectUUID, mapping) {
+async function createProjectMapping(accountId, wxrksProjectUUID, mapping) {
   const { rows } = await db.query(
     `INSERT INTO project_mappings
-       (wxrks_project_uuid, mode, source_locale, target_locales, org_unit_uuid,
+       (wxrks_project_uuid, account_id, mode, source_locale, target_locales, org_unit_uuid,
         work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING *`,
     [
       wxrksProjectUUID,
+      accountId,
       mapping.mode || "item",
       mapping.sourceLocale,
       JSON.stringify(mapping.targetLocales || []),
@@ -145,6 +155,13 @@ async function createProjectMapping(wxrksProjectUUID, mapping) {
  * tracks its collection in `collectionIds`. Used to build up the mapping
  * incrementally as a bulk/batch sync processes each item, so a mid-run
  * cancellation still leaves an accurate record of what was actually synced.
+ *
+ * `wxrks_project_uuid` is already globally unique (assigned by wxrks
+ * itself), so no accountId is needed to find the row -- but every caller
+ * that has one in scope should still pass it for defense-in-depth (the
+ * wxrks webhook handler is the one legitimate exception: it doesn't know
+ * the account in advance and reads it *from* the fetched row instead, see
+ * routes/webhooks.js).
  */
 async function addItemToProjectMapping(
   wxrksProjectUUID,
@@ -205,6 +222,9 @@ async function addWebflowUpdateToProjectMapping(wxrksProjectUUID, update) {
   });
 }
 
+// Keyed by the globally-unique wxrks_project_uuid -- no accountId needed to
+// find the row (see the wxrks webhook handler, which doesn't know the
+// account in advance and reads `accountId` off the returned object instead).
 async function getProjectMapping(wxrksProjectUUID) {
   const { rows } = await db.query(`SELECT * FROM project_mappings WHERE wxrks_project_uuid = $1`, [
     wxrksProjectUUID,
@@ -236,14 +256,17 @@ async function updateProjectMapping(wxrksProjectUUID, patch) {
   return rows[0] ? mappingRowToObject(rows[0]) : undefined;
 }
 
-async function listProjectMappings() {
-  const { rows } = await db.query(`SELECT * FROM project_mappings ORDER BY created_at DESC`);
+async function listProjectMappings(accountId) {
+  const { rows } = await db.query(`SELECT * FROM project_mappings WHERE account_id = $1 ORDER BY created_at DESC`, [
+    accountId,
+  ]);
   return rows.map(mappingRowToObject);
 }
 
-async function listActiveProjects() {
+async function listActiveProjects(accountId) {
   const { rows } = await db.query(
-    `SELECT * FROM project_mappings WHERE status = 'in_progress' ORDER BY created_at DESC`
+    `SELECT * FROM project_mappings WHERE account_id = $1 AND status = 'in_progress' ORDER BY created_at DESC`,
+    [accountId]
   );
   return rows.map(mappingRowToObject);
 }
@@ -258,8 +281,8 @@ async function listActiveProjects() {
  * since an earlier failure followed by a later success should read as
  * synced, not failed.
  */
-async function getDeliveryStatusByEntity(idField) {
-  const mappings = await listProjectMappings();
+async function getDeliveryStatusByEntity(accountId, idField) {
+  const mappings = await listProjectMappings(accountId);
   const statusMap = {};
   for (const mapping of mappings) {
     for (const update of mapping.updates || []) {
@@ -320,26 +343,33 @@ function mergeSettings(stored) {
   return merged;
 }
 
-async function getSettings() {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'settings'`);
+// app_state's PK is (account_id, key) -- one 'settings'/'lastSync'/
+// 'debugWebhookHistory' row per account, not one globally. See
+// migrateSingleTenantToAccountOne() in index.js for how existing
+// installs' single global row set became "Account #1"'s rows.
+async function getSettings(accountId) {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'settings'`, [
+    accountId,
+  ]);
   // Merge over defaults so a settings field added after a row was first
   // written (e.g. allCollectionsEnabled) still gets a sane value instead of
   // undefined for existing installs.
   if (rows[0]) return mergeSettings(rows[0].value);
 
-  await db.query(`INSERT INTO app_state (key, value) VALUES ('settings', $1) ON CONFLICT (key) DO NOTHING`, [
-    JSON.stringify(DEFAULT_SETTINGS),
-  ]);
+  await db.query(
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'settings', $2) ON CONFLICT (account_id, key) DO NOTHING`,
+    [accountId, JSON.stringify(DEFAULT_SETTINGS)]
+  );
   return DEFAULT_SETTINGS;
 }
 
-async function updateSettings(patch) {
-  const current = await getSettings();
+async function updateSettings(accountId, patch) {
+  const current = await getSettings(accountId);
   const updated = { ...current, ...patch };
   await db.query(
-    `INSERT INTO app_state (key, value) VALUES ('settings', $1)
-     ON CONFLICT (key) DO UPDATE SET value = $1`,
-    [JSON.stringify(updated)]
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'settings', $2)
+     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
+    [accountId, JSON.stringify(updated)]
   );
   return updated;
 }
@@ -360,15 +390,15 @@ function isComponentEnabled(settings, componentId) {
   return settings.components.allComponentsEnabled || settings.components.enabledComponentIds.includes(componentId);
 }
 
-async function getFieldExclusions(collectionId) {
-  const settings = await getSettings();
+async function getFieldExclusions(accountId, collectionId) {
+  const settings = await getSettings(accountId);
   return settings.fieldExclusions[collectionId] || [];
 }
 
-async function setFieldExclusions(collectionId, excludedFields) {
-  const settings = await getSettings();
+async function setFieldExclusions(accountId, collectionId, excludedFields) {
+  const settings = await getSettings(accountId);
   const fieldExclusions = { ...settings.fieldExclusions, [collectionId]: excludedFields };
-  await updateSettings({ fieldExclusions });
+  await updateSettings(accountId, { fieldExclusions });
   return excludedFields;
 }
 
@@ -379,18 +409,175 @@ async function setFieldExclusions(collectionId, excludedFields) {
  * PUT path so a client Settings save racing a server-side webhook-status
  * update can't clobber it.
  */
-async function updateAutoSyncWebhookState(patch) {
-  const settings = await getSettings();
+async function updateAutoSyncWebhookState(accountId, patch) {
+  const settings = await getSettings(accountId);
   const autoSyncWebhook = { ...settings.autoSyncWebhook, ...patch };
-  await updateSettings({ autoSyncWebhook });
+  await updateSettings(accountId, { autoSyncWebhook });
   return autoSyncWebhook;
 }
 
-async function updateSitePublishWebhookState(patch) {
-  const settings = await getSettings();
+async function updateSitePublishWebhookState(accountId, patch) {
+  const settings = await getSettings(accountId);
   const sitePublishWebhook = { ...settings.sitePublishWebhook, ...patch };
-  await updateSettings({ sitePublishWebhook });
+  await updateSettings(accountId, { sitePublishWebhook });
   return sitePublishWebhook;
+}
+
+// ---------------------------------------------------------------------------
+// Accounts / users / sessions (multi-user login)
+
+function accountRowToObject(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    webflowSiteId: row.webflow_site_id,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function userRowToObject(row) {
+  return {
+    id: row.id,
+    webflowUserId: row.webflow_user_id,
+    email: row.email,
+    firstName: row.first_name,
+    lastName: row.last_name,
+  };
+}
+
+async function getAccountByWebflowSiteId(webflowSiteId) {
+  const { rows } = await db.query(`SELECT * FROM accounts WHERE webflow_site_id = $1`, [webflowSiteId]);
+  return rows[0] ? accountRowToObject(rows[0]) : undefined;
+}
+
+async function getAccount(accountId) {
+  const { rows } = await db.query(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+  return rows[0] ? accountRowToObject(rows[0]) : undefined;
+}
+
+async function createAccount({ webflowSiteId, name }) {
+  const { rows } = await db.query(
+    `INSERT INTO accounts (id, webflow_site_id, name) VALUES ($1, $2, $3) RETURNING *`,
+    [crypto.randomUUID(), webflowSiteId, name || null]
+  );
+  return accountRowToObject(rows[0]);
+}
+
+// Every account, active or not -- for the background scheduler/reconciler
+// loops (autoSyncQueue.js, autoSyncReconciliation.js), which need to run
+// their per-account cycle across all of them, not any one user's session.
+async function listAllAccounts() {
+  const { rows } = await db.query(`SELECT * FROM accounts WHERE status = 'active' ORDER BY created_at ASC`);
+  return rows.map(accountRowToObject);
+}
+
+async function getUserByWebflowUserId(webflowUserId) {
+  const { rows } = await db.query(`SELECT * FROM users WHERE webflow_user_id = $1`, [webflowUserId]);
+  return rows[0] ? userRowToObject(rows[0]) : undefined;
+}
+
+async function upsertUser({ webflowUserId, email, firstName, lastName }) {
+  const { rows } = await db.query(
+    `INSERT INTO users (id, webflow_user_id, email, first_name, last_name)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (webflow_user_id) DO UPDATE SET email = $3, first_name = $4, last_name = $5, updated_at = now()
+     RETURNING *`,
+    [crypto.randomUUID(), webflowUserId, email, firstName || null, lastName || null]
+  );
+  return userRowToObject(rows[0]);
+}
+
+/**
+ * Adds (or confirms) a user's membership in an account -- this is the whole
+ * mechanism behind "multiple users, same account": every login re-runs this
+ * for whichever account(s) the Webflow OAuth grant's `siteIds` resolve to,
+ * so a second teammate on the same site lands as a second member of the
+ * *same* existing account row rather than creating a new one.
+ */
+async function upsertAccountMembership(accountId, userId, role = "member") {
+  await db.query(
+    `INSERT INTO account_users (account_id, user_id, role) VALUES ($1, $2, $3)
+     ON CONFLICT (account_id, user_id) DO NOTHING`,
+    [accountId, userId, role]
+  );
+}
+
+async function listAccountsForUser(userId) {
+  const { rows } = await db.query(
+    `SELECT a.*, au.role FROM accounts a
+     JOIN account_users au ON au.account_id = a.id
+     WHERE au.user_id = $1
+     ORDER BY a.created_at ASC`,
+    [userId]
+  );
+  return rows.map((row) => ({ ...accountRowToObject(row), role: row.role }));
+}
+
+async function createSession(userId, accountId, expiresAt) {
+  const id = crypto.randomBytes(32).toString("hex");
+  await db.query(`INSERT INTO sessions (id, user_id, account_id, expires_at) VALUES ($1, $2, $3, $4)`, [
+    id,
+    userId,
+    accountId,
+    expiresAt,
+  ]);
+  return id;
+}
+
+/**
+ * Loads a session together with its user and (current) account in one call
+ * -- this is the hot path, hit on every authenticated request. Expired
+ * sessions are treated as not found (still physically deleted lazily here
+ * rather than needing a separate cleanup job).
+ */
+async function getSessionWithUserAndAccount(sessionId) {
+  const { rows } = await db.query(
+    `SELECT s.*, u.webflow_user_id, u.email, u.first_name, u.last_name,
+            a.name AS account_name, a.webflow_site_id, a.status AS account_status
+     FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     JOIN accounts a ON a.id = s.account_id
+     WHERE s.id = $1`,
+    [sessionId]
+  );
+  const row = rows[0];
+  if (!row) return undefined;
+  if (new Date(row.expires_at) < new Date()) {
+    await deleteSession(sessionId);
+    return undefined;
+  }
+  return {
+    sessionId: row.id,
+    user: { id: row.user_id, webflowUserId: row.webflow_user_id, email: row.email, firstName: row.first_name, lastName: row.last_name },
+    account: { id: row.account_id, name: row.account_name, webflowSiteId: row.webflow_site_id, status: row.account_status },
+  };
+}
+
+async function touchSession(sessionId) {
+  await db.query(`UPDATE sessions SET last_seen_at = now() WHERE id = $1`, [sessionId]);
+}
+
+async function deleteSession(sessionId) {
+  await db.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+}
+
+// ---------------------------------------------------------------------------
+// Webflow OAuth connections (token storage; not yet consumed for API calls
+// -- see the plan file's Phase 2)
+
+async function upsertWebflowConnection(accountId, { webflowSiteId, accessTokenCiphertext, accessTokenIv, refreshTokenCiphertext, refreshTokenIv, scope, authorizationId, connectedByUserId }) {
+  await db.query(
+    `INSERT INTO webflow_connections
+       (account_id, webflow_site_id, access_token_ciphertext, access_token_iv, refresh_token_ciphertext, refresh_token_iv, scope, authorization_id, connected_by_user_id, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
+     ON CONFLICT (account_id) DO UPDATE SET
+       webflow_site_id = $2, access_token_ciphertext = $3, access_token_iv = $4,
+       refresh_token_ciphertext = $5, refresh_token_iv = $6, scope = $7,
+       authorization_id = $8, connected_by_user_id = $9, status = 'active', last_verified_at = now()`,
+    [accountId, webflowSiteId, accessTokenCiphertext, accessTokenIv, refreshTokenCiphertext, refreshTokenIv, scope, authorizationId, connectedByUserId]
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +601,7 @@ function flushTimesToCadence(flushTimes) {
 function automationRowToObject(row) {
   return {
     id: row.id,
+    accountId: row.account_id,
     name: row.name,
     enabled: row.enabled,
     archived: row.archived,
@@ -429,17 +617,34 @@ function automationRowToObject(row) {
   };
 }
 
-async function listAutomations() {
-  const { rows } = await db.query(`SELECT * FROM automations ORDER BY created_at ASC`);
+async function listAutomations(accountId) {
+  const { rows } = await db.query(`SELECT * FROM automations WHERE account_id = $1 ORDER BY created_at ASC`, [
+    accountId,
+  ]);
   return rows.map(automationRowToObject);
 }
 
-async function getAutomation(id) {
+async function getAutomation(accountId, id) {
+  const { rows } = await db.query(`SELECT * FROM automations WHERE id = $1 AND account_id = $2`, [id, accountId]);
+  return rows[0] ? automationRowToObject(rows[0]) : undefined;
+}
+
+/**
+ * DANGER: bypasses account scoping entirely -- for the background job
+ * machinery ONLY (autoSyncQueue.js's flush(), keyed by automation id since
+ * its in-memory pending map predates any account concept and automation
+ * ids are already globally unique app-generated UUIDs). Never call this
+ * from a route handler or anywhere that takes an id from a client request;
+ * every automation id reaching this must already have come from a
+ * properly account-scoped read (listAutomations(accountId), or the pending
+ * queue, itself only ever populated from such a read).
+ */
+async function getAutomationByIdUnscoped(id) {
   const { rows } = await db.query(`SELECT * FROM automations WHERE id = $1`, [id]);
   return rows[0] ? automationRowToObject(rows[0]) : undefined;
 }
 
-async function createAutomation({
+async function createAutomation(accountId, {
   id,
   name,
   enabled,
@@ -452,11 +657,12 @@ async function createAutomation({
 }) {
   const { rows } = await db.query(
     `INSERT INTO automations
-       (id, name, enabled, content_scope, cadence, workflows, project_name, include_existing, org_unit_override, checkpoint)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')
+       (id, account_id, name, enabled, content_scope, cadence, workflows, project_name, include_existing, org_unit_override, checkpoint)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '{}')
      RETURNING *`,
     [
       id || crypto.randomUUID(),
+      accountId,
       name,
       enabled !== undefined ? enabled : true,
       JSON.stringify(contentScope),
@@ -484,22 +690,22 @@ const AUTOMATION_PATCH_COLUMNS = {
 };
 const AUTOMATION_JSON_PATCH_KEYS = new Set(["contentScope", "cadence", "workflows", "checkpoint"]);
 
-async function updateAutomation(id, patch) {
+async function updateAutomation(accountId, id, patch) {
   const keys = Object.keys(patch).filter((k) => AUTOMATION_PATCH_COLUMNS[k]);
-  if (keys.length === 0) return getAutomation(id);
+  if (keys.length === 0) return getAutomation(accountId, id);
 
-  const setClauses = keys.map((key, i) => `${AUTOMATION_PATCH_COLUMNS[key]} = $${i + 2}`);
+  const setClauses = keys.map((key, i) => `${AUTOMATION_PATCH_COLUMNS[key]} = $${i + 3}`);
   const values = keys.map((key) => (AUTOMATION_JSON_PATCH_KEYS.has(key) ? JSON.stringify(patch[key]) : patch[key]));
 
   const { rows } = await db.query(
-    `UPDATE automations SET ${setClauses.join(", ")}, updated_at = now() WHERE id = $1 RETURNING *`,
-    [id, ...values]
+    `UPDATE automations SET ${setClauses.join(", ")}, updated_at = now() WHERE id = $1 AND account_id = $2 RETURNING *`,
+    [id, accountId, ...values]
   );
   return rows[0] ? automationRowToObject(rows[0]) : undefined;
 }
 
-async function deleteAutomation(id) {
-  await db.query(`DELETE FROM automations WHERE id = $1`, [id]);
+async function deleteAutomation(accountId, id) {
+  await db.query(`DELETE FROM automations WHERE id = $1 AND account_id = $2`, [id, accountId]);
 }
 
 /**
@@ -544,14 +750,16 @@ function isAutomationItemAlreadySynced(automation, collectionId, itemId, lastPub
   return new Date(lastPublishedIso) <= new Date(lastSyncedAt);
 }
 
-async function markAutomationItemSynced(automationId, collectionId, itemId, lastPublishedIso) {
-  const automation = await getAutomation(automationId);
-  if (!automation) return;
+// The functions below all take the full `automation` object (not a bare id)
+// since every real caller already has it in scope by the time it needs to
+// mark something synced -- that also gives us `automation.accountId` for
+// free instead of threading a second id through every call site.
+async function markAutomationItemSynced(automation, collectionId, itemId, lastPublishedIso) {
   const lastSyncedAt = {
     ...automation.checkpoint.lastSyncedAt,
     [collectionId]: { ...(automation.checkpoint.lastSyncedAt?.[collectionId] || {}), [itemId]: lastPublishedIso },
   };
-  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedAt } });
+  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedAt } });
 }
 
 // Content-hash based, like Components below -- NOT a lastUpdated timestamp
@@ -565,11 +773,9 @@ function isAutomationPageAlreadySynced(automation, pageId, contentHash) {
   return lastHash === contentHash;
 }
 
-async function markAutomationPageSynced(automationId, pageId, contentHash) {
-  const automation = await getAutomation(automationId);
-  if (!automation) return;
+async function markAutomationPageSynced(automation, pageId, contentHash) {
   const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes, [pageId]: contentHash };
-  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedPageHashes } });
+  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedPageHashes } });
 }
 
 // Components carry no modification timestamp at all (confirmed live against
@@ -579,17 +785,13 @@ function isAutomationComponentAlreadySynced(automation, componentId, contentHash
   return lastHash === contentHash;
 }
 
-async function markAutomationComponentSynced(automationId, componentId, contentHash) {
-  const automation = await getAutomation(automationId);
-  if (!automation) return;
+async function markAutomationComponentSynced(automation, componentId, contentHash) {
   const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes, [componentId]: contentHash };
-  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastSyncedComponentHashes } });
+  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastSyncedComponentHashes } });
 }
 
-async function advanceAutomationCheckpoint(automationId, isoTimestamp) {
-  const automation = await getAutomation(automationId);
-  if (!automation) return;
-  await updateAutomation(automationId, { checkpoint: { ...automation.checkpoint, lastCheckpoint: isoTimestamp } });
+async function advanceAutomationCheckpoint(automation, isoTimestamp) {
+  await updateAutomation(automation.accountId, automation.id, { checkpoint: { ...automation.checkpoint, lastCheckpoint: isoTimestamp } });
 }
 
 function createSyncJob(job) {
@@ -634,18 +836,20 @@ function cancelSyncJob(jobId) {
   return updateSyncJob(jobId, { cancelled: true });
 }
 
-async function setLastSync(record) {
+async function setLastSync(accountId, record) {
   const value = { ...record, timestamp: new Date().toISOString() };
   await db.query(
-    `INSERT INTO app_state (key, value) VALUES ('lastSync', $1)
-     ON CONFLICT (key) DO UPDATE SET value = $1`,
-    [JSON.stringify(value)]
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'lastSync', $2)
+     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
+    [accountId, JSON.stringify(value)]
   );
   return value;
 }
 
-async function getLastSync() {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'lastSync'`);
+async function getLastSync(accountId) {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'lastSync'`, [
+    accountId,
+  ]);
   return rows[0] ? rows[0].value : null;
 }
 
@@ -655,21 +859,25 @@ async function getLastSync() {
 // overwriting real events we hadn't looked at yet. Remove once done.
 const DEBUG_WEBHOOK_HISTORY_LIMIT = 20;
 
-async function setDebugWebhookPayload(payload) {
+async function setDebugWebhookPayload(accountId, payload) {
   const entry = { ...payload, receivedAt: new Date().toISOString() };
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookHistory'`);
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'debugWebhookHistory'`, [
+    accountId,
+  ]);
   const history = rows[0] ? rows[0].value : [];
   const updated = [entry, ...history].slice(0, DEBUG_WEBHOOK_HISTORY_LIMIT);
   await db.query(
-    `INSERT INTO app_state (key, value) VALUES ('debugWebhookHistory', $1)
-     ON CONFLICT (key) DO UPDATE SET value = $1`,
-    [JSON.stringify(updated)]
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'debugWebhookHistory', $2)
+     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
+    [accountId, JSON.stringify(updated)]
   );
   return entry;
 }
 
-async function getDebugWebhookPayload() {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE key = 'debugWebhookHistory'`);
+async function getDebugWebhookPayload(accountId) {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'debugWebhookHistory'`, [
+    accountId,
+  ]);
   return rows[0] ? rows[0].value : [];
 }
 
@@ -692,8 +900,22 @@ module.exports = {
   setFieldExclusions,
   updateAutoSyncWebhookState,
   updateSitePublishWebhookState,
+  getAccountByWebflowSiteId,
+  getAccount,
+  createAccount,
+  listAllAccounts,
+  getUserByWebflowUserId,
+  upsertUser,
+  upsertAccountMembership,
+  listAccountsForUser,
+  createSession,
+  getSessionWithUserAndAccount,
+  touchSession,
+  deleteSession,
+  upsertWebflowConnection,
   listAutomations,
   getAutomation,
+  getAutomationByIdUnscoped,
   createAutomation,
   updateAutomation,
   deleteAutomation,

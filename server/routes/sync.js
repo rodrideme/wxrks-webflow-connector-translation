@@ -22,6 +22,7 @@ router.post("/item", async (req, res) => {
   const { collectionId, itemId, itemIds, workflows, projectName } = req.body || {};
   const ids = itemIds && itemIds.length > 0 ? itemIds : itemId ? [itemId] : [];
 
+  const accountId = req.account.id;
   try {
     const {
       sourceLocale,
@@ -29,7 +30,7 @@ router.post("/item", async (req, res) => {
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       workUnitNamePattern,
-    } = await store.getSettings();
+    } = await store.getSettings(accountId);
 
     if (!collectionId || ids.length === 0) {
       return res.status(400).json({ error: "collectionId and at least one itemId are required" });
@@ -46,7 +47,7 @@ router.post("/item", async (req, res) => {
       sourceLocale,
       orgUnitUUID,
     });
-    await store.createProjectMapping(project.uuid, {
+    await store.createProjectMapping(accountId, project.uuid, {
       mode: "item",
       sourceLocale,
       targetLocales,
@@ -69,6 +70,7 @@ router.post("/item", async (req, res) => {
         try {
           const item = await webflow.getItem(collectionId, id, { locale: sourceLocale });
           const result = await syncItemIntoBatch({
+            accountId,
             projectUuid: project.uuid,
             collection,
             item,
@@ -95,7 +97,7 @@ router.post("/item", async (req, res) => {
         targetLocales,
       };
       store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
-      await store.setLastSync({ mode: "item", summary });
+      await store.setLastSync(accountId, { mode: "item", summary });
 
       if (autoApprove && itemsSynced > 0) {
         requestBatchApproval(project.uuid);
@@ -135,7 +137,10 @@ router.post("/jobs/:jobId/cancel", (req, res) => {
  */
 router.get("/status", async (req, res) => {
   try {
-    const [lastSync, activeProjects] = await Promise.all([store.getLastSync(), store.listActiveProjects()]);
+    const [lastSync, activeProjects] = await Promise.all([
+      store.getLastSync(req.account.id),
+      store.listActiveProjects(req.account.id),
+    ]);
     res.json({ lastSync, activeProjects });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -150,7 +155,7 @@ router.get("/status", async (req, res) => {
  */
 router.get("/history", async (req, res) => {
   try {
-    const history = await store.listProjectMappings();
+    const history = await store.listProjectMappings(req.account.id);
     res.json({ history });
   } catch (err) {
     res.status(502).json({ error: err.message });

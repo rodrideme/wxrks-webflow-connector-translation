@@ -35,6 +35,12 @@ async function request(path, options = {}) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
         continue;
       }
+      // A session that expired or got revoked mid-use (not just a fresh
+      // page load without one) -- AuthContext registers this hook so the
+      // app drops back to the login screen instead of every subsequent
+      // call just silently erroring. Not fired for /auth/me itself, which
+      // reports "logged out" via a 200 with null fields, never a 401.
+      if (res.status === 401) api.onUnauthorized?.();
       throw new Error(data.error || `Request failed: ${res.status}`);
     }
     return data;
@@ -42,6 +48,10 @@ async function request(path, options = {}) {
 }
 
 const api = {
+  // Set by AuthContext on mount; called whenever any request comes back 401.
+  onUnauthorized: null,
+  getMe: () => request("/auth/me"),
+  logout: () => request("/auth/logout", { method: "POST" }),
   getCollections: () => request("/collections"),
   getCollectionItems: (collectionId) => request(`/collections/${collectionId}/items`),
   getBacklog: () => request("/backlog"),

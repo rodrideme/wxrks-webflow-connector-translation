@@ -10,7 +10,7 @@ const router = express.Router();
  */
 router.get("/", async (req, res) => {
   try {
-    const [collections, settings] = await Promise.all([webflow.listCollections(), store.getSettings()]);
+    const [collections, settings] = await Promise.all([webflow.listCollections(), store.getSettings(req.account.id)]);
     res.json({
       collections: collections.map((c) => ({
         ...c,
@@ -31,7 +31,7 @@ router.get("/:id/fields", async (req, res) => {
   try {
     const [collection, exclusions] = await Promise.all([
       webflow.getCollection(req.params.id),
-      store.getFieldExclusions(req.params.id),
+      store.getFieldExclusions(req.account.id, req.params.id),
     ]);
     const schema = webflow.listFieldSchema(collection);
     const excluded = new Set(exclusions);
@@ -56,7 +56,7 @@ router.get("/:id/fields", async (req, res) => {
 router.put("/:id/field-exclusions", async (req, res) => {
   try {
     const { excludedFields } = req.body || {};
-    const updated = await store.setFieldExclusions(req.params.id, excludedFields || []);
+    const updated = await store.setFieldExclusions(req.account.id, req.params.id, excludedFields || []);
     res.json({ collectionId: req.params.id, excludedFields: updated });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -75,9 +75,9 @@ router.get("/:id/items", async (req, res) => {
 
   try {
     const [{ sourceLocale, targetLocales }, collection, exclusions] = await Promise.all([
-      store.getSettings(),
+      store.getSettings(req.account.id),
       webflow.getCollection(id),
-      store.getFieldExclusions(id),
+      store.getFieldExclusions(req.account.id, id),
     ]);
     const sourceItems = await webflow.listAllItems(id, { locale: sourceLocale });
 
@@ -89,7 +89,7 @@ router.get("/:id/items", async (req, res) => {
     // word count here is free (no extra Webflow calls), unlike Pages/
     // Components' list endpoints where it would mean a DOM fetch per row.
     const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
-    const deliveryStatus = await store.getDeliveryStatusByEntity("webflowItemId");
+    const deliveryStatus = await store.getDeliveryStatusByEntity(req.account.id, "webflowItemId");
 
     const items = sourceItems.map((sourceItem) => {
       const localeStatus = {};
@@ -151,7 +151,7 @@ router.get("/:id/items", async (req, res) => {
  */
 async function backlogHandler(req, res) {
   try {
-    const settings = await store.getSettings();
+    const settings = await store.getSettings(req.account.id);
     const { sourceLocale, targetLocales } = settings;
     const allCollections = await webflow.listCollections();
     const collections = allCollections.filter((c) => store.isCollectionEnabled(settings, c.id));

@@ -30,7 +30,7 @@ function isCmsRelevant(automation) {
 }
 
 async function reconcileAutomation(automation, allCollections) {
-  const settings = await store.getSettings();
+  const settings = await store.getSettings(automation.accountId);
   const cutoff = automation.checkpoint.lastCheckpoint
     ? new Date(automation.checkpoint.lastCheckpoint)
     : automation.includeExisting
@@ -55,17 +55,22 @@ async function reconcileAutomation(automation, allCollections) {
     }
   }
 
-  await store.advanceAutomationCheckpoint(automation.id, nextCheckpoint.toISOString());
+  await store.advanceAutomationCheckpoint(automation, nextCheckpoint.toISOString());
   return missedCount;
 }
 
-async function reconcile() {
-  const automations = await store.listAutomations();
+/**
+ * Runs once per account (Phase 1 multi-tenancy -- see the plan file; in
+ * practice just one account for a good while). Each account has its own
+ * autoSyncWebhook state, so the webhook-deactivation inference below is
+ * evaluated per account too, not globally.
+ */
+async function reconcileForAccount(account, allCollections) {
+  const automations = await store.listAutomations(account.id);
   const relevantAutomations = automations.filter((a) => a.enabled && !a.archived && isCmsRelevant(a));
   if (relevantAutomations.length === 0) return;
 
-  const allCollections = await webflow.listCollections();
-  const settings = await store.getSettings();
+  const settings = await store.getSettings(account.id);
   const cutoffForWebhookCheck = new Date(Date.now() - DEFAULT_INTERVAL_MS * 2);
 
   let totalMissed = 0;
@@ -80,7 +85,15 @@ async function reconcile() {
   const { autoSyncWebhook } = settings;
   const webhookIdleTooLong = !autoSyncWebhook.lastEventAt || new Date(autoSyncWebhook.lastEventAt) < cutoffForWebhookCheck;
   if (totalMissed > 0 && webhookIdleTooLong && autoSyncWebhook.status === "active") {
-    await store.updateAutoSyncWebhookState({ status: "deactivated" });
+    await store.updateAutoSyncWebhookState(account.id, { status: "deactivated" });
+  }
+}
+
+async function reconcile() {
+  const allCollections = await webflow.listCollections();
+  const accounts = await store.listAllAccounts();
+  for (const account of accounts) {
+    await reconcileForAccount(account, allCollections);
   }
 }
 

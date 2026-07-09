@@ -44,9 +44,9 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
  * rather than creating one project per item, and each item gets exactly
  * one work unit rather than one per field.
  */
-async function syncItemIntoBatch({ projectUuid, collection, item, targetLocales, namePattern, workflows }) {
+async function syncItemIntoBatch({ accountId, projectUuid, collection, item, targetLocales, namePattern, workflows }) {
   const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
-  const exclusions = await store.getFieldExclusions(collection.id);
+  const exclusions = await store.getFieldExclusions(accountId, collection.id);
   const translatableFields = webflow.filterTranslatableFields(item.fieldData, fieldTypeBySlug, exclusions);
   const filename = webflow.buildResourceFileName(namePattern, { collection, item });
 

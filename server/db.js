@@ -74,6 +74,93 @@ async function migrate() {
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS project_name TEXT`);
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS include_existing BOOLEAN NOT NULL DEFAULT false`);
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false`);
+
+  // Multi-user login (Phase 1): one row per connected Webflow site -- the
+  // tenancy boundary every other table gets scoped under. IDs are app-
+  // generated TEXT (crypto.randomUUID()), matching this file's existing
+  // convention (see `automations.id`), not native Postgres UUID/
+  // gen_random_uuid() -- no reason to add that dependency when the existing
+  // pattern already works.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      webflow_site_id TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  // One row per human who has ever logged in, identified by Webflow's own
+  // stable user id (not email -- email could change).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      webflow_user_id TEXT UNIQUE NOT NULL,
+      email TEXT NOT NULL,
+      first_name TEXT,
+      last_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  // Membership: which users can access which account(s) -- this is what
+  // makes "multiple users, same account" work (see store.js's
+  // upsertAccountForWebflowSite). Flat role only, no fine-grained RBAC yet.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_users (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'member',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (account_id, user_id)
+    )
+  `);
+
+  // Server-side session store -- the cookie holds only this opaque id, so a
+  // session can be killed instantly (one DELETE) without needing a JWT
+  // blocklist.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  // Per-account Webflow OAuth grant. Populated at login time (Phase 1) even
+  // though nothing reads it for real API calls yet (that's Phase 2, once
+  // webflow.js's client() becomes per-account) -- storing it now avoids
+  // re-prompting existing users for a second OAuth consent later.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS webflow_connections (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      webflow_site_id TEXT NOT NULL,
+      access_token_ciphertext BYTEA NOT NULL,
+      access_token_iv BYTEA NOT NULL,
+      refresh_token_ciphertext BYTEA,
+      refresh_token_iv BYTEA,
+      scope TEXT,
+      authorization_id TEXT,
+      connected_by_user_id TEXT REFERENCES users(id),
+      connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_verified_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'active'
+    )
+  `);
+
+  // Every pre-existing table becomes account-scoped. Nullable for now (not
+  // NOT NULL) since existing rows predate accounts entirely --
+  // migrateSingleTenantToAccountOne() (index.js) backfills them at startup
+  // right after this migrate() call, immediately before anything reads them.
+  await pool.query(`ALTER TABLE app_state ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
+  await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
+  await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
 }
 
 module.exports = { query, migrate, pool };

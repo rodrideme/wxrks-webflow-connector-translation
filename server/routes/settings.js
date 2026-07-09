@@ -16,7 +16,7 @@ function mask(value) {
  */
 router.get("/", async (req, res) => {
   try {
-    const settings = await store.getSettings();
+    const settings = await store.getSettings(req.account.id);
     res.json({
       ...settings,
       env: {
@@ -75,8 +75,8 @@ router.put("/", async (req, res) => {
   if (componentsWorkUnitNamePattern !== undefined) patch.componentsWorkUnitNamePattern = componentsWorkUnitNamePattern;
 
   try {
-    await store.updateSettings(patch);
-    res.json(await store.getSettings());
+    await store.updateSettings(req.account.id, patch);
+    res.json(await store.getSettings(req.account.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -93,8 +93,22 @@ router.put("/", async (req, res) => {
  */
 router.post("/autosync/reregister-webhook", async (req, res) => {
   try {
-    await autoSyncWebhook.ensureWebhookRegistered();
-    res.json(await store.getSettings());
+    await autoSyncWebhook.ensureWebhookRegistered(req.account.id);
+    res.json(await store.getSettings(req.account.id));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/settings/autosync/reregister-pages-webhook
+ * Same manual recovery action as above, for the Pages/Components
+ * site_publish webhook.
+ */
+router.post("/autosync/reregister-pages-webhook", async (req, res) => {
+  try {
+    await autoSyncWebhook.ensurePagesWebhookRegistered(req.account.id);
+    res.json(await store.getSettings(req.account.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

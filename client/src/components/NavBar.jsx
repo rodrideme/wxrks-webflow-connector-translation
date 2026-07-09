@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
@@ -9,6 +10,8 @@ const links = [
 ];
 
 export default function NavBar() {
+  const { user, account, logout } = useAuth();
+
   return (
     <nav className="sticky top-0 flex h-screen w-[13.5rem] flex-none flex-col gap-0.5 border-r border-border bg-surface-sunken p-3">
       <div className="flex items-center gap-2 px-2 pb-4 pt-1">
@@ -36,7 +39,15 @@ export default function NavBar() {
       </div>
 
       <div className="mt-auto flex flex-col gap-1.5 border-t border-border px-2 pt-3 text-[11px] text-ink-faint">
-        <span>wxrks Translation Sync</span>
+        {account?.name || account?.webflowSiteId ? (
+          <span className="truncate font-medium text-ink-soft" title={account.name || account.webflowSiteId}>
+            {account.name || account.webflowSiteId}
+          </span>
+        ) : null}
+        {user?.email && <span className="truncate">{user.email}</span>}
+        <button type="button" onClick={logout} className="self-start text-left text-accent-text hover:underline">
+          Sign out
+        </button>
       </div>
     </nav>
   );

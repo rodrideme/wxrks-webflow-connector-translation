@@ -18,6 +18,7 @@ router.post("/item", async (req, res) => {
   const { componentId, componentIds, workflows, projectName } = req.body || {};
   const ids = componentIds && componentIds.length > 0 ? componentIds : componentId ? [componentId] : [];
 
+  const accountId = req.account.id;
   try {
     const {
       sourceLocale,
@@ -25,7 +26,7 @@ router.post("/item", async (req, res) => {
       orgUnitUUID: settingsOrgUnitUUID,
       autoApprove,
       componentsWorkUnitNamePattern,
-    } = await store.getSettings();
+    } = await store.getSettings(accountId);
 
     if (ids.length === 0) {
       return res.status(400).json({ error: "At least one componentId is required" });
@@ -43,7 +44,7 @@ router.post("/item", async (req, res) => {
       sourceLocale,
       orgUnitUUID,
     });
-    await store.createProjectMapping(project.uuid, {
+    await store.createProjectMapping(accountId, project.uuid, {
       mode: "components-item",
       sourceLocale,
       targetLocales,
@@ -93,7 +94,7 @@ router.post("/item", async (req, res) => {
         targetLocales,
       };
       store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
-      await store.setLastSync({ mode: "components-item", summary });
+      await store.setLastSync(accountId, { mode: "components-item", summary });
 
       if (autoApprove && itemsSynced > 0) {
         requestBatchApproval(project.uuid);
@@ -120,9 +121,9 @@ router.post("/item", async (req, res) => {
 router.get("/list", async (req, res) => {
   try {
     const [settings, components, deliveryStatus] = await Promise.all([
-      store.getSettings(),
+      store.getSettings(req.account.id),
       webflow.listComponents(),
-      store.getDeliveryStatusByEntity("webflowComponentId"),
+      store.getDeliveryStatusByEntity(req.account.id, "webflowComponentId"),
     ]);
     res.json({
       components: components.map((c) => {

@@ -121,9 +121,13 @@ function cadenceMatchesNow(cadence, hhmm, weekday) {
 
 /**
  * Checks every 30s (well under a minute) whether the current wall-clock time
- * (in the app's global timezone) matches any enabled automation's cadence,
- * firing that automation's cycle if so. Re-queries the automations list
- * fresh on every tick (cheap -- a handful of rows) rather than being
+ * (in each account's own timezone) matches any of ITS enabled automations'
+ * cadence, firing that automation's cycle if so. Iterates every account
+ * (Phase 1 multi-tenancy: data is account-scoped even though Webflow/wxrks
+ * credentials are still global -- see the plan file) -- in practice just
+ * one account for a good while, but this loop is what the second real
+ * account's automations would need working on day one. Re-queries fresh on
+ * every tick (cheap -- a handful of rows per account) rather than being
  * restarted on every settings change, so it can simply run unconditionally
  * from server boot with no enable/disable start/stop dance.
  */
@@ -132,21 +136,25 @@ function startFlushLoop() {
   scheduleTimer = setInterval(async () => {
     try {
       const { runAutomationCycle } = require("./automationScheduler");
-      const { timezone } = await store.getSettings();
       const now = new Date();
-      const hhmm = formatInTimeZone(now, timezone);
-      const weekday = formatInTimeZone(now, timezone, "weekday");
       const minuteKey = now.toISOString().slice(0, 16);
 
-      const automations = await store.listAutomations();
-      for (const automation of automations) {
-        if (!automation.enabled || automation.archived) continue;
-        if (!cadenceMatchesNow(automation.cadence, hhmm, weekday)) continue;
-        if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
-        lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
-        runAutomationCycle(automation).catch((err) =>
-          console.error(`Automation "${automation.name}" cycle failed:`, err.message)
-        );
+      const accounts = await store.listAllAccounts();
+      for (const account of accounts) {
+        const { timezone } = await store.getSettings(account.id);
+        const hhmm = formatInTimeZone(now, timezone);
+        const weekday = formatInTimeZone(now, timezone, "weekday");
+
+        const automations = await store.listAutomations(account.id);
+        for (const automation of automations) {
+          if (!automation.enabled || automation.archived) continue;
+          if (!cadenceMatchesNow(automation.cadence, hhmm, weekday)) continue;
+          if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
+          lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
+          runAutomationCycle(automation).catch((err) =>
+            console.error(`Automation "${automation.name}" cycle failed:`, err.message)
+          );
+        }
       }
     } catch (err) {
       console.error("Automation flush loop tick failed:", err.message);
@@ -202,13 +210,13 @@ async function flush(automationId, { jobId } = {}) {
   // the *next* window, not lost or double-counted.
   for (const [key] of batch) pending.delete(key);
 
-  const automation = await store.getAutomation(automationId);
+  const automation = await store.getAutomationByIdUnscoped(automationId);
   if (!automation) {
     if (jobId) store.updateSyncJob(jobId, { status: "completed" });
     return { itemsSynced: 0 };
   }
 
-  const settings = await store.getSettings();
+  const settings = await store.getSettings(automation.accountId);
   const { sourceLocale, targetLocales, orgUnitUUID: settingsOrgUnitUUID, autoApprove, workUnitNamePattern } = settings;
   if (targetLocales.length === 0) {
     if (jobId) store.updateSyncJob(jobId, { status: "completed" });
@@ -221,7 +229,7 @@ async function flush(automationId, { jobId } = {}) {
     sourceLocale,
     orgUnitUUID,
   });
-  await store.createProjectMapping(project.uuid, {
+  await store.createProjectMapping(automation.accountId, project.uuid, {
     mode: "automation",
     automationName: automation.name,
     sourceLocale,
@@ -240,6 +248,7 @@ async function flush(automationId, { jobId } = {}) {
     try {
       if (entry.entityType === "cms") {
         const result = await syncItemIntoBatch({
+          accountId: automation.accountId,
           projectUuid: project.uuid,
           collection: entry.collection,
           item: entry.item,
@@ -249,7 +258,7 @@ async function flush(automationId, { jobId } = {}) {
         });
         if (!result.skipped) {
           itemsSynced += 1;
-          await store.markAutomationItemSynced(automationId, entry.collection.id, entry.item.id, entry.item.lastPublished);
+          await store.markAutomationItemSynced(automation, entry.collection.id, entry.item.id, entry.item.lastPublished);
         }
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.item.id, ...result });
       } else if (entry.entityType === "page") {
@@ -278,7 +287,7 @@ async function flush(automationId, { jobId } = {}) {
         // would reappear in the pending queue on every future scan forever.
         // If it's later edited to contain real text, the hash will differ
         // from this "empty" one and correctly re-enqueue it.
-        await store.markAutomationPageSynced(automationId, entry.page.id, contentHash);
+        await store.markAutomationPageSynced(automation, entry.page.id, contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
         const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
@@ -292,7 +301,7 @@ async function flush(automationId, { jobId } = {}) {
           workflows: automation.workflows,
         });
         if (!result.skipped) itemsSynced += 1;
-        await store.markAutomationComponentSynced(automationId, entry.component.id, contentHash);
+        await store.markAutomationComponentSynced(automation, entry.component.id, contentHash);
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.component.id, ...result });
       }
     } catch (err) {
@@ -304,7 +313,7 @@ async function flush(automationId, { jobId } = {}) {
     }
   }
 
-  await store.setLastSync({
+  await store.setLastSync(automation.accountId, {
     mode: "automation",
     summary: {
       itemsProcessed: batch.length,

@@ -25,6 +25,12 @@ const router = express.Router();
  * same delivery, so this handler dedups against `mapping.updates` before
  * doing any work, keyed by (webflowItemId, locale).
  *
+ * Not account-scoped by URL like the Webflow webhooks below -- wxrks has
+ * one shared webhook regardless of account, and doesn't know about accounts
+ * at all. Instead, the project mapping (looked up by the globally-unique
+ * wxrks_project_uuid the payload already carries) tells us which account
+ * this delivery belongs to.
+ *
  * Real payload shape (confirmed via live webhook capture, not wxrks docs):
  *   {
  *     id, event_type, new_status?, project_uuid, org_unit_uuid,
@@ -40,10 +46,6 @@ const router = express.Router();
  * a webhook is registered, expecting a 200 back to activate it.
  */
 router.post("/wxrks", async (req, res) => {
-  // TEMPORARY: capture the raw payload for every event type so we can see
-  // real shapes before building handling for them. Remove once the
-  // per-work-unit handler above is proven out.
-  await store.setDebugWebhookPayload({ headers: req.headers, body: req.body }).catch(() => {});
   console.log("wxrks webhook payload:", JSON.stringify(req.body, null, 2));
 
   const {
@@ -74,6 +76,11 @@ router.post("/wxrks", async (req, res) => {
   if (!mapping) {
     return res.status(404).json({ error: `No mapping found for wxrks project ${wxrksProjectUUID}` });
   }
+  // TEMPORARY: capture the raw payload for every event type so we can see
+  // real shapes before building handling for them. Remove once the
+  // per-work-unit handler above is proven out. Only possible once the
+  // mapping resolves the account this delivery belongs to.
+  await store.setDebugWebhookPayload(mapping.accountId, { headers: req.headers, body: req.body }).catch(() => {});
 
   const batchItem = mapping.items.find((i) => i.resourceFileName === fileName);
   if (!batchItem) {
@@ -122,7 +129,7 @@ router.post("/wxrks", async (req, res) => {
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
   (async () => {
-    const { autoPublish } = await store.getSettings();
+    const { autoPublish } = await store.getSettings(mapping.accountId);
     const translation = directTranslatedFileUrl
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, resourceId, locale);
@@ -222,87 +229,87 @@ router.post("/wxrks", async (req, res) => {
 });
 
 /**
- * POST /api/webhooks/webflow
- * Shared endpoint for TWO independent Webflow webhook registrations, each
- * with its own signing secret -- dispatches on `triggerType` before
- * verifying, since which secret applies depends on which one this is:
- *
- * - "collection_item_published" (CMS Automation): live-verified payload
- *   shape: { payload: { items: [ { id, siteId, workspaceId, collectionId,
- *   cmsLocaleId, isDraft, isArchived, lastPublished, lastUpdated, createdOn,
- *   fieldData }, ... ] }, triggerType } -- note the `items` ARRAY wrapper.
- *   This differs from `collection_item_changed`'s flat single-item payload
- *   (confirmed via an earlier live test of that trigger type only); Webflow
- *   batches multiple items into one `collection_item_published` delivery
- *   when several are published together (e.g. a bulk "Publish all" action),
- *   so every item in the array must be processed, not just one.
- *
- *   IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
- *   edited (live-tested against `collection_item_changed`: it reports the
- *   primary locale's id even when only a secondary locale's field changed)
- *   -- do not use it for loop-prevention. Instead this route checks
- *   autoSyncSelfWrites (a blanket per-item cooldown marked by the /wxrks
- *   handler above whenever it pushes a translation back), and always
- *   re-fetches each item fresh via the primary locale rather than trusting
- *   payload fieldData for content.
- *
- * - "site_publish" (Pages/Components -- Webflow has no per-page or
- *   per-component webhook at all, this is the closest available signal):
- *   fires on any Designer publish action with no per-entity detail, so
- *   handling it means re-running the same scan automationScheduler's
- *   cadence tick would do, just triggered by the publish instead of waiting
- *   for the schedule. Enqueues only (mirrors the CMS path above) -- sending
- *   to wxrks still waits for the automation's own cadence or a manual flush.
+ * Shared body of both account-scoped Webflow webhook routes below: verifies
+ * the HMAC signature against exactly the account's own signing secret (read
+ * from that account's settings), records liveness, and returns whether it's
+ * valid. `settingsKey` is which of the account's two independent webhook
+ * registrations ("autoSyncWebhook" for CMS, "sitePublishWebhook" for Pages/
+ * Components) this delivery is for.
  */
-router.post("/webflow", async (req, res) => {
-  // TEMPORARY: capture every inbound Webflow webhook (shared ring buffer with
-  // the wxrks debug capture below, tagged so they're distinguishable) --
-  // added to diagnose why a real publish event didn't result in a queued
-  // item. Remove once Auto Sync is fully proven out live.
-  await store.setDebugWebhookPayload({ source: "webflow", headers: req.headers, body: req.body }).catch(() => {});
-  console.log("webflow webhook payload:", JSON.stringify(req.body, null, 2));
-
-  const { triggerType } = req.body || {};
-  const settings = await store.getSettings();
-
-  if (triggerType === autoSyncWebhook.PAGES_TRIGGER_TYPE) {
-    const verified = autoSyncWebhook.verifySignature({
-      rawBody: req.rawBody,
-      signature: req.headers["x-webflow-signature"],
-      timestamp: req.headers["x-webflow-timestamp"],
-      signingSecret: settings.sitePublishWebhook.signingSecret,
-    });
-    if (!verified) {
-      return res.status(401).json({ error: "Invalid or missing Webflow webhook signature" });
-    }
-    await store.updateSitePublishWebhookState({ lastEventAt: new Date().toISOString() });
-
-    // Respond immediately -- scanning can mean many Webflow API calls
-    // (Components need a DOM fetch per component just to hash them), same
-    // "respond fast, process after" pattern as the wxrks webhook above.
-    res.json({ received: true });
-    automationScheduler
-      .scanAndEnqueueForPublishEvent()
-      .catch((err) => console.error("Pages/Components publish-triggered scan failed:", err.message));
-    return;
-  }
-
-  const { signingSecret } = settings.autoSyncWebhook;
+async function verifyAccountWebhook(req, res, accountId, settingsKey, updateLastEventAt) {
+  const settings = await store.getSettings(accountId);
   const verified = autoSyncWebhook.verifySignature({
     rawBody: req.rawBody,
     signature: req.headers["x-webflow-signature"],
     timestamp: req.headers["x-webflow-timestamp"],
-    signingSecret,
+    signingSecret: settings[settingsKey].signingSecret,
   });
   if (!verified) {
-    return res.status(401).json({ error: "Invalid or missing Webflow webhook signature" });
+    res.status(401).json({ error: "Invalid or missing Webflow webhook signature" });
+    return false;
   }
+  await updateLastEventAt();
+  return true;
+}
 
-  // Liveness signal for reconciliation's deactivation inference -- recorded
-  // for any verified request, regardless of whether it ends up qualifying.
-  await store.updateAutoSyncWebhookState({ lastEventAt: new Date().toISOString() });
+/**
+ * POST /api/webhooks/webflow/:accountId/site-publish
+ * Pages/Components -- Webflow has no per-page or per-component webhook at
+ * all, this ("site_publish", fires on any Designer publish action) is the
+ * closest available signal, and its payload carries no account-identifying
+ * field whatsoever -- the account id in this route's own URL (assigned at
+ * registration time, see autoSyncWebhook.js) is the *only* way to resolve
+ * which account a delivery belongs to. Handling it means re-running the
+ * same scan automationScheduler's cadence tick would do, just triggered by
+ * the publish instead of waiting for the schedule. Enqueues only (mirrors
+ * the CMS route below) -- sending to wxrks still waits for the automation's
+ * own cadence or a manual flush.
+ */
+router.post("/webflow/:accountId/site-publish", async (req, res) => {
+  const { accountId } = req.params;
+  const ok = await verifyAccountWebhook(req, res, accountId, "sitePublishWebhook", () =>
+    store.updateSitePublishWebhookState(accountId, { lastEventAt: new Date().toISOString() })
+  );
+  if (!ok) return;
 
-  const automations = await store.listAutomations();
+  // Respond immediately -- scanning can mean many Webflow API calls
+  // (Components need a DOM fetch per component just to hash them), same
+  // "respond fast, process after" pattern as the wxrks webhook above.
+  res.json({ received: true });
+  automationScheduler
+    .scanAndEnqueueForPublishEvent(accountId)
+    .catch((err) => console.error(`Pages/Components publish-triggered scan failed for account ${accountId}:`, err.message));
+});
+
+/**
+ * POST /api/webhooks/webflow/:accountId/cms-item-published
+ * Fired by Webflow on "collection_item_published". Live-verified payload
+ * shape: { payload: { items: [ { id, siteId, workspaceId, collectionId,
+ * cmsLocaleId, isDraft, isArchived, lastPublished, lastUpdated, createdOn,
+ * fieldData }, ... ] }, triggerType } -- note the `items` ARRAY wrapper.
+ * This differs from `collection_item_changed`'s flat single-item payload
+ * (confirmed via an earlier live test of that trigger type only); Webflow
+ * batches multiple items into one `collection_item_published` delivery when
+ * several are published together (e.g. a bulk "Publish all" action), so
+ * every item in the array must be processed, not just one.
+ *
+ * IMPORTANT: `cmsLocaleId` does NOT reliably indicate which locale was
+ * edited (live-tested against `collection_item_changed`: it reports the
+ * primary locale's id even when only a secondary locale's field changed) --
+ * do not use it for loop-prevention. Instead this route checks
+ * autoSyncSelfWrites (a blanket per-item cooldown marked by the /wxrks
+ * handler above whenever it pushes a translation back), and always
+ * re-fetches each item fresh via the primary locale rather than trusting
+ * payload fieldData for content.
+ */
+router.post("/webflow/:accountId/cms-item-published", async (req, res) => {
+  const { accountId } = req.params;
+  const ok = await verifyAccountWebhook(req, res, accountId, "autoSyncWebhook", () =>
+    store.updateAutoSyncWebhookState(accountId, { lastEventAt: new Date().toISOString() })
+  );
+  if (!ok) return;
+
+  const automations = await store.listAutomations(accountId);
   const cmsAutomations = automations.filter(
     (a) =>
       a.enabled &&
@@ -313,7 +320,7 @@ router.post("/webflow", async (req, res) => {
     return res.status(200).json({ ignored: true, reason: "No enabled CMS/All Content automations" });
   }
 
-  const { payload } = req.body || {};
+  const { triggerType, payload } = req.body || {};
   const items = payload?.items;
   if (triggerType !== autoSyncWebhook.TRIGGER_TYPE || !Array.isArray(items)) {
     return res.status(200).json({ ignored: true, reason: `unhandled trigger: ${triggerType}` });
@@ -361,9 +368,9 @@ router.post("/webflow", async (req, res) => {
 // Finished". Returns a list (most recent first) since a single-slot capture
 // was getting overwritten by validation pings before we could inspect real
 // events. Remove once done.
-router.get("/wxrks/debug-last", async (req, res) => {
+router.get("/wxrks/debug-last/:accountId", async (req, res) => {
   try {
-    const history = await store.getDebugWebhookPayload();
+    const history = await store.getDebugWebhookPayload(req.params.accountId);
     res.json(history.length > 0 ? { history } : { message: "No webhook received yet" });
   } catch (err) {
     res.status(502).json({ error: err.message });

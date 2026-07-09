@@ -15,6 +15,8 @@ const automationsRouter = require("./routes/automations");
 const webhooksRouter = require("./routes/webhooks");
 const settingsRouter = require("./routes/settings");
 const configRouter = require("./routes/config");
+const authRouter = require("./routes/auth");
+const { requireSession } = require("./middleware/auth");
 const autoSyncWebhook = require("./services/autoSyncWebhook");
 const autoSyncQueue = require("./services/autoSyncQueue");
 const autoSyncReconciliation = require("./services/autoSyncReconciliation");
@@ -43,13 +45,23 @@ const deployedCommit = (() => {
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", commit: deployedCommit }));
 
+// Unauthenticated: the OAuth login/callback flow itself, and Webflow/wxrks's
+// own webhook deliveries (HMAC/signature-verified inside routes/webhooks.js,
+// not session-based -- a webhook has no browser session to present).
+app.use("/api/auth", authRouter);
+app.use("/api/webhooks", webhooksRouter);
+
+// Every other /api/* route requires a valid session (see middleware/auth.js)
+// -- req.account.id, populated here, is what every route handler below
+// scopes its store.js calls by.
+app.use("/api", requireSession);
+
 app.use("/api/collections", collectionsRouter);
 app.get("/api/backlog", collectionsRouter.backlogHandler);
 app.use("/api/sync", syncRouter);
 app.use("/api/sync/pages", syncPagesRouter);
 app.use("/api/sync/components", syncComponentsRouter);
 app.use("/api/automations", automationsRouter);
-app.use("/api/webhooks", webhooksRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/config", configRouter);
 
@@ -67,6 +79,61 @@ app.use((err, req, res, next) => {
 });
 
 /**
+ * Multi-user login (Phase 1) bootstrap: every pre-existing row in
+ * app_state/project_mappings/automations predates the `accounts` concept
+ * entirely (account_id is NULL on all of them). This runs before anything
+ * else at startup, creates "Account #1" for the site this install has
+ * always pointed at (WEBFLOW_SITE_ID), backfills account_id onto every
+ * existing row, and finalizes app_state's uniqueness constraint from a
+ * single global row per key to one row per (account, key) -- required
+ * before a second account could ever have its own settings row. Idempotent:
+ * on every later boot this is a fast no-op (account already exists, no NULL
+ * rows left, constraint already finalized).
+ *
+ * Returns the resolved account id, used to scope the legacy migrations
+ * below (which ran against the single global dataset before accounts
+ * existed, and now need to know which account that dataset became).
+ */
+async function migrateSingleTenantToAccountOne() {
+  const webflowSiteId = process.env.WEBFLOW_SITE_ID;
+  if (!webflowSiteId) {
+    console.warn("WEBFLOW_SITE_ID not set -- skipping single-tenant-to-account bootstrap; no account exists yet.");
+    return null;
+  }
+
+  let account = await store.getAccountByWebflowSiteId(webflowSiteId);
+  if (!account) {
+    account = await store.createAccount({ webflowSiteId });
+    console.log(`Created Account #1 for Webflow site ${webflowSiteId} (${account.id})`);
+  }
+
+  // Raw SQL, not store.js's functions -- those all require an accountId now,
+  // and this is the one-time bootstrap that supplies it for the first time.
+  await db.query(`UPDATE app_state SET account_id = $1 WHERE account_id IS NULL`, [account.id]);
+  await db.query(`UPDATE project_mappings SET account_id = $1 WHERE account_id IS NULL`, [account.id]);
+  await db.query(`UPDATE automations SET account_id = $1 WHERE account_id IS NULL`, [account.id]);
+
+  const { rows: pkRows } = await db.query(
+    `SELECT constraint_name FROM information_schema.table_constraints
+     WHERE table_name = 'app_state' AND constraint_type = 'PRIMARY KEY'`
+  );
+  const { rows: pkColRows } = pkRows[0]
+    ? await db.query(
+        `SELECT column_name FROM information_schema.key_column_usage WHERE table_name = 'app_state' AND constraint_name = $1`,
+        [pkRows[0].constraint_name]
+      )
+    : { rows: [] };
+  const currentPkColumns = pkColRows.map((r) => r.column_name).sort().join(",");
+  if (currentPkColumns !== "account_id,key") {
+    if (pkRows[0]) await db.query(`ALTER TABLE app_state DROP CONSTRAINT ${pkRows[0].constraint_name}`);
+    await db.query(`ALTER TABLE app_state ADD PRIMARY KEY (account_id, key)`);
+    console.log("Finalized app_state's primary key to (account_id, key)");
+  }
+
+  return account.id;
+}
+
+/**
  * One-time migration of the old singleton Auto Sync config into the new
  * automations table, run once at startup. The new CMS content-scope shape
  * mirrors the old settings.autoSync shape field-for-field, so this is a
@@ -75,15 +142,15 @@ app.use((err, req, res, next) => {
  * to "all" would silently expand scope to content the user never opted
  * into. No-ops if there's nothing to migrate or automations already exist.
  */
-async function migrateLegacyAutoSyncIfNeeded() {
-  const settings = await store.getSettings();
+async function migrateLegacyAutoSyncIfNeeded(accountId) {
+  const settings = await store.getSettings(accountId);
   const legacy = settings.autoSync;
   if (!legacy) return;
 
-  const existing = await store.listAutomations();
+  const existing = await store.listAutomations(accountId);
   if (existing.length > 0) return;
 
-  const automation = await store.createAutomation({
+  const automation = await store.createAutomation(accountId, {
     name: "Auto Sync (migrated)",
     enabled: legacy.enabled,
     contentScope: {
@@ -103,11 +170,11 @@ async function migrateLegacyAutoSyncIfNeeded() {
   // shape without enumerating real collections -- stash the flag so the
   // very next migration step (which can make a live Webflow call) expands it.
   if (legacy.allCollectionsEnabled) {
-    await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves: [], _expandAllCollections: true } });
+    await store.updateAutomation(accountId, automation.id, { contentScope: { scope: "leaves", leaves: [], _expandAllCollections: true } });
   }
   console.log(`Migrated legacy Auto Sync config into automation "${automation.name}" (${automation.id})`);
 
-  await store.updateSettings({ autoSync: null, autoSyncReconciliation: null });
+  await store.updateSettings(accountId, { autoSync: null, autoSyncReconciliation: null });
 }
 
 /**
@@ -120,8 +187,8 @@ async function migrateLegacyAutoSyncIfNeeded() {
  * -- store.js's automationRowToObject already derives it from the legacy
  * flush_times column for any row where the cadence column is still null.
  */
-async function migrateAutomationsToLeafShapeIfNeeded() {
-  const automations = await store.listAutomations();
+async function migrateAutomationsToLeafShapeIfNeeded(accountId) {
+  const automations = await store.listAutomations(accountId);
   for (const automation of automations) {
     const scope = automation.contentScope;
     const isLegacyShape = scope.type !== undefined;
@@ -131,7 +198,7 @@ async function migrateAutomationsToLeafShapeIfNeeded() {
     let leaves = scope.leaves || [];
     if (isLegacyShape) {
       if (scope.type === "all") {
-        await store.updateAutomation(automation.id, { contentScope: { scope: "all" } });
+        await store.updateAutomation(accountId, automation.id, { contentScope: { scope: "all" } });
         continue;
       }
       leaves = (scope.enabledCollectionIds || []).map((id) => ({
@@ -140,7 +207,7 @@ async function migrateAutomationsToLeafShapeIfNeeded() {
         filters: (scope.fieldConditions || {})[id] || [],
       }));
       if (!scope.allCollectionsEnabled) {
-        await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves } });
+        await store.updateAutomation(accountId, automation.id, { contentScope: { scope: "leaves", leaves } });
         continue;
       }
     }
@@ -150,7 +217,7 @@ async function migrateAutomationsToLeafShapeIfNeeded() {
     try {
       const collections = await webflow.listCollections();
       leaves = collections.map((c) => ({ kind: "collection", id: c.id, filters: [] }));
-      await store.updateAutomation(automation.id, { contentScope: { scope: "leaves", leaves } });
+      await store.updateAutomation(accountId, automation.id, { contentScope: { scope: "leaves", leaves } });
       console.log(`Expanded automation "${automation.name}" (${automation.id}) to ${leaves.length} real collections`);
     } catch (err) {
       console.error(`Failed to expand automation "${automation.name}" to real collections:`, err.message);
@@ -160,27 +227,39 @@ async function migrateAutomationsToLeafShapeIfNeeded() {
 
 db.migrate()
   .then(async () => {
-    await migrateLegacyAutoSyncIfNeeded();
-    await migrateAutomationsToLeafShapeIfNeeded();
-
-    // Startup self-heal: register/teardown the shared Webflow webhooks based
-    // on current automations state, in case a prior process crashed
-    // mid-registration or mid-teardown. Cheap and idempotent.
-    const automations = await store.listAutomations();
-    const anyNeedsWebhook = automations.some(
-      (a) => a.enabled && !a.archived && (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
-    );
-    if (anyNeedsWebhook) {
-      autoSyncWebhook.ensureWebhookRegistered().catch((err) => console.error("Automation webhook self-heal failed:", err.message));
+    const accountId = await migrateSingleTenantToAccountOne();
+    if (accountId) {
+      await migrateLegacyAutoSyncIfNeeded(accountId);
+      await migrateAutomationsToLeafShapeIfNeeded(accountId);
     }
-    const anyNeedsPagesWebhook = automations.some(
-      (a) =>
-        a.enabled &&
-        !a.archived &&
-        (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
-    );
-    if (anyNeedsPagesWebhook) {
-      autoSyncWebhook.ensurePagesWebhookRegistered().catch((err) => console.error("Pages webhook self-heal failed:", err.message));
+
+    // Startup self-heal: register/teardown each account's shared Webflow
+    // webhooks based on its current automations state, in case a prior
+    // process crashed mid-registration or mid-teardown. Cheap and
+    // idempotent, iterated per account (see autoSyncQueue.js's flush loop
+    // for the same reasoning).
+    const accounts = await store.listAllAccounts();
+    for (const account of accounts) {
+      const automations = await store.listAutomations(account.id);
+      const anyNeedsWebhook = automations.some(
+        (a) => a.enabled && !a.archived && (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
+      );
+      if (anyNeedsWebhook) {
+        autoSyncWebhook
+          .ensureWebhookRegistered(account.id)
+          .catch((err) => console.error(`Automation webhook self-heal failed for account ${account.id}:`, err.message));
+      }
+      const anyNeedsPagesWebhook = automations.some(
+        (a) =>
+          a.enabled &&
+          !a.archived &&
+          (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
+      );
+      if (anyNeedsPagesWebhook) {
+        autoSyncWebhook
+          .ensurePagesWebhookRegistered(account.id)
+          .catch((err) => console.error(`Pages webhook self-heal failed for account ${account.id}:`, err.message));
+      }
     }
 
     autoSyncQueue.startFlushLoop();

@@ -24,24 +24,24 @@ function needsPagesWebhook(automation) {
 }
 
 /**
- * Registers/tears down the two shared Webflow webhooks (CMS and, separately,
- * Pages/Components' site_publish) based on whether any enabled, non-archived
- * automation needs each. Called after every mutation below -- all four
- * underlying calls are idempotent (ensure* lists existing webhooks first;
- * teardown* is a no-op if nothing's registered), so calling this
- * unconditionally is safe.
+ * Registers/tears down this account's two Webflow webhooks (CMS and,
+ * separately, Pages/Components' site_publish) based on whether any of ITS
+ * enabled, non-archived automations need each. Called after every mutation
+ * below -- all four underlying calls are idempotent (ensure* lists existing
+ * webhooks first; teardown* is a no-op if nothing's registered), so calling
+ * this unconditionally is safe.
  */
-async function syncWebhookRegistrationToAutomationsState() {
-  const automations = await store.listAutomations();
+async function syncWebhookRegistrationToAutomationsState(accountId) {
+  const automations = await store.listAutomations(accountId);
 
   // Each awaited independently -- one webhook's registration failing (e.g.
   // APP_BASE_URL unset locally) must not prevent the other from being
   // attempted.
   try {
     if (automations.some(needsWebhook)) {
-      await autoSyncWebhook.ensureWebhookRegistered();
+      await autoSyncWebhook.ensureWebhookRegistered(accountId);
     } else {
-      await autoSyncWebhook.teardownWebhook();
+      await autoSyncWebhook.teardownWebhook(accountId);
     }
   } catch (err) {
     console.error("CMS webhook registration sync failed:", err.message);
@@ -49,9 +49,9 @@ async function syncWebhookRegistrationToAutomationsState() {
 
   try {
     if (automations.some(needsPagesWebhook)) {
-      await autoSyncWebhook.ensurePagesWebhookRegistered();
+      await autoSyncWebhook.ensurePagesWebhookRegistered(accountId);
     } else {
-      await autoSyncWebhook.teardownPagesWebhook();
+      await autoSyncWebhook.teardownPagesWebhook(accountId);
     }
   } catch (err) {
     console.error("Pages webhook registration sync failed:", err.message);
@@ -65,7 +65,8 @@ async function syncWebhookRegistrationToAutomationsState() {
  */
 router.get("/", async (req, res) => {
   try {
-    const [automations, settings] = await Promise.all([store.listAutomations(), store.getSettings()]);
+    const accountId = req.account.id;
+    const [automations, settings] = await Promise.all([store.listAutomations(accountId), store.getSettings(accountId)]);
     res.json({
       automations: automations.map((a) => ({
         ...a,
@@ -89,11 +90,12 @@ router.get("/", async (req, res) => {
  */
 router.post("/", async (req, res) => {
   try {
+    const accountId = req.account.id;
     const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
     if (!name || !contentScope) {
       return res.status(400).json({ error: "name and contentScope are required" });
     }
-    const automation = await store.createAutomation({
+    const automation = await store.createAutomation(accountId, {
       name,
       contentScope,
       cadence,
@@ -125,7 +127,7 @@ router.post("/", async (req, res) => {
     // creation into an error response (and, before this fix, threw before
     // the includeExisting backfill above ever got a chance to run).
     try {
-      await syncWebhookRegistrationToAutomationsState();
+      await syncWebhookRegistrationToAutomationsState(accountId);
     } catch (err) {
       console.error("Webhook registration sync failed after creating automation:", err.message);
     }
@@ -142,6 +144,7 @@ router.post("/", async (req, res) => {
  */
 router.put("/:id", async (req, res) => {
   try {
+    const accountId = req.account.id;
     const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride } = req.body || {};
     const patch = {};
     if (name !== undefined) patch.name = name;
@@ -152,10 +155,10 @@ router.put("/:id", async (req, res) => {
     if (includeExisting !== undefined) patch.includeExisting = includeExisting;
     if (orgUnitOverride !== undefined) patch.orgUnitOverride = orgUnitOverride;
 
-    const automation = await store.updateAutomation(req.params.id, patch);
+    const automation = await store.updateAutomation(accountId, req.params.id, patch);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     try {
-      await syncWebhookRegistrationToAutomationsState();
+      await syncWebhookRegistrationToAutomationsState(accountId);
     } catch (err) {
       console.error("Webhook registration sync failed after updating automation:", err.message);
     }
@@ -170,8 +173,9 @@ router.put("/:id", async (req, res) => {
  */
 router.delete("/:id", async (req, res) => {
   try {
-    await store.deleteAutomation(req.params.id);
-    await syncWebhookRegistrationToAutomationsState();
+    const accountId = req.account.id;
+    await store.deleteAutomation(accountId, req.params.id);
+    await syncWebhookRegistrationToAutomationsState(accountId);
     res.json({ deleted: true });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -180,9 +184,10 @@ router.delete("/:id", async (req, res) => {
 
 router.post("/:id/pause", async (req, res) => {
   try {
-    const automation = await store.updateAutomation(req.params.id, { enabled: false });
+    const accountId = req.account.id;
+    const automation = await store.updateAutomation(accountId, req.params.id, { enabled: false });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    await syncWebhookRegistrationToAutomationsState();
+    await syncWebhookRegistrationToAutomationsState(accountId);
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -191,9 +196,10 @@ router.post("/:id/pause", async (req, res) => {
 
 router.post("/:id/resume", async (req, res) => {
   try {
-    const automation = await store.updateAutomation(req.params.id, { enabled: true });
+    const accountId = req.account.id;
+    const automation = await store.updateAutomation(accountId, req.params.id, { enabled: true });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    await syncWebhookRegistrationToAutomationsState();
+    await syncWebhookRegistrationToAutomationsState(accountId);
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -209,9 +215,10 @@ router.post("/:id/resume", async (req, res) => {
  */
 router.post("/:id/archive", async (req, res) => {
   try {
-    const automation = await store.updateAutomation(req.params.id, { archived: true });
+    const accountId = req.account.id;
+    const automation = await store.updateAutomation(accountId, req.params.id, { archived: true });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    await syncWebhookRegistrationToAutomationsState();
+    await syncWebhookRegistrationToAutomationsState(accountId);
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -220,9 +227,10 @@ router.post("/:id/archive", async (req, res) => {
 
 router.post("/:id/unarchive", async (req, res) => {
   try {
-    const automation = await store.updateAutomation(req.params.id, { archived: false });
+    const accountId = req.account.id;
+    const automation = await store.updateAutomation(accountId, req.params.id, { archived: false });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    await syncWebhookRegistrationToAutomationsState();
+    await syncWebhookRegistrationToAutomationsState(accountId);
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -236,7 +244,7 @@ router.post("/:id/unarchive", async (req, res) => {
  */
 router.post("/:id/flush", async (req, res) => {
   try {
-    const automation = await store.getAutomation(req.params.id);
+    const automation = await store.getAutomation(req.account.id, req.params.id);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await automationScheduler.runAutomationCycle(automation);
     res.json({ flushed: true });
@@ -254,7 +262,7 @@ router.post("/:id/flush", async (req, res) => {
  */
 router.post("/flush-all", async (req, res) => {
   try {
-    const automations = await store.listAutomations();
+    const automations = await store.listAutomations(req.account.id);
     let itemsSynced = 0;
     for (const automation of automations) {
       if (autoSyncQueue.pendingCount(automation.id) === 0) continue;
@@ -273,9 +281,10 @@ router.post("/flush-all", async (req, res) => {
  */
 router.get("/:id/status", async (req, res) => {
   try {
-    const automation = await store.getAutomation(req.params.id);
+    const accountId = req.account.id;
+    const automation = await store.getAutomation(accountId, req.params.id);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
-    const settings = await store.getSettings();
+    const settings = await store.getSettings(accountId);
     res.json({
       pendingCount: autoSyncQueue.pendingCount(automation.id),
       pendingSince: autoSyncQueue.pendingSince(automation.id),

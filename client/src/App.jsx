@@ -1,12 +1,29 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar.jsx";
+import LoadingState from "./components/LoadingState.jsx";
+import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Translate from "./pages/Translate.jsx";
 import Runs from "./pages/Runs.jsx";
 import Templates from "./pages/Templates.jsx";
 import Settings from "./pages/Settings.jsx";
+import { useAuth } from "./context/AuthContext.jsx";
 
 export default function App() {
+  const { loading, user } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
+        <LoadingState label="Loading" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login />;
+  }
+
   return (
     <div className="flex min-h-screen bg-canvas">
       <NavBar />
