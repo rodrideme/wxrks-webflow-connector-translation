@@ -39,10 +39,14 @@ async function client() {
   // after ~40 rapid sequential requests -- easily hit when fetching one
   // DOM per page across a real site (unlike CMS items, which batch
   // fieldData into one paginated call per collection). Retries honor
-  // Retry-After when present, else back off with a fixed delay.
+  // Retry-After when present, else back off with a fixed delay. Also
+  // retries 403 -- confirmed live (Translate page bug) that Webflow can
+  // reject one of two near-simultaneous requests for the same data with a
+  // 403 rather than 429; a real permission-denied 403 still surfaces once
+  // retries are exhausted, this only smooths over the transient case.
   instance.interceptors.response.use(undefined, async (error) => {
     const { config, response } = error;
-    if (response?.status !== 429 || !config || config.__retryCount >= 5) {
+    if (![429, 403].includes(response?.status) || !config || config.__retryCount >= 5) {
       throw error;
     }
     config.__retryCount = (config.__retryCount || 0) + 1;
@@ -218,14 +222,34 @@ async function listPages() {
   return pages;
 }
 
+// Dedupes truly-concurrent callers of listStaticPages() onto a single real
+// Webflow request instead of each firing their own -- confirmed live: the
+// Translate page's mount effect calls getPages() and getPageFolders() in
+// the same Promise.all, and getPageFolders() independently re-fetches the
+// same static-pages list internally, so on every page load Webflow sees
+// two near-simultaneous requests for identical data. That burst was
+// tripping Webflow's abuse protection into a transient 403 for one of the
+// two (this app's own 429-retry interceptor already documents Webflow
+// throttling under rapid concurrent requests -- this is the same class of
+// problem, just returned as 403 instead of 429).
+const inFlightStaticPagesByAccount = new Map();
+
 /**
  * `listPages()` filtered to real static pages -- excludes CMS collection
  * template pages (identified by a non-null `collectionId`), which aren't
  * standalone translatable content and are already covered by CMS item sync.
  */
 async function listStaticPages() {
-  const pages = await listPages();
-  return pages.filter((p) => !p.collectionId);
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
+  if (inFlightStaticPagesByAccount.has(accountId)) {
+    return inFlightStaticPagesByAccount.get(accountId);
+  }
+  const promise = listPages()
+    .then((pages) => pages.filter((p) => !p.collectionId))
+    .finally(() => inFlightStaticPagesByAccount.delete(accountId));
+  inFlightStaticPagesByAccount.set(accountId, promise);
+  return promise;
 }
 
 // Sentinel for pages with a null `parentId` (not nested in any folder) --

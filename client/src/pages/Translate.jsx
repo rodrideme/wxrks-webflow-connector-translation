@@ -56,12 +56,27 @@ export default function Translate() {
 
   useEffect(() => {
     api.getSettings().then(setSettings);
-    Promise.all([
-      api.getCollections().then((res) => setCollections(res.collections || [])).catch((err) => setError(err.message)),
-      api.getPages().then((res) => setPages(res.pages || [])).catch((err) => setError(err.message)),
+    // allSettled (not all + per-call .catch) so the final `error` reflects
+    // whether any call is STILL failing once every one of them has
+    // finished, rather than whichever settled last -- with independent
+    // per-call .catch(setError), a later success could silently clear a
+    // real failure from an earlier call, or a same-tick unrelated success
+    // could race a failure and leave a stale error banner up even though
+    // every call that matters actually succeeded (confirmed live: this is
+    // what caused the Translate page's transient "Request failed with
+    // status code 403" banner to linger despite content loading fine).
+    // getPageFolders is intentionally excluded -- its own failure has
+    // never been surfaced as an error (non-critical, folders just don't
+    // group).
+    Promise.allSettled([
+      api.getCollections().then((res) => setCollections(res.collections || [])),
+      api.getPages().then((res) => setPages(res.pages || [])),
       api.getPageFolders().then((res) => setPageFolders(res.folders || [])).catch(() => {}),
-      api.getComponents().then((res) => setComponents(res.components || [])).catch((err) => setError(err.message)),
-    ]).finally(() => setInitialDataLoaded(true));
+      api.getComponents().then((res) => setComponents(res.components || [])),
+    ]).then(([collectionsResult, pagesResult, , componentsResult]) => {
+      const failed = [collectionsResult, pagesResult, componentsResult].find((r) => r.status === "rejected");
+      setError(failed ? failed.reason.message : null);
+    }).finally(() => setInitialDataLoaded(true));
   }, []);
 
   function leafKeyOf(kind, id) {
