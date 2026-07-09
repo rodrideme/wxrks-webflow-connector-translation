@@ -71,6 +71,7 @@ const api = {
   getWebflowLocales: () => request("/config/webflow-locales"),
   getSyncHistory: () => request("/sync/history"),
   getCollectionFields: (collectionId) => request(`/collections/${collectionId}/fields`),
+  getFieldsSummary: () => request("/collections/fields-summary"),
   updateFieldExclusions: (collectionId, excludedFields) =>
     request(`/collections/${collectionId}/field-exclusions`, {
       method: "PUT",

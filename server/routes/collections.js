@@ -18,6 +18,40 @@ router.get("/", async (req, res) => {
 });
 
 /**
+ * GET /api/collections/fields-summary
+ * Account-wide rollup of the field-exclusion / auto-translate config, for
+ * the Dashboard's setup checklist. Schema-only (one webflow.getCollection
+ * call per collection, no item fetches) so it stays cheap regardless of
+ * collection size -- unlike the removed backlog scan this replaces context
+ * for on the Dashboard.
+ */
+router.get("/fields-summary", async (req, res) => {
+  try {
+    const collections = await webflow.listCollections();
+    let totalTranslatableFields = 0;
+    let excludedFieldCount = 0;
+    let collectionsWithExclusions = 0;
+
+    for (const c of collections) {
+      const [collection, exclusions] = await Promise.all([
+        webflow.getCollection(c.id),
+        store.getFieldExclusions(req.account.id, c.id),
+      ]);
+      const schema = webflow.listFieldSchema(collection);
+      const translatable = schema.filter((f) => f.translatableByDefault);
+      const excluded = translatable.filter((f) => exclusions.includes(f.slug));
+      totalTranslatableFields += translatable.length;
+      excludedFieldCount += excluded.length;
+      if (excluded.length > 0) collectionsWithExclusions += 1;
+    }
+
+    res.json({ collectionCount: collections.length, totalTranslatableFields, excludedFieldCount, collectionsWithExclusions });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/collections/:id/fields
  * The collection's real field schema (type + translatable-by-default),
  * merged with any user-configured exclusions, for the field-exclusion UI.

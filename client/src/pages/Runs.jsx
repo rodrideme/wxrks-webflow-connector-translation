@@ -5,20 +5,9 @@ import { formatDateTime } from "../formatDate.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
+import { modeLabel, cadenceLabel } from "../runLabels.js";
 
 const linkClass = "font-medium text-accent-text hover:underline";
-
-function modeLabel(mode, automationName) {
-  if (mode === "pages-bulk") return "Pages · Bulk Sync";
-  if (mode === "pages-item") return "Pages · Item Sync";
-  if (mode === "components-bulk") return "Components · Bulk Sync";
-  if (mode === "components-item") return "Components · Item Sync";
-  if (mode === "bulk") return "Bulk Sync";
-  if (mode === "item") return "Item Sync";
-  if (mode === "auto") return "Auto Sync";
-  if (mode === "automation") return automationName ? `Automation · ${automationName}` : "Automation";
-  return mode;
-}
 
 function scopeSummary(contentScope, collections, pageFolders) {
   if (contentScope.scope === "all") return "every collection, page & component";
@@ -37,13 +26,6 @@ function scopeSummary(contentScope, collections, pageFolders) {
       return "components";
     })
     .join(", ");
-}
-
-function cadenceLabel(cadence) {
-  if (!cadence) return "—";
-  if (cadence.kind === "hourly") return `Hourly · every ${cadence.everyHours}h from ${cadence.startTime}`;
-  if (cadence.kind === "weekly") return `Weekly · ${cadence.weekday} ${cadence.time}`;
-  return `Daily · ${cadence.time}`;
 }
 
 function webhookPill(status, label) {
@@ -112,14 +94,17 @@ export default function Runs() {
       .catch((err) => setError(err.message));
   }, []);
 
-  // Deep-link support: /logs#<wxrksProjectUUID> scrolls straight to that
-  // batch's card (used by the Dashboard's active-projects list). Route
-  // itself now redirects to /runs, so the hash still lands here.
+  // Deep-link support: /logs#<wxrksProjectUUID> or /runs#automation-<id>
+  // scrolls straight to that card/row (used by the Dashboard's runs and
+  // running-automations summaries). Route itself now redirects to /runs,
+  // so the hash still lands here. Depends on both history and automations
+  // since either could be the element the hash is targeting, and each
+  // loads via its own effect/poll.
   useEffect(() => {
-    if (!history || !window.location.hash) return;
+    if ((!history && !automations) || !window.location.hash) return;
     const el = document.getElementById(window.location.hash.slice(1));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [history]);
+  }, [history, automations]);
 
   function collectionName(id) {
     const c = collections.find((c) => c.id === id);
@@ -199,6 +184,7 @@ export default function Runs() {
               {automations.map((a) => (
                 <div
                   key={a.id}
+                  id={`automation-${a.id}`}
                   onClick={() => setDetailAutomation(a)}
                   className="grid cursor-pointer grid-cols-[1fr_140px_100px_auto] items-center gap-4 border-t border-border px-4 py-3 first:border-t-0 hover:bg-surface-sunken"
                   style={{ opacity: a.archived ? 0.55 : 1 }}

@@ -101,6 +101,17 @@ async function getSiteLocales() {
   const primary = data?.locales?.primary;
   const secondary = data?.locales?.secondary || [];
   return {
+    // For the Dashboard's "Webflow connected" checklist row. `previewUrl`
+    // (confirmed live) is a Webflow-generated screenshot PNG, NOT a site
+    // URL -- don't use it. `customDomains[0].url` (assumed `{id, url}` per
+    // Webflow's docs, not yet confirmed live on an account with one bound)
+    // is preferred when present; otherwise fall back to the always-valid
+    // default `<shortName>.webflow.io` staging domain.
+    site: {
+      displayName: data?.displayName,
+      shortName: data?.shortName,
+      url: (data?.customDomains?.[0]?.url && `https://${data.customDomains[0].url}`) || `https://${data?.shortName}.webflow.io`,
+    },
     // cmsLocaleId included alongside tag: item webhook payloads identify a
     // locale by cmsLocaleId, not by tag, so Auto Sync's loop-prevention
     // filter needs this to compare against.

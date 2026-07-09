@@ -3,23 +3,12 @@ import { Link } from "react-router-dom";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
 import { formatDateTime } from "../formatDate.js";
+import { modeLabel, cadenceLabel } from "../runLabels.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
-
-function modeLabel(mode, automationName) {
-  if (mode === "pages-bulk") return "Pages · Bulk Sync";
-  if (mode === "pages-item") return "Pages · Item Sync";
-  if (mode === "components-bulk") return "Components · Bulk Sync";
-  if (mode === "components-item") return "Components · Item Sync";
-  if (mode === "bulk") return "Bulk Sync";
-  if (mode === "item") return "Item Sync";
-  if (mode === "auto") return "Auto Sync";
-  if (mode === "automation") return automationName ? `Automation · ${automationName}` : "Automation";
-  return mode;
-}
 
 function projectErrorCount(p) {
   return (p.updates || []).reduce(
@@ -37,180 +26,191 @@ function projectTotalWords(p) {
   return (p.items || []).reduce((sum, i) => sum + (i.wordCount || 0), 0);
 }
 
+/**
+ * Checklist row: a StatusPill + label + detail text + a link to the
+ * relevant Settings tab. "Optional" rows never render as an error/blocking
+ * state when incomplete -- just a neutral "Optional" pill.
+ */
+function ChecklistRow({ label, detail, complete, optional = false, to }) {
+  return (
+    <div className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
+      <StatusPill variant={complete ? "success" : "draft"} label={complete ? "Done" : optional ? "Optional" : "Not set up"} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[13.5px] font-semibold text-ink">{label}</div>
+        <div className="mt-0.5 text-xs text-ink-faint">{detail}</div>
+      </div>
+      <Link to={to} className={linkClass + " flex-none text-[13px]"}>
+        {complete ? "Manage" : "Set up"} →
+      </Link>
+    </div>
+  );
+}
+
 export default function Dashboard() {
-  const [backlog, setBacklog] = useState(null);
-  const [syncStatus, setSyncStatus] = useState(null);
-  const [orgUnits, setOrgUnits] = useState([]);
-  const [timezone, setTimezone] = useState(undefined);
+  const [locales, setLocales] = useState(null);
+  const [fieldsSummary, setFieldsSummary] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [automations, setAutomations] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
-      api.getBacklog(),
-      api.getSyncStatus(),
-      api.getOrgUnits().catch(() => ({ orgUnits: [] })),
+      api.getWebflowLocales().catch(() => null),
+      api.getFieldsSummary().catch(() => null),
       api.getSettings().catch(() => null),
+      api.getSyncHistory().catch(() => ({ history: [] })),
+      api.listAutomations().catch(() => ({ automations: [] })),
     ])
-      .then(([backlogRes, statusRes, orgUnitsRes, settingsRes]) => {
-        setBacklog(backlogRes);
-        setSyncStatus(statusRes);
-        setOrgUnits(orgUnitsRes.orgUnits || []);
-        setTimezone(settingsRes?.timezone);
+      .then(([localesRes, fieldsRes, settingsRes, historyRes, automationsRes]) => {
+        setLocales(localesRes);
+        setFieldsSummary(fieldsRes);
+        setSettings(settingsRes);
+        setHistory(historyRes.history || []);
+        setAutomations(automationsRes.automations || []);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
 
-  function orgUnitName(uuid) {
-    const o = orgUnits.find((o) => o.uuid === uuid);
-    return o ? o.name : uuid;
-  }
-
-  const backlogByCollection = (backlog?.backlog || []).reduce((acc, entry) => {
-    acc[entry.collectionName] = (acc[entry.collectionName] || 0) + 1;
-    return acc;
-  }, {});
-  const backlogEntries = Object.entries(backlogByCollection);
-  const maxBacklogCount = Math.max(1, ...backlogEntries.map(([, count]) => count));
-
   if (loading) return <p className="text-sm text-ink-soft">Loading dashboard...</p>;
   if (error) return <p className="text-sm font-medium text-status-error-fg">Error: {error}</p>;
 
-  const lastSync = syncStatus?.lastSync;
-  const lastSyncFailed = (lastSync?.summary?.errors ?? 0) > 0;
+  const timezone = settings?.timezone;
+  const recentRuns = history.slice(0, 3);
+  const runningAutomations = automations.filter((a) => a.enabled && !a.archived).slice(0, 3);
 
   return (
     <div>
       <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Dashboard</h1>
 
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Backlog by collection</p>
-      {backlogEntries.length === 0 ? (
-        <Card className="mb-6 px-4 py-4 text-sm text-ink-soft">No untranslated items. Backlog is clear.</Card>
-      ) : (
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {backlogEntries.map(([name, count]) => (
-            <Card key={name} className="p-3.5">
-              <div className="mb-2 text-[12.5px] font-semibold text-ink-soft">{name}</div>
-              <div className="text-xl font-semibold text-ink">
-                {count} <small className="text-xs font-medium text-ink-faint">items pending</small>
-              </div>
-              <div className="mt-2 h-[5px] overflow-hidden rounded-full bg-surface-sunken">
-                <div
-                  className="h-full rounded-full bg-accent"
-                  style={{ width: `${Math.max(6, Math.round((count / maxBacklogCount) * 100))}%` }}
-                />
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-      <p className="mb-6 -mt-3 text-xs text-ink-faint">Total backlog: {backlog?.count ?? 0}</p>
-
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Last sync result</p>
-      <Card className="mb-6 flex items-center gap-4 p-4">
-        {lastSync ? (
-          <>
-            <div
-              className={
-                "flex h-9 w-9 flex-none items-center justify-center rounded-lg text-base " +
-                (lastSyncFailed ? "bg-status-error-bg text-status-error-fg" : "bg-status-success-bg text-status-success-fg")
-              }
-            >
-              {lastSyncFailed ? "!" : "✓"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-ink">
-                {modeLabel(lastSync.mode, lastSync.summary?.automationName)} {lastSyncFailed ? "finished with errors" : "completed"}
-              </div>
-              <div className="mt-0.5 text-xs text-ink-faint">
-                <span className="font-mono tabular-nums">
-                  {lastSync.summary?.itemsSynced ?? lastSync.summary?.itemsProcessed ?? 0} synced
-                </span>
-                {lastSync.summary?.skipped ? (
-                  <>
-                    {" · "}
-                    <span className="font-mono tabular-nums">{lastSync.summary.skipped} skipped</span>
-                  </>
-                ) : null}
-                {lastSync.summary?.estimatedWordCount !== undefined && (
-                  <>
-                    {" · "}
-                    <span className="font-mono tabular-nums">
-                      {lastSync.summary.estimatedWordCount.toLocaleString()} words
-                    </span>
-                  </>
-                )}
-                {" · "}
-                {formatDateTime(lastSync.timestamp, timezone)}
-                {lastSync.summary?.errors ? (
-                  <>
-                    {" · "}
-                    <span className="font-medium text-status-error-fg">{lastSync.summary.errors} error(s)</span>
-                  </>
-                ) : (
-                  " · 0 errors"
-                )}
-              </div>
-            </div>
-            {lastSync.summary?.wxrksProjectUUID && (
-              <Link to={`/runs#${lastSync.summary.wxrksProjectUUID}`} className={linkClass + " flex-none text-[13px]"}>
-                View in Runs →
-              </Link>
-            )}
-          </>
-        ) : (
-          <p className="text-sm text-ink-soft">No syncs run yet.</p>
-        )}
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Setup</p>
+      <Card className="mb-8">
+        <ChecklistRow
+          label="Webflow connected"
+          detail={
+            locales?.site?.displayName
+              ? `${locales.site.displayName} — ${locales.site.url}`
+              : "Connected"
+          }
+          complete
+          to="/settings/account"
+        />
+        <ChecklistRow
+          label="Localization enabled"
+          detail={
+            (locales?.secondary || []).length > 0 ? (
+              <span className="flex flex-wrap gap-1">
+                {locales.secondary.map((l) => (
+                  <Chip key={l.tag}>{l.tag}</Chip>
+                ))}
+              </span>
+            ) : (
+              "No secondary locales enabled yet"
+            )
+          }
+          complete={(locales?.secondary || []).length > 0}
+          to="/settings/account"
+        />
+        <ChecklistRow
+          label="Automatic field adjustment"
+          detail={
+            fieldsSummary
+              ? `${fieldsSummary.totalTranslatableFields} fields across ${fieldsSummary.collectionCount} collections auto-selected` +
+                (fieldsSummary.excludedFieldCount > 0
+                  ? ` (${fieldsSummary.excludedFieldCount} excluded in ${fieldsSummary.collectionsWithExclusions} collection${fieldsSummary.collectionsWithExclusions === 1 ? "" : "s"})`
+                  : "")
+              : "—"
+          }
+          complete
+          to="/settings/fields"
+        />
+        <ChecklistRow
+          label="wxrks connected"
+          detail={settings?.wxrksConnected ? settings.wxrksAccessKeyMasked : "Not connected"}
+          complete={Boolean(settings?.wxrksConnected)}
+          to="/settings/wxrks"
+        />
+        <ChecklistRow
+          label="LLM connector (optional)"
+          detail={
+            settings?.llmConnected
+              ? settings.llmApiKeyMasked
+              : "Optional — enables transliteration fallback and future marketing features"
+          }
+          complete={Boolean(settings?.llmConnected)}
+          optional
+          to="/settings/llm"
+        />
       </Card>
 
-      <div className="mb-2 flex items-baseline justify-between">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Active wxrks projects</p>
-      </div>
-      <Card>
-        {(syncStatus?.activeProjects || []).length === 0 ? (
-          <p className="p-4 text-sm text-ink-soft">No translations in progress.</p>
-        ) : (
-          syncStatus.activeProjects.map((p) => {
-            const errCount = projectErrorCount(p);
-            const delivered = projectWordsDelivered(p);
-            const total = projectTotalWords(p);
-            return (
-              <div
-                key={p.wxrksProjectUUID}
-                className="flex flex-wrap items-center gap-3.5 border-t border-border px-4 py-3.5 first:border-t-0"
-              >
-                <div className="min-w-[10rem] flex-1">
-                  <div className="text-[13.5px] font-semibold text-ink">{modeLabel(p.mode, p.automationName)}</div>
-                  <div className="mt-0.5 font-mono text-[11.5px] text-ink-faint">{p.wxrksProjectUUID}</div>
-                </div>
-                {errCount > 0 ? (
-                  <StatusPill variant="error" label={`${errCount} error${errCount === 1 ? "" : "s"}`} />
-                ) : (
-                  <StatusPill variant="progress" />
-                )}
-                <div className="text-[12.5px] text-ink-soft">
-                  <span className="font-mono font-semibold tabular-nums text-ink">{delivered.toLocaleString()}</span> /{" "}
-                  <span className="font-mono tabular-nums">{total.toLocaleString()}</span> words
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {p.targetLocales.map((l) => (
-                    <Chip key={l}>{l}</Chip>
-                  ))}
-                </div>
-                <div className="ml-auto flex gap-3 whitespace-nowrap text-xs">
-                  <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
-                    wxrks ↗
-                  </a>
-                  <Link to={`/runs#${p.wxrksProjectUUID}`} className={linkClass}>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Latest runs</p>
+          <Card>
+            {recentRuns.length === 0 ? (
+              <p className="p-4 text-sm text-ink-soft">No runs yet.</p>
+            ) : (
+              recentRuns.map((p) => {
+                const errCount = projectErrorCount(p);
+                const delivered = projectWordsDelivered(p);
+                const total = projectTotalWords(p);
+                return (
+                  <div key={p.wxrksProjectUUID} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold text-ink">{modeLabel(p.mode, p.automationName)}</div>
+                      <div className="mt-0.5 text-[11px] text-ink-faint">{formatDateTime(p.createdAt, timezone)}</div>
+                    </div>
+                    {errCount > 0 ? (
+                      <StatusPill variant="error" label={`${errCount} error${errCount === 1 ? "" : "s"}`} />
+                    ) : (
+                      <StatusPill variant="success" label="Delivered" />
+                    )}
+                    <div className="text-[12px] text-ink-soft">
+                      <span className="font-mono font-semibold tabular-nums text-ink">{delivered.toLocaleString()}</span> /{" "}
+                      <span className="font-mono tabular-nums">{total.toLocaleString()}</span> words
+                    </div>
+                    <div className="ml-auto flex gap-3 whitespace-nowrap text-xs">
+                      <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
+                        wxrks ↗
+                      </a>
+                      <Link to={`/runs#${p.wxrksProjectUUID}`} className={linkClass}>
+                        Runs
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </Card>
+        </div>
+
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Running automations</p>
+          <Card>
+            {runningAutomations.length === 0 ? (
+              <p className="p-4 text-sm text-ink-soft">No automations running.</p>
+            ) : (
+              runningAutomations.map((a) => (
+                <div key={a.id} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-semibold text-ink">{a.name}</div>
+                    <div className="mt-0.5 text-[11px] text-ink-faint">{cadenceLabel(a.cadence)}</div>
+                  </div>
+                  <StatusPill variant="success" label="Running" />
+                  {a.pendingCount > 0 && (
+                    <span className="font-mono text-[11.5px] text-ink-faint">{a.pendingCount} pending</span>
+                  )}
+                  <Link to={`/runs#automation-${a.id}`} className={linkClass + " ml-auto text-xs"}>
                     Runs
                   </Link>
                 </div>
-              </div>
-            );
-          })
-        )}
-      </Card>
+              ))
+            )}
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
