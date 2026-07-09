@@ -141,7 +141,7 @@ router.get("/:id/items", async (req, res) => {
 });
 
 /**
- * GET /api/collections/:id/items-summary
+ * GET /api/collections/:id/items-summary?offset=&limit=
  * Lightweight version of GET /:id/items for the Translate page's "All
  * content" aggregate, which only ever needs each item's id + word count --
  * unlike the full endpoint, this skips fetching every target locale's item
@@ -149,26 +149,35 @@ router.get("/:id/items", async (req, res) => {
  * just 1 here), since per-locale delivery status isn't used by the
  * aggregate view at all. Confirmed live: for an 11-collection, 10-locale
  * site this cuts ~121 Webflow calls down to ~11 for the same aggregate.
+ *
+ * Paginated (one real Webflow page per call, via webflow.listItemsPage)
+ * rather than fetching the whole collection server-side before responding
+ * -- lets the client show real, incrementally-growing item-count progress
+ * even mid-way through one large collection, instead of that collection's
+ * whole contribution to the total arriving in one lump the moment it
+ * finally finishes.
  */
 router.get("/:id/items-summary", async (req, res) => {
   const { id } = req.params;
+  const limit = 100;
+  const offset = Number(req.query.offset) || 0;
   try {
     const [{ sourceLocale }, collection, exclusions] = await Promise.all([
       store.getSettings(req.account.id),
       webflow.getCollection(id),
       store.getFieldExclusions(req.account.id, id),
     ]);
-    const sourceItems = await webflow.listAllItems(id, { locale: sourceLocale });
+    const { items: pageItems, total } = await webflow.listItemsPage(id, { locale: sourceLocale, limit, offset });
     const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
 
-    const items = sourceItems.map((sourceItem) => {
+    const items = pageItems.map((sourceItem) => {
       const translatableFields = webflow.filterTranslatableFields(sourceItem.fieldData, fieldTypeBySlug, exclusions);
       return { id: sourceItem.id, wordCount: webflow.countWords(translatableFields) };
     });
 
-    res.json({ items });
+    res.json({ items, total, offset, limit });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: err.response?.data?.message || err.message });
   }
 });
 

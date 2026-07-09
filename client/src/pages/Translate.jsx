@@ -38,6 +38,7 @@ export default function Translate() {
   // itemsByCollection.
   const [collectionSummaries, setCollectionSummaries] = useState({}); // collectionId -> [{id, wordCount}]
   const [collectionSummaryErrors, setCollectionSummaryErrors] = useState({});
+  const [itemsLoadedByCollection, setItemsLoadedByCollection] = useState({}); // collectionId -> running item count, progress display only
   const [fieldsByCollection, setFieldsByCollection] = useState({});
   const [filtersByLeaf, setFiltersByLeaf] = useState({}); // leafKey -> Condition[]
   const [dateAfter, setDateAfter] = useState("");
@@ -134,18 +135,38 @@ export default function Translate() {
   // itemsByCollection so opening a specific collection's detail view
   // (which DOES need the full per-locale data) always does its own real
   // fetch rather than mistaking a summary-only load for "already loaded".
+  // Paginates itself (rather than one server-side call that blocks until
+  // the whole collection is fetched) so a single large collection's
+  // progress shows up incrementally via itemsLoadedByCollection -- without
+  // this, the "N of M collections" counter looked frozen at whatever
+  // smaller collections had already finished while one big collection
+  // silently loaded page by page in the background with no visible
+  // movement at all. collectionSummaries itself is only ever set once, on
+  // full completion -- it's the "is this collection done" source of
+  // truth, so a retry after a mid-pagination failure can't mistake a
+  // partial result for a finished one.
   async function loadCollectionSummary(collectionId, attempt = 1) {
     if (collectionSummaries[collectionId]) return collectionSummaries[collectionId];
     try {
-      const res = await api.getCollectionItemsSummary(collectionId);
-      setCollectionSummaries((prev) => ({ ...prev, [collectionId]: res.items }));
+      let offset = 0;
+      let accumulated = [];
+      let total = Infinity;
+      while (accumulated.length < total) {
+        const res = await api.getCollectionItemsSummary(collectionId, offset);
+        accumulated = accumulated.concat(res.items);
+        total = res.total;
+        offset += res.items.length;
+        setItemsLoadedByCollection((prev) => ({ ...prev, [collectionId]: accumulated.length }));
+        if (res.items.length === 0) break; // safety against an infinite loop on a malformed response
+      }
+      setCollectionSummaries((prev) => ({ ...prev, [collectionId]: accumulated }));
       setCollectionSummaryErrors((prev) => {
         if (!(collectionId in prev)) return prev;
         const next = { ...prev };
         delete next[collectionId];
         return next;
       });
-      return res.items;
+      return accumulated;
     } catch (err) {
       if (attempt < 3) {
         await new Promise((r) => setTimeout(r, 1200 * attempt));
@@ -200,6 +221,12 @@ export default function Translate() {
 
   const collectionsDoneCount = collections.filter((c) => collectionSummaries[c.id] || collectionSummaryErrors[c.id]).length;
   const failedCollectionIds = Object.keys(collectionSummaryErrors);
+  // Sums itemsLoadedByCollection (updated on every page, mid-pagination)
+  // rather than collectionSummaries (only set once a collection fully
+  // finishes) -- so this keeps climbing even while one large collection
+  // is still loading, instead of looking frozen at whatever smaller
+  // collections had already completed.
+  const itemsCountedSoFar = Object.values(itemsLoadedByCollection).reduce((s, n) => s + n, 0);
 
   function retryFailedCollections() {
     if (failedCollectionIds.length === 0) return;
@@ -735,7 +762,7 @@ export default function Translate() {
             <LoadingState
               label={
                 collections.length > 0
-                  ? `Loading item counts — ${collectionsDoneCount} of ${collections.length} collections`
+                  ? `${itemsCountedSoFar.toLocaleString()} items counted — ${collectionsDoneCount} of ${collections.length} collections done`
                   : "Computing totals across your site"
               }
             />

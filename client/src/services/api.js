@@ -56,7 +56,7 @@ const api = {
   logout: () => request("/auth/logout", { method: "POST" }),
   getCollections: () => request("/collections"),
   getCollectionItems: (collectionId) => request(`/collections/${collectionId}/items`),
-  getCollectionItemsSummary: (collectionId) => request(`/collections/${collectionId}/items-summary`),
+  getCollectionItemsSummary: (collectionId, offset = 0) => request(`/collections/${collectionId}/items-summary?offset=${offset}`),
   getBacklog: () => request("/backlog"),
   getSyncStatus: () => request("/sync/status"),
   syncItem: (collectionId, itemIds, options = {}) =>

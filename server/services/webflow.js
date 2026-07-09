@@ -446,23 +446,36 @@ async function updateComponentDom(componentId, locale, nodeUpdates) {
 }
 
 /**
+ * Fetches exactly one page of a collection's items (Webflow caps each page
+ * at 100). Exposed as its own function -- not just an implementation
+ * detail of listAllItems below -- so a caller that wants to show real,
+ * incremental progress across a large collection (e.g. the Translate
+ * page's "All content" item-count aggregate) can drive the pagination
+ * loop itself instead of waiting for every page to be fetched server-side
+ * before anything comes back at all.
+ */
+async function listItemsPage(collectionId, { locale, limit = 100, offset = 0 } = {}) {
+  const cmsLocaleId = await resolveCmsLocaleId(locale);
+  const { data } = await (await client()).get(`/collections/${collectionId}/items`, {
+    params: { cmsLocaleId, limit, offset },
+  });
+  const items = data?.items || [];
+  const total = data?.pagination?.total ?? items.length;
+  return { items, total };
+}
+
+/**
  * Fetch all items in a collection for a given locale, handling pagination
  * (Webflow caps each page at 100 items).
  */
 async function listAllItems(collectionId, { locale } = {}) {
-  const cmsLocaleId = await resolveCmsLocaleId(locale);
   const limit = 100;
   let offset = 0;
   let items = [];
 
   while (true) {
-    const { data } = await (await client()).get(`/collections/${collectionId}/items`, {
-      params: { cmsLocaleId, limit, offset },
-    });
-    const page = data?.items || [];
+    const { items: page, total } = await listItemsPage(collectionId, { locale, limit, offset });
     items = items.concat(page);
-
-    const total = data?.pagination?.total ?? items.length;
     offset += limit;
     if (items.length >= total || page.length === 0) break;
   }
@@ -660,6 +673,7 @@ module.exports = {
   getCollection,
   getSiteLocales,
   listAllItems,
+  listItemsPage,
   getItem,
   patchItemLocale,
   publishItems,
