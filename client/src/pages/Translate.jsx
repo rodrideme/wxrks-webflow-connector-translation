@@ -80,8 +80,18 @@ export default function Translate() {
       api.getPageFolders().then((res) => setPageFolders(res.folders || [])).catch(() => {}),
       api.getComponents().then((res) => setComponents(res.components || [])),
     ]).then(([collectionsResult, pagesResult, , componentsResult]) => {
-      const failed = [collectionsResult, pagesResult, componentsResult].find((r) => r.status === "rejected");
-      setError(failed ? failed.reason.message : null);
+      // Labeled so a persistent (not transient) failure -- e.g. a stale
+      // OAuth token whose scope predates a later expansion, which fails
+      // the same way on every retry -- at least says WHICH of the three
+      // calls it is, instead of a bare, unhelpful "Request failed with
+      // status code 403".
+      const labeled = [
+        { label: "Collections", result: collectionsResult },
+        { label: "Pages", result: pagesResult },
+        { label: "Components", result: componentsResult },
+      ];
+      const failed = labeled.find((l) => l.result.status === "rejected");
+      setError(failed ? `${failed.label}: ${failed.result.reason.message}` : null);
     }).finally(() => setInitialDataLoaded(true));
   }, []);
 

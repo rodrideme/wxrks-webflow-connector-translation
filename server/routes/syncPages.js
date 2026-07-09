@@ -172,7 +172,7 @@ router.get("/list", async (req, res) => {
       }),
     });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: err.response?.data?.message || err.message });
   }
 });
 

@@ -13,7 +13,7 @@ router.get("/", async (req, res) => {
     const collections = await webflow.listCollections();
     res.json({ collections });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: err.response?.data?.message || err.message });
   }
 });
 
