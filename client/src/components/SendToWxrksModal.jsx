@@ -190,15 +190,22 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
         });
         onRecurringCreated?.(automation);
         // "Include existing content on the first run" backfills immediately
-        // rather than waiting for the schedule -- when that backfill found
-        // something to send, the server hands back a job to poll so the
-        // wizard can show the same progress-bar-with-cancel UI a one-time
-        // send already gets, instead of it happening invisibly.
+        // rather than waiting for the schedule -- the server hands back a
+        // job to poll right away (before it has even started scanning, let
+        // alone sending anything), so the wizard can close instantly and
+        // show real progress -- first an indeterminate "Scanning..." state
+        // (job.scanning), then the normal item-by-item progress bar once
+        // scanning hands off to the actual send -- instead of blocking this
+        // request on the scan itself, which for "All content" scope can
+        // mean 100+ individual Webflow calls with no bulk endpoint
+        // available (confirmed live: this used to leave the modal stuck on
+        // "Sending..." for close to two minutes with zero feedback).
         if (automation.firstSyncJob) {
           onJobsStarted([
             {
               jobId: automation.firstSyncJob.jobId,
               total: automation.firstSyncJob.total,
+              scanning: automation.firstSyncJob.scanning,
               wxrksProjectUUID: null,
               kind: "automation",
               label: contentLabel,

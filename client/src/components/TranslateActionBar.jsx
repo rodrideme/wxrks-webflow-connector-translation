@@ -23,7 +23,19 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
 
   return (
     <div className="sticky bottom-0 z-10 -mx-8 mt-auto border-t border-border bg-surface px-8 py-3.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
-      {phase === "running" && progress && (
+      {phase === "running" && progress && progress.scanning && (
+        <div className="flex items-center gap-4">
+          <StatusPill variant="progress" label="Scanning your site…" />
+          <span className="flex-1 text-[13px] text-ink-faint">
+            Checking pages, components, and collections for matching content — this can take a moment for a large site.
+          </span>
+          <button onClick={onCancel} className={btnGhost}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {phase === "running" && progress && !progress.scanning && (
         <div className="flex items-center gap-4">
           <StatusPill variant="progress" label={`Creating ${progress.jobCount > 1 ? `${progress.jobCount} projects` : "project"}…`} />
           <span className="flex-1">

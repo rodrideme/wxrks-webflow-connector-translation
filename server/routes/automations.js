@@ -108,18 +108,15 @@ router.post("/", async (req, res) => {
 
     // Backfill currently-matching content right away rather than waiting for
     // this automation's own cadence tick (up to a day away) or the hourly
-    // CMS reconciliation safety net. The scan phase is awaited here (it's
-    // also what determines the item count a progress bar needs) so the
-    // response can hand the wizard a jobId to poll -- the actual per-item
-    // wxrks upload then continues in the background, same as a one-time
-    // send's job.
+    // CMS reconciliation safety net. Neither the scan nor the actual wxrks
+    // upload is awaited here -- both run in the background after this
+    // responds; startFirstSyncJob creates the job synchronously and hands
+    // back a jobId to poll immediately (see its own docstring for why:
+    // scanning "All content" can mean 100+ individual Webflow calls with no
+    // bulk endpoint available, which used to block this whole response).
     let firstSyncJob = null;
     if (automation.includeExisting) {
-      try {
-        firstSyncJob = await automationScheduler.startFirstSyncJob(automation);
-      } catch (err) {
-        console.error(`Automation "${automation.name}" first-run sync failed:`, err.message);
-      }
+      firstSyncJob = automationScheduler.startFirstSyncJob(automation);
     }
 
     // Best-effort: the automation is already saved at this point, and a

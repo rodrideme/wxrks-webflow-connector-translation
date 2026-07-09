@@ -818,6 +818,12 @@ function createSyncJob(job) {
     status: "running",
     cancelled: false,
     startedAt: new Date().toISOString(),
+    // True only for an automation's first-run job between being created and
+    // the scan finishing (see automationScheduler.js's startFirstSyncJob) --
+    // `total`/`processed` aren't meaningful counts yet at that point, so the
+    // client shows an indeterminate "Scanning..." state instead of a
+    // fraction while this is true.
+    scanning: job.scanning || false,
   });
   return syncJobs.get(job.id);
 }

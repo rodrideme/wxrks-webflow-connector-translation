@@ -570,6 +570,10 @@ export default function Translate() {
           processed: jobs.reduce((sum, j) => sum + (j.processed || 0), 0),
           total: jobs.reduce((sum, j) => sum + (j.total || 0), 0),
           jobCount: jobs.length,
+          // True while an automation's first-run job is still scanning
+          // (see automationScheduler.js's startFirstSyncJob) -- total/
+          // processed aren't real counts yet at that point.
+          scanning: jobs.some((j) => j.scanning),
         }
       : null;
 

@@ -160,19 +160,25 @@ async function runAutomationCycle(automation) {
  * checkpoint-less automation) so a scope spanning multiple content kinds
  * still lands in a single wxrks project.
  *
- * Split into two phases so the caller (routes/automations.js) can await just
- * the scan and hand the wizard a jobId to poll -- the same progress-bar-
- * with-cancel UI a one-time send already uses -- rather than the whole
- * backfill happening invisibly in the background with no way to watch it or
- * cancel it:
- *   1. scanForFirstSync: enumerates matching content and enqueues it. Awaited
- *      by the route before responding (this is also the phase that
- *      determines `total`, which a progress bar needs up front).
- *   2. startFirstSyncJob: runs (1), then registers a sync job and hands
- *      autoSyncQueue.flush that job's id so it tracks progress/cancellation
- *      exactly like routes/sync.js's one-time item sync does. Returns
- *      { jobId, total } for the route to include in its response, or null
- *      if nothing currently matches (nothing to show progress for).
+ * Split into two phases so the caller (routes/automations.js) can respond
+ * to the wizard IMMEDIATELY with a jobId to poll, instead of blocking the
+ * whole automation-creation request on the scan -- confirmed live this can
+ * mean on the order of 100+ individual Webflow calls for "All content"
+ * scope (one DOM fetch per page/component; unlike CMS items there's no
+ * bulk endpoint for those), which the user experienced as the wizard's
+ * modal sitting on "Sending..." for close to two minutes with zero
+ * feedback, unlike a CMS-only selection (which skips the Pages/Components
+ * scan entirely and uses CMS's cheap paginated bulk fetch instead).
+ *   1. scanForFirstSync: enumerates matching content and enqueues it.
+ *   2. startFirstSyncJob: creates a sync job SYNCHRONOUSLY, before any
+ *      scanning happens, and returns { jobId, total: 0, scanning: true }
+ *      right away. The scan, and then the actual flush, both run after in
+ *      the background, updating that same job as they progress. The
+ *      wizard polls it exactly like a one-time send's job -- see
+ *      Translate.jsx/TranslateActionBar.jsx's `scanning` handling -- showing
+ *      a "Scanning your site..." state while `scanning` is true, then the
+ *      normal item-by-item progress bar once the scan hands off to
+ *      flush() and `total` becomes real.
  */
 async function scanForFirstSync(automation) {
   const settings = await store.getSettings(automation.accountId);
@@ -188,37 +194,45 @@ async function scanForFirstSync(automation) {
   return settings;
 }
 
-async function startFirstSyncJob(automation) {
-  const scanCutoff = new Date();
-  const settings = await scanForFirstSync(automation);
-
-  const total = autoSyncQueue.pendingCount(automation.id);
-  if (total === 0) {
-    await store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString());
-    return null;
-  }
-
+function startFirstSyncJob(automation) {
   const jobId = crypto.randomUUID();
-  const orgUnitUUID = automation.orgUnitOverride || settings.orgUnitUUID;
-  const targetLocales = automation.targetLocalesOverride?.length ? automation.targetLocalesOverride : settings.targetLocales;
   store.createSyncJob({
     id: jobId,
     mode: "automation",
-    total,
-    wxrksProjectUUID: null, // set once flush() creates the project
-    orgUnitUUID,
-    targetLocales,
+    total: 0,
+    wxrksProjectUUID: null,
+    orgUnitUUID: automation.orgUnitOverride || null,
+    targetLocales: automation.targetLocalesOverride || [],
+    scanning: true,
   });
 
-  // Fire-and-forget from here -- the route responds with {jobId, total} as
-  // soon as this function returns; actual per-item processing (and
-  // advancing the checkpoint once done) continues after.
-  autoSyncQueue
-    .flush(automation.id, { jobId })
-    .then(() => store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString()))
-    .catch((err) => console.error(`Automation "${automation.name}" first-run flush failed:`, err.message));
+  // Fire-and-forget from here -- the route responds with {jobId, total: 0,
+  // scanning: true} as soon as this function returns, before any of the
+  // scan's real Webflow calls have even started.
+  (async () => {
+    const scanCutoff = new Date();
+    try {
+      const settings = await scanForFirstSync(automation);
+      const total = autoSyncQueue.pendingCount(automation.id);
+      if (total === 0) {
+        await store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString());
+        store.updateSyncJob(jobId, { status: "completed", scanning: false });
+        return;
+      }
 
-  return { jobId, total };
+      const orgUnitUUID = automation.orgUnitOverride || settings.orgUnitUUID;
+      const targetLocales = automation.targetLocalesOverride?.length ? automation.targetLocalesOverride : settings.targetLocales;
+      store.updateSyncJob(jobId, { total, orgUnitUUID, targetLocales, scanning: false });
+
+      await autoSyncQueue.flush(automation.id, { jobId });
+      await store.advanceAutomationCheckpoint(automation, scanCutoff.toISOString());
+    } catch (err) {
+      console.error(`Automation "${automation.name}" first-run scan/flush failed:`, err.message);
+      store.updateSyncJob(jobId, { status: "error", scanning: false });
+    }
+  })();
+
+  return { jobId, total: 0, scanning: true };
 }
 
 /**
