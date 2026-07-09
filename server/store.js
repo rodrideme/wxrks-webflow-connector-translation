@@ -564,8 +564,8 @@ async function deleteSession(sessionId) {
 }
 
 // ---------------------------------------------------------------------------
-// Webflow OAuth connections (token storage; not yet consumed for API calls
-// -- see the plan file's Phase 2)
+// Webflow OAuth connections (Phase 2: consumed by services/webflow.js's
+// client()/siteId() for real per-account API access)
 
 async function upsertWebflowConnection(accountId, { webflowSiteId, accessTokenCiphertext, accessTokenIv, refreshTokenCiphertext, refreshTokenIv, scope, authorizationId, connectedByUserId }) {
   await db.query(
@@ -578,6 +578,24 @@ async function upsertWebflowConnection(accountId, { webflowSiteId, accessTokenCi
        authorization_id = $8, connected_by_user_id = $9, status = 'active', last_verified_at = now()`,
     [accountId, webflowSiteId, accessTokenCiphertext, accessTokenIv, refreshTokenCiphertext, refreshTokenIv, scope, authorizationId, connectedByUserId]
   );
+}
+
+/**
+ * Decrypted { accessToken, webflowSiteId } for this account's own Webflow
+ * OAuth grant, or `undefined` if it's never connected one (e.g. "Account
+ * #1", migrated from this app's original single-tenant setup before
+ * accounts existed at all -- see services/webflow.js's client()/siteId(),
+ * which fall back to the static env-configured token for exactly this
+ * case, so that pre-existing account keeps working unchanged).
+ */
+async function getWebflowConnection(accountId) {
+  const { rows } = await db.query(`SELECT * FROM webflow_connections WHERE account_id = $1 AND status = 'active'`, [
+    accountId,
+  ]);
+  if (!rows[0]) return undefined;
+  const tokenCrypto = require("./services/tokenCrypto");
+  const accessToken = tokenCrypto.decrypt(rows[0].access_token_ciphertext, rows[0].access_token_iv);
+  return { accessToken, webflowSiteId: rows[0].webflow_site_id };
 }
 
 // ---------------------------------------------------------------------------
@@ -913,6 +931,7 @@ module.exports = {
   touchSession,
   deleteSession,
   upsertWebflowConnection,
+  getWebflowConnection,
   listAutomations,
   getAutomation,
   getAutomationByIdUnscoped,

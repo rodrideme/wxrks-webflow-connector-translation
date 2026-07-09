@@ -8,6 +8,7 @@
  */
 
 const store = require("../store");
+const accountContext = require("../services/accountContext");
 
 const SESSION_COOKIE_NAME = "session_id";
 
@@ -44,7 +45,12 @@ async function requireSession(req, res, next) {
   // shouldn't add a write-then-wait to every single authenticated request.
   store.touchSession(sessionId).catch(() => {});
 
-  next();
+  // Establishes this request's account context for the entire remaining
+  // async call chain (see services/accountContext.js's docstring) -- this
+  // is what lets services/webflow.js's client()/siteId() resolve the right
+  // account's own Webflow credentials without any other file needing to
+  // know or pass accountId around.
+  accountContext.run(req.account.id, next);
 }
 
 module.exports = { requireSession, SESSION_COOKIE_NAME, parseCookies };

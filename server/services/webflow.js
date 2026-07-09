@@ -7,14 +7,32 @@ const NON_TRANSLATABLE_KEYS = new Set(["slug", "id", "_draft", "_archived"]);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function client() {
-  const token = process.env.WEBFLOW_API_TOKEN;
-  if (!token) {
-    throw new Error("WEBFLOW_API_TOKEN is not configured");
+// Phase 2 (multi-user login): each account uses its own Webflow OAuth token
+// (see store.getWebflowConnection), identified implicitly via
+// accountContext -- see that module's docstring for why this is an
+// AsyncLocalStorage-based context rather than an explicit parameter here.
+// Falls back to the static env-configured token/site for any account that
+// has never connected its own Webflow site via OAuth (in practice, just
+// "Account #1", migrated from this app's original single-tenant setup
+// before accounts existed at all) -- lazy-required to avoid a circular
+// require (store.js itself requires this file for a few constants).
+async function resolveConnection() {
+  const accountContext = require("./accountContext");
+  const store = require("../store");
+  const accountId = accountContext.getAccountId();
+  const connection = await store.getWebflowConnection(accountId);
+  if (connection) return connection;
+  return { accessToken: process.env.WEBFLOW_API_TOKEN, webflowSiteId: process.env.WEBFLOW_SITE_ID };
+}
+
+async function client() {
+  const { accessToken } = await resolveConnection();
+  if (!accessToken) {
+    throw new Error("This account hasn't connected a Webflow site, and WEBFLOW_API_TOKEN isn't configured either");
   }
   const instance = axios.create({
     baseURL: WEBFLOW_API_URL,
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   // Confirmed live (Pages Phase 2 testing): Webflow starts returning 429s
@@ -37,16 +55,16 @@ function client() {
   return instance;
 }
 
-function siteId() {
-  const id = process.env.WEBFLOW_SITE_ID;
-  if (!id) {
-    throw new Error("WEBFLOW_SITE_ID is not configured");
+async function siteId() {
+  const { webflowSiteId } = await resolveConnection();
+  if (!webflowSiteId) {
+    throw new Error("This account hasn't connected a Webflow site, and WEBFLOW_SITE_ID isn't configured either");
   }
-  return id;
+  return webflowSiteId;
 }
 
 async function listCollections() {
-  const { data } = await client().get(`/sites/${siteId()}/collections`);
+  const { data } = await (await client()).get(`/sites/${await siteId()}/collections`);
   return data?.collections || [];
 }
 
@@ -66,7 +84,7 @@ async function listCollections() {
  * to its cmsLocaleId via resolveCmsLocaleId() before touching an item.
  */
 async function getSiteLocales() {
-  const { data } = await client().get(`/sites/${siteId()}`);
+  const { data } = await (await client()).get(`/sites/${await siteId()}`);
   const primary = data?.locales?.primary;
   const secondary = data?.locales?.secondary || [];
   return {
@@ -83,15 +101,21 @@ async function getSiteLocales() {
 // Cached for the process lifetime -- site locale config changes rarely, and
 // this avoids an extra GET /sites/:id round trip on every single item
 // read/write (some of which, like listAllItems, already loop over pages).
-let siteLocalesCache = null;
+// Keyed by accountId (Phase 2, multi-user login): different accounts are
+// different Webflow sites with different locale configs, so a single
+// shared cache would leak one account's locales into another's requests.
+const siteLocalesCacheByAccount = new Map();
 
 async function resolveCmsLocaleId(tag) {
   if (!tag) return undefined;
-  if (!siteLocalesCache) {
-    siteLocalesCache = await getSiteLocales();
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
+  if (!siteLocalesCacheByAccount.has(accountId)) {
+    siteLocalesCacheByAccount.set(accountId, await getSiteLocales());
   }
-  if (siteLocalesCache.primary?.tag === tag) return siteLocalesCache.primary.cmsLocaleId;
-  const match = siteLocalesCache.secondary.find((l) => l.tag === tag);
+  const cache = siteLocalesCacheByAccount.get(accountId);
+  if (cache.primary?.tag === tag) return cache.primary.cmsLocaleId;
+  const match = cache.secondary.find((l) => l.tag === tag);
   if (!match) {
     throw new Error(`"${tag}" is not a registered locale on this Webflow site`);
   }
@@ -101,19 +125,22 @@ async function resolveCmsLocaleId(tag) {
 // Full site-locale objects (with the plain `id` field, not just
 // `cmsLocaleId`) -- Pages/Components use a DIFFERENT locale id than CMS
 // items do (confirmed live: passing a cmsLocaleId into a Pages /dom call
-// 400s "must be a valid locale"). Cached alongside siteLocalesCache since
-// both come from the same GET /sites/:id call.
-let rawSiteLocalesCache = null;
+// 400s "must be a valid locale"). Cached alongside siteLocalesCacheByAccount
+// since both come from the same GET /sites/:id call; same per-account
+// keying and same reasoning.
+const rawSiteLocalesCacheByAccount = new Map();
 
 async function getRawSiteLocales() {
-  if (!rawSiteLocalesCache) {
-    const { data } = await client().get(`/sites/${siteId()}`);
-    rawSiteLocalesCache = {
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
+  if (!rawSiteLocalesCacheByAccount.has(accountId)) {
+    const { data } = await (await client()).get(`/sites/${await siteId()}`);
+    rawSiteLocalesCacheByAccount.set(accountId, {
       primary: data?.locales?.primary,
       secondary: (data?.locales?.secondary || []).filter((l) => l.enabled),
-    };
+    });
   }
-  return rawSiteLocalesCache;
+  return rawSiteLocalesCacheByAccount.get(accountId);
 }
 
 /**
@@ -149,21 +176,21 @@ async function isPrimaryPageLocaleId(localeId) {
  * account's WEBFLOW_API_TOKEN already has (worked without any token change).
  */
 async function registerWebhook(triggerType, url) {
-  const { data } = await client().post(`/sites/${siteId()}/webhooks`, { triggerType, url });
+  const { data } = await (await client()).post(`/sites/${await siteId()}/webhooks`, { triggerType, url });
   return data;
 }
 
 async function listWebhooks() {
-  const { data } = await client().get(`/sites/${siteId()}/webhooks`);
+  const { data } = await (await client()).get(`/sites/${await siteId()}/webhooks`);
   return data?.webhooks || [];
 }
 
 async function deleteWebhook(webhookId) {
-  await client().delete(`/webhooks/${webhookId}`);
+  await (await client()).delete(`/webhooks/${webhookId}`);
 }
 
 async function getCollection(collectionId) {
-  const { data } = await client().get(`/collections/${collectionId}`);
+  const { data } = await (await client()).get(`/collections/${collectionId}`);
   return data;
 }
 
@@ -179,7 +206,7 @@ async function listPages() {
   let pages = [];
 
   while (true) {
-    const { data } = await client().get(`/sites/${siteId()}/pages`, { params: { limit, offset } });
+    const { data } = await (await client()).get(`/sites/${await siteId()}/pages`, { params: { limit, offset } });
     const page = data?.pages || [];
     pages = pages.concat(page);
 
@@ -213,7 +240,7 @@ const NO_FOLDER_ID = "__root__";
  * way, one call per distinct folder id referenced by some page's `parentId`.
  */
 async function getPageFolder(folderId) {
-  const { data } = await client().get(`/pages/${folderId}`);
+  const { data } = await (await client()).get(`/pages/${folderId}`);
   return data;
 }
 
@@ -280,7 +307,7 @@ async function getPageDom(pageId, { locale } = {}) {
   let nodes = [];
 
   while (true) {
-    const { data } = await client().get(`/pages/${pageId}/dom`, { params: { localeId, limit, offset } });
+    const { data } = await (await client()).get(`/pages/${pageId}/dom`, { params: { localeId, limit, offset } });
     const page = data?.nodes || [];
     nodes = nodes.concat(page);
 
@@ -313,7 +340,7 @@ async function updatePageDom(pageId, locale, nodeUpdates) {
     // with a clearer, attributable error.
     throw new Error(`Refusing to write page content to the primary locale ("${locale}") -- only secondary locales are writable via the API.`);
   }
-  const { data } = await client().post(`/pages/${pageId}/dom`, { nodes: nodeUpdates }, { params: { localeId } });
+  const { data } = await (await client()).post(`/pages/${pageId}/dom`, { nodes: nodeUpdates }, { params: { localeId } });
   return data;
 }
 
@@ -328,7 +355,7 @@ async function listComponents() {
   let components = [];
 
   while (true) {
-    const { data } = await client().get(`/sites/${siteId()}/components`, { params: { limit, offset } });
+    const { data } = await (await client()).get(`/sites/${await siteId()}/components`, { params: { limit, offset } });
     const page = data?.components || [];
     components = components.concat(page);
 
@@ -355,7 +382,7 @@ async function getComponentDom(componentId, { locale } = {}) {
   let nodes = [];
 
   while (true) {
-    const { data } = await client().get(`/sites/${siteId()}/components/${componentId}/dom`, { params: { localeId, limit, offset } });
+    const { data } = await (await client()).get(`/sites/${await siteId()}/components/${componentId}/dom`, { params: { localeId, limit, offset } });
     const page = data?.nodes || [];
     nodes = nodes.concat(page);
 
@@ -381,7 +408,7 @@ async function updateComponentDom(componentId, locale, nodeUpdates) {
   if (await isPrimaryPageLocaleId(localeId)) {
     throw new Error(`Refusing to write component content to the primary locale ("${locale}") -- only secondary locales are writable via the API.`);
   }
-  const { data } = await client().post(`/sites/${siteId()}/components/${componentId}/dom`, { nodes: nodeUpdates }, { params: { localeId } });
+  const { data } = await (await client()).post(`/sites/${await siteId()}/components/${componentId}/dom`, { nodes: nodeUpdates }, { params: { localeId } });
   return data;
 }
 
@@ -396,7 +423,7 @@ async function listAllItems(collectionId, { locale } = {}) {
   let items = [];
 
   while (true) {
-    const { data } = await client().get(`/collections/${collectionId}/items`, {
+    const { data } = await (await client()).get(`/collections/${collectionId}/items`, {
       params: { cmsLocaleId, limit, offset },
     });
     const page = data?.items || [];
@@ -412,7 +439,7 @@ async function listAllItems(collectionId, { locale } = {}) {
 
 async function getItem(collectionId, itemId, { locale } = {}) {
   const cmsLocaleId = await resolveCmsLocaleId(locale);
-  const { data } = await client().get(`/collections/${collectionId}/items/${itemId}`, {
+  const { data } = await (await client()).get(`/collections/${collectionId}/items/${itemId}`, {
     params: { cmsLocaleId },
   });
   return data;
@@ -427,14 +454,14 @@ async function getItem(collectionId, itemId, { locale } = {}) {
  */
 async function patchItemLocale(collectionId, itemId, locale, fieldData) {
   const cmsLocaleId = await resolveCmsLocaleId(locale);
-  const { data } = await client().patch(`/collections/${collectionId}/items`, {
+  const { data } = await (await client()).patch(`/collections/${collectionId}/items`, {
     items: [{ id: itemId, cmsLocaleId, fieldData }],
   });
   return data;
 }
 
 async function publishItems(collectionId, itemIds) {
-  const { data } = await client().post(`/collections/${collectionId}/items/publish`, {
+  const { data } = await (await client()).post(`/collections/${collectionId}/items/publish`, {
     itemIds,
   });
   return data;

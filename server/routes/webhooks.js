@@ -7,6 +7,7 @@ const autoSyncSelfWrites = require("../services/autoSyncSelfWrites");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
 const autoSyncQueue = require("../services/autoSyncQueue");
 const automationScheduler = require("../services/automationScheduler");
+const accountContext = require("../services/accountContext");
 
 const router = express.Router();
 
@@ -128,7 +129,7 @@ router.post("/wxrks", async (req, res) => {
   // /api/sync/bulk endpoint.
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
-  (async () => {
+  accountContext.run(mapping.accountId, async () => {
     const { autoPublish } = await store.getSettings(mapping.accountId);
     const translation = directTranslatedFileUrl
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
@@ -220,7 +221,7 @@ router.post("/wxrks", async (req, res) => {
     if (deliveredPairs >= expectedPairs) {
       await store.updateProjectMapping(wxrksProjectUUID, { status: "completed" });
     }
-  })().catch((err) => {
+  }).catch((err) => {
     console.error(
       `wxrks webhook background processing failed for project ${wxrksProjectUUID}, work unit ${workUnitUuid}:`,
       err.response?.data?.message || err.message
@@ -276,8 +277,8 @@ router.post("/webflow/:accountId/site-publish", async (req, res) => {
   // (Components need a DOM fetch per component just to hash them), same
   // "respond fast, process after" pattern as the wxrks webhook above.
   res.json({ received: true });
-  automationScheduler
-    .scanAndEnqueueForPublishEvent(accountId)
+  accountContext
+    .run(accountId, () => automationScheduler.scanAndEnqueueForPublishEvent(accountId))
     .catch((err) => console.error(`Pages/Components publish-triggered scan failed for account ${accountId}:`, err.message));
 });
 
@@ -326,39 +327,42 @@ router.post("/webflow/:accountId/cms-item-published", async (req, res) => {
     return res.status(200).json({ ignored: true, reason: `unhandled trigger: ${triggerType}` });
   }
 
-  const results = [];
-  for (const itemPayload of items) {
-    const { id: itemId, collectionId, isDraft, isArchived } = itemPayload;
-    if (isDraft || isArchived) {
-      results.push({ itemId, qualified: false, reason: "draft or archived" });
-      continue;
-    }
-    if (autoSyncSelfWrites.isRecentSelfWrite(collectionId, itemId)) {
-      results.push({ itemId, qualified: false, reason: "recent self-write (translation push-back echo)" });
-      continue;
-    }
-
-    try {
-      const collection = await webflow.getCollection(collectionId);
-      const locales = await webflow.getSiteLocales();
-      // Always re-fetch fresh primary-locale content rather than trusting
-      // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
-      const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
-
-      const qualifyingAutomations = cmsAutomations.filter((a) =>
-        store.isAutomationContentQualified(a, "collection", { leafId: collectionId, itemLike: item })
-      );
-      console.log(
-        `Automation evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies for ${qualifyingAutomations.length} automation(s)`
-      );
-      for (const automation of qualifyingAutomations) {
-        autoSyncQueue.enqueue({ automation, collection, item });
+  const results = await accountContext.run(accountId, async () => {
+    const out = [];
+    for (const itemPayload of items) {
+      const { id: itemId, collectionId, isDraft, isArchived } = itemPayload;
+      if (isDraft || isArchived) {
+        out.push({ itemId, qualified: false, reason: "draft or archived" });
+        continue;
       }
-      results.push({ itemId, qualified: qualifyingAutomations.length > 0, automationIds: qualifyingAutomations.map((a) => a.id) });
-    } catch (err) {
-      results.push({ itemId, error: err.message });
+      if (autoSyncSelfWrites.isRecentSelfWrite(collectionId, itemId)) {
+        out.push({ itemId, qualified: false, reason: "recent self-write (translation push-back echo)" });
+        continue;
+      }
+
+      try {
+        const collection = await webflow.getCollection(collectionId);
+        const locales = await webflow.getSiteLocales();
+        // Always re-fetch fresh primary-locale content rather than trusting
+        // payload.fieldData -- decouples correctness from cmsLocaleId entirely.
+        const item = await webflow.getItem(collectionId, itemId, { locale: locales.primary.tag });
+
+        const qualifyingAutomations = cmsAutomations.filter((a) =>
+          store.isAutomationContentQualified(a, "collection", { leafId: collectionId, itemLike: item })
+        );
+        console.log(
+          `Automation evaluation for ${collection.displayName || collectionId}/${itemId}: qualifies for ${qualifyingAutomations.length} automation(s)`
+        );
+        for (const automation of qualifyingAutomations) {
+          autoSyncQueue.enqueue({ automation, collection, item });
+        }
+        out.push({ itemId, qualified: qualifyingAutomations.length > 0, automationIds: qualifyingAutomations.map((a) => a.id) });
+      } catch (err) {
+        out.push({ itemId, error: err.message });
+      }
     }
-  }
+    return out;
+  });
 
   res.json({ received: true, results });
 });

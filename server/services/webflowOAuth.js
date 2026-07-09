@@ -14,10 +14,15 @@ const AUTHORIZE_URL = "https://webflow.com/oauth/authorize";
 const TOKEN_URL = "https://api.webflow.com/oauth/access_token";
 const API_BASE = "https://api.webflow.com/v2";
 
-// Minimal scopes for Phase 1 -- login/identification only, no content
-// access. See the plan file: broader scopes get added only once Phase 2
-// actually starts making API calls with a per-account token.
-const SCOPES = "authorized_user:read sites:read";
+// Phase 2: this token is now actually used for real Webflow API calls (see
+// services/webflow.js's resolveConnection()), so the grant needs to cover
+// everything this app's existing static WEBFLOW_API_TOKEN could already do
+// -- CMS items, Pages, and Components (which the API treats as pages/DOM
+// endpoints, confirmed no separate "components" scope exists). Every
+// existing connected account's token predates this and only has the
+// Phase 1 scopes -- those users must log out/in once to pick up a token
+// with the broader grant before their account's Webflow calls will work.
+const SCOPES = "authorized_user:read sites:read cms:read cms:write pages:read pages:write";
 
 function requireEnv(name) {
   const value = process.env[name];

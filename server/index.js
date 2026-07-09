@@ -20,6 +20,7 @@ const { requireSession } = require("./middleware/auth");
 const autoSyncWebhook = require("./services/autoSyncWebhook");
 const autoSyncQueue = require("./services/autoSyncQueue");
 const autoSyncReconciliation = require("./services/autoSyncReconciliation");
+const accountContext = require("./services/accountContext");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -213,9 +214,12 @@ async function migrateAutomationsToLeafShapeIfNeeded(accountId) {
     }
 
     // allCollectionsEnabled (old) or _expandAllCollections (transitional):
-    // materialize every real collection as an explicit leaf.
+    // materialize every real collection as an explicit leaf. Runs before
+    // the self-heal loop below establishes any account context, so this
+    // needs its own -- webflow.listCollections() now resolves per-account
+    // credentials via accountContext (see services/webflow.js).
     try {
-      const collections = await webflow.listCollections();
+      const collections = await accountContext.run(accountId, () => webflow.listCollections());
       leaves = collections.map((c) => ({ kind: "collection", id: c.id, filters: [] }));
       await store.updateAutomation(accountId, automation.id, { contentScope: { scope: "leaves", leaves } });
       console.log(`Expanded automation "${automation.name}" (${automation.id}) to ${leaves.length} real collections`);
@@ -240,26 +244,28 @@ db.migrate()
     // for the same reasoning).
     const accounts = await store.listAllAccounts();
     for (const account of accounts) {
-      const automations = await store.listAutomations(account.id);
-      const anyNeedsWebhook = automations.some(
-        (a) => a.enabled && !a.archived && (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
-      );
-      if (anyNeedsWebhook) {
-        autoSyncWebhook
-          .ensureWebhookRegistered(account.id)
-          .catch((err) => console.error(`Automation webhook self-heal failed for account ${account.id}:`, err.message));
-      }
-      const anyNeedsPagesWebhook = automations.some(
-        (a) =>
-          a.enabled &&
-          !a.archived &&
-          (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
-      );
-      if (anyNeedsPagesWebhook) {
-        autoSyncWebhook
-          .ensurePagesWebhookRegistered(account.id)
-          .catch((err) => console.error(`Pages webhook self-heal failed for account ${account.id}:`, err.message));
-      }
+      await accountContext.run(account.id, async () => {
+        const automations = await store.listAutomations(account.id);
+        const anyNeedsWebhook = automations.some(
+          (a) => a.enabled && !a.archived && (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "collection"))
+        );
+        if (anyNeedsWebhook) {
+          autoSyncWebhook
+            .ensureWebhookRegistered(account.id)
+            .catch((err) => console.error(`Automation webhook self-heal failed for account ${account.id}:`, err.message));
+        }
+        const anyNeedsPagesWebhook = automations.some(
+          (a) =>
+            a.enabled &&
+            !a.archived &&
+            (a.contentScope.scope === "all" || (a.contentScope.leaves || []).some((l) => l.kind === "pagesFolder" || l.kind === "components"))
+        );
+        if (anyNeedsPagesWebhook) {
+          autoSyncWebhook
+            .ensurePagesWebhookRegistered(account.id)
+            .catch((err) => console.error(`Pages webhook self-heal failed for account ${account.id}:`, err.message));
+        }
+      });
     }
 
     autoSyncQueue.startFlushLoop();

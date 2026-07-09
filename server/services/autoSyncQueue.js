@@ -18,6 +18,7 @@
 const store = require("../store");
 const wxrks = require("../services/wxrks");
 const webflow = require("./webflow");
+const accountContext = require("./accountContext");
 const { hashNodes } = require("./webflowDom");
 const { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval } = require("./syncCore");
 
@@ -141,20 +142,27 @@ function startFlushLoop() {
 
       const accounts = await store.listAllAccounts();
       for (const account of accounts) {
-        const { timezone } = await store.getSettings(account.id);
-        const hhmm = formatInTimeZone(now, timezone);
-        const weekday = formatInTimeZone(now, timezone, "weekday");
+        // Establishes this account's context for the rest of this
+        // iteration -- including runAutomationCycle's fire-and-forget
+        // continuation below, which keeps it for its entire lifetime even
+        // after this loop moves on to the next account (see
+        // accountContext.js's docstring).
+        await accountContext.run(account.id, async () => {
+          const { timezone } = await store.getSettings(account.id);
+          const hhmm = formatInTimeZone(now, timezone);
+          const weekday = formatInTimeZone(now, timezone, "weekday");
 
-        const automations = await store.listAutomations(account.id);
-        for (const automation of automations) {
-          if (!automation.enabled || automation.archived) continue;
-          if (!cadenceMatchesNow(automation.cadence, hhmm, weekday)) continue;
-          if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
-          lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
-          runAutomationCycle(automation).catch((err) =>
-            console.error(`Automation "${automation.name}" cycle failed:`, err.message)
-          );
-        }
+          const automations = await store.listAutomations(account.id);
+          for (const automation of automations) {
+            if (!automation.enabled || automation.archived) continue;
+            if (!cadenceMatchesNow(automation.cadence, hhmm, weekday)) continue;
+            if (lastFiredMinuteKeyByAutomation.get(automation.id) === minuteKey) continue;
+            lastFiredMinuteKeyByAutomation.set(automation.id, minuteKey);
+            runAutomationCycle(automation).catch((err) =>
+              console.error(`Automation "${automation.name}" cycle failed:`, err.message)
+            );
+          }
+        });
       }
     } catch (err) {
       console.error("Automation flush loop tick failed:", err.message);

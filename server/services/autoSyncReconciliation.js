@@ -21,6 +21,7 @@
 const webflow = require("./webflow");
 const store = require("../store");
 const autoSyncQueue = require("./autoSyncQueue");
+const accountContext = require("./accountContext");
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -63,13 +64,18 @@ async function reconcileAutomation(automation, allCollections) {
  * Runs once per account (Phase 1 multi-tenancy -- see the plan file; in
  * practice just one account for a good while). Each account has its own
  * autoSyncWebhook state, so the webhook-deactivation inference below is
- * evaluated per account too, not globally.
+ * evaluated per account too, not globally. Must run inside this account's
+ * accountContext (see reconcile() below) -- `allCollections` is THIS
+ * account's own Webflow site's collections (Phase 2: each account can be a
+ * different Webflow site, so this can no longer be fetched once and shared
+ * across every account the way it could when there was only ever one site).
  */
-async function reconcileForAccount(account, allCollections) {
+async function reconcileForAccount(account) {
   const automations = await store.listAutomations(account.id);
   const relevantAutomations = automations.filter((a) => a.enabled && !a.archived && isCmsRelevant(a));
   if (relevantAutomations.length === 0) return;
 
+  const allCollections = await webflow.listCollections();
   const settings = await store.getSettings(account.id);
   const cutoffForWebhookCheck = new Date(Date.now() - DEFAULT_INTERVAL_MS * 2);
 
@@ -90,10 +96,9 @@ async function reconcileForAccount(account, allCollections) {
 }
 
 async function reconcile() {
-  const allCollections = await webflow.listCollections();
   const accounts = await store.listAllAccounts();
   for (const account of accounts) {
-    await reconcileForAccount(account, allCollections);
+    await accountContext.run(account.id, () => reconcileForAccount(account));
   }
 }
 
