@@ -28,6 +28,27 @@ function needsComponentsScan(automation) {
   return automation.contentScope.scope === "all" || (automation.contentScope.leaves || []).some((l) => l.kind === "components");
 }
 
+// Webflow starts throttling after ~40 rapid sequential requests for exactly
+// this pattern -- one DOM fetch per page/component (see webflow.js's
+// 429-retry interceptor) -- so scans below fetch concurrently but bounded,
+// not all-at-once. Confirmed safe at this magnitude via this session's
+// earlier live testing (11-way concurrent collection fetches, no
+// throttling); kept below that to stay well clear of the ~40 threshold.
+const SCAN_CONCURRENCY = 8;
+
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 /**
  * Per-page (not a single automation-wide cutoff): a page never seen before
  * either establishes a translate-nothing baseline (includeExisting: false --
@@ -47,16 +68,36 @@ async function scanAndEnqueuePages(automation, { sourceLocale }) {
   const inScope =
     automation.contentScope.scope === "all" ? allPages : webflow.filterPagesByFolderScope(allPages, leafIds(automation, "pagesFolder"));
 
-  for (const page of inScope) {
-    const everSeen = Boolean(automation.checkpoint.lastSyncedPageHashes?.[page.id]);
+  // The DOM fetch + hash is the expensive, purely-read part -- safe to run
+  // concurrently. The baseline bookkeeping below is NOT: markAutomationPageSynced
+  // does a read-merge-write against this same in-memory automation.checkpoint
+  // snapshot, which never changes mid-scan -- calling it once per page (as the
+  // old sequential version did) meant each of a scan's own writes silently
+  // overwrote the previous one's newly-established hash in the same run
+  // (only the last page processed ever actually persisted). Fixed by
+  // collecting every hash first, then writing the whole merged checkpoint
+  // once at the end.
+  const scanned = await mapWithConcurrency(inScope, SCAN_CONCURRENCY, async (page) => {
     const nodes = await webflow.getPageDom(page.id, { locale: sourceLocale });
-    const contentHash = hashNodes(nodes);
+    return { page, contentHash: hashNodes(nodes) };
+  });
+
+  const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes };
+  let changed = false;
+  for (const { page, contentHash } of scanned) {
+    const everSeen = Boolean(lastSyncedPageHashes[page.id]);
     if (!everSeen && !automation.includeExisting) {
-      await store.markAutomationPageSynced(automation, page.id, contentHash);
+      lastSyncedPageHashes[page.id] = contentHash;
+      changed = true;
       continue;
     }
-    if (store.isAutomationPageAlreadySynced(automation, page.id, contentHash)) continue;
+    if (lastSyncedPageHashes[page.id] === contentHash) continue;
     autoSyncQueue.enqueuePage({ automation, page });
+  }
+  if (changed) {
+    await store.updateAutomation(automation.accountId, automation.id, {
+      checkpoint: { ...automation.checkpoint, lastSyncedPageHashes },
+    });
   }
 }
 
@@ -64,18 +105,31 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
   // Components always all-or-nothing (no sub-scope) -- and carry no
   // modification timestamp at all (confirmed live), so dedup hashes each
   // component's translatable DOM content and compares against the last
-  // synced hash, rather than a cheap timestamp comparison.
+  // synced hash, rather than a cheap timestamp comparison. Concurrency +
+  // batched-write reasoning mirrors scanAndEnqueuePages above exactly.
   const components = await webflow.listComponents();
-  for (const component of components) {
-    const everSeen = Boolean(automation.checkpoint.lastSyncedComponentHashes?.[component.id]);
+
+  const scanned = await mapWithConcurrency(components, SCAN_CONCURRENCY, async (component) => {
     const nodes = await webflow.getComponentDom(component.id, { locale: sourceLocale });
-    const contentHash = hashNodes(nodes);
+    return { component, contentHash: hashNodes(nodes) };
+  });
+
+  const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };
+  let changed = false;
+  for (const { component, contentHash } of scanned) {
+    const everSeen = Boolean(lastSyncedComponentHashes[component.id]);
     if (!everSeen && !automation.includeExisting) {
-      await store.markAutomationComponentSynced(automation, component.id, contentHash);
+      lastSyncedComponentHashes[component.id] = contentHash;
+      changed = true;
       continue;
     }
-    if (store.isAutomationComponentAlreadySynced(automation, component.id, contentHash)) continue;
+    if (lastSyncedComponentHashes[component.id] === contentHash) continue;
     autoSyncQueue.enqueueComponent({ automation, component });
+  }
+  if (changed) {
+    await store.updateAutomation(automation.accountId, automation.id, {
+      checkpoint: { ...automation.checkpoint, lastSyncedComponentHashes },
+    });
   }
 }
 
