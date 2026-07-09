@@ -478,13 +478,21 @@ export default function Translate() {
 
   // Rule-based: every leaf with a selection must be either "whole leaf" or
   // "exactly the current filtered subset" -- never an arbitrary manual pick.
+  // Only meaningful for "specific" mode's own selection state -- "all"
+  // mode is always trivially a rule ({scope: "all"}), regardless of
+  // whatever was previously selected in "specific" mode (that state simply
+  // isn't cleared on switching modes, since a user flipping back to
+  // "specific" should still see their prior picks -- it just must not leak
+  // into "all" mode's own recurring-eligibility check, which used to
+  // happen here since this ran unconditionally).
   const ruleBased =
-    selectionGroups.length > 0 &&
-    selectionGroups.every((g) => {
-      const leaf = [...collectionLeaves, ...pagesFolderLeaves, componentsLeaf].find((l) => l.kind === g.kind && l.id === g.leafId);
-      const matching = matchingItemsForLeaf(leaf).map((it) => it.id);
-      return g.ids.length === matching.length && matching.every((id) => g.ids.includes(id));
-    });
+    mode === "all" ||
+    (selectionGroups.length > 0 &&
+      selectionGroups.every((g) => {
+        const leaf = [...collectionLeaves, ...pagesFolderLeaves, componentsLeaf].find((l) => l.kind === g.kind && l.id === g.leafId);
+        const matching = matchingItemsForLeaf(leaf).map((it) => it.id);
+        return g.ids.length === matching.length && matching.every((id) => g.ids.includes(id));
+      }));
 
   const selection = { groups: selectionGroups, count: selCount, words: selWords };
 
