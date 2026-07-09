@@ -8,6 +8,7 @@ const autoSyncWebhook = require("../services/autoSyncWebhook");
 const autoSyncQueue = require("../services/autoSyncQueue");
 const automationScheduler = require("../services/automationScheduler");
 const accountContext = require("../services/accountContext");
+const transliterationLlm = require("../services/transliterationLlm");
 
 const router = express.Router();
 
@@ -97,6 +98,8 @@ router.post("/wxrks", async (req, res) => {
     resourceId,
     fieldKeys,
     wordCount,
+    sourceName,
+    sourceSlug,
   } = batchItem;
   const isPage = entityType === "page";
   const isComponent = entityType === "component";
@@ -130,7 +133,7 @@ router.post("/wxrks", async (req, res) => {
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
   accountContext.run(mapping.accountId, async () => {
-    const { autoPublish } = await store.getSettings(mapping.accountId);
+    const { autoPublish, slugHandling } = await store.getSettings(mapping.accountId);
     const translation = directTranslatedFileUrl
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, resourceId, locale);
@@ -147,6 +150,58 @@ router.post("/wxrks", async (req, res) => {
       if (entityType === "cmsItem" && fieldKey === "slug") continue;
       const value = translation?.[fieldKey];
       if (value !== undefined) fieldData[fieldKey] = value;
+    }
+
+    // Slug handling (settings.slugHandling): the raw slug is never sent to
+    // wxrks (see the guard above) -- instead, when enabled, a new slug is
+    // derived locally from the item's name (translated, for "translate"
+    // mode; source-locale, for "transliterate" mode) and either written
+    // straight into this same patch ("auto") or held as a suggestion an
+    // admin must approve first ("review"). Skipped entirely for
+    // pages/components (no slug concept) and whenever the source item had
+    // no slug to begin with (nothing to validate a fallback against).
+    let pendingSlugSuggestion = null;
+    if (entityType === "cmsItem" && slugHandling.mode !== "source" && sourceSlug) {
+      const nameForSlug = slugHandling.mode === "transliterate" ? sourceName : translation?.name ?? sourceName;
+      let candidateSlug = webflow.sanitizeSlug(nameForSlug, {
+        maxLength: slugHandling.maxLength,
+        transliterate: slugHandling.mode === "transliterate",
+        fallback: sourceSlug,
+      });
+      // The built-in Cyrillic/Greek map can't handle CJK, Arabic, Hebrew,
+      // etc. -- when it fell all the way back to the untouched source slug,
+      // try this account's own connected LLM (if any) as a fallback rather
+      // than silently giving up. Its output still goes through the exact
+      // same sanitizer/fallback afterward -- never trusted directly.
+      if (slugHandling.mode === "transliterate" && candidateSlug === sourceSlug) {
+        const llmConnection = await store.getLlmConnection(mapping.accountId);
+        if (llmConnection) {
+          try {
+            const llmText = await transliterationLlm.transliterateViaLlm(llmConnection.apiKey, nameForSlug);
+            candidateSlug = webflow.sanitizeSlug(llmText, { maxLength: slugHandling.maxLength, fallback: sourceSlug });
+          } catch (err) {
+            console.error("LLM transliteration fallback failed:", err.response?.data?.error?.message || err.message);
+          }
+        }
+      }
+      if (candidateSlug && candidateSlug !== sourceSlug) {
+        if (slugHandling.finalization === "auto") {
+          fieldData.slug = candidateSlug;
+        } else {
+          pendingSlugSuggestion = {
+            wxrksProjectUUID,
+            webflowCollectionId,
+            webflowItemId,
+            locale,
+            sourceSlug,
+            candidateSlug,
+            itemName: translation?.name || sourceName,
+          };
+        }
+      }
+    }
+    if (pendingSlugSuggestion) {
+      await store.addPendingSlugSuggestion(mapping.accountId, pendingSlugSuggestion);
     }
 
     let resultsByLocale;

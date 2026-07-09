@@ -178,6 +178,23 @@ async function migrate() {
     )
   `);
 
+  // Optional, per-account LLM API key used only as a fallback for
+  // slugHandling's "transliterate" mode, for scripts the built-in
+  // Cyrillic/Greek map can't handle (CJK, Arabic, Hebrew, etc.) -- see
+  // services/transliterationLlm.js. Entirely unused unless an account both
+  // opts into transliteration AND connects a key here; every other
+  // slugHandling mode never touches this table.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS llm_connections (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      api_key_ciphertext BYTEA NOT NULL,
+      api_key_iv BYTEA NOT NULL,
+      connected_by_user_id TEXT REFERENCES users(id),
+      connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      status TEXT NOT NULL DEFAULT 'active'
+    )
+  `);
+
   // Every pre-existing table becomes account-scoped. Nullable for now (not
   // NOT NULL) since existing rows predate accounts entirely --
   // migrateSingleTenantToAccountOne() (index.js) backfills them at startup

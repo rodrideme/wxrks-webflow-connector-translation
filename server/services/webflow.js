@@ -621,6 +621,74 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "") || "untitled";
 }
 
+// Webflow's real slug validation rule (confirmed live -- see
+// filterTranslatableFields's comment above for the incident this guards
+// against). Any slug this app ever writes must pass this before being sent.
+const WEBFLOW_SLUG_REGEX = /^[_a-zA-Z0-9][-_a-zA-Z0-9]*$/;
+
+// Compact Cyrillic/Greek -> Latin phonetic map for slugHandling's
+// "transliterate" mode. CJK/Arabic/Hebrew have no reasonable 1:1 phonetic
+// mapping, so they're deliberately left out here -- sanitizeSlug's
+// fallback-to-source-slug backstop covers those safely instead of emitting
+// garbage. Longer multi-character sequences must be listed before any
+// single-character sequence they contain, since transliterateToLatin
+// matches greedily from the start of the map.
+const TRANSLITERATION_MAP = {
+  ж: "zh", ч: "ch", ш: "sh", щ: "shch", ю: "yu", я: "ya", й: "y", ь: "", ъ: "",
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", з: "z", и: "i",
+  к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t",
+  у: "u", ф: "f", х: "h", ц: "ts", ы: "y", э: "e",
+  th: "th", ph: "ph", ch: "ch", ps: "ps",
+  α: "a", β: "v", γ: "g", δ: "d", ε: "e", ζ: "z", η: "i", θ: "th", ι: "i",
+  κ: "k", λ: "l", μ: "m", ν: "n", ξ: "x", ο: "o", π: "p", ρ: "r", σ: "s",
+  ς: "s", τ: "t", υ: "y", φ: "f", χ: "ch", ψ: "ps", ω: "o",
+};
+
+/**
+ * Phonetically transliterates Cyrillic/Greek characters to Latin, passing
+ * every other character through untouched (including Latin script with
+ * diacritics, which sanitizeSlug's NFKD pass handles separately, and
+ * scripts with no mapping here at all, e.g. CJK/Arabic/Hebrew).
+ */
+function transliterateToLatin(value) {
+  const lower = String(value || "").toLowerCase();
+  let result = "";
+  for (const char of lower) {
+    result += TRANSLITERATION_MAP[char] ?? char;
+  }
+  return result;
+}
+
+/**
+ * Turns arbitrary text (typically a translated or transliterated item
+ * name) into something Webflow's slug field will actually accept. Always
+ * enforces dashes/lowercase/length regardless of mode -- this is a hard
+ * rule, not a setting. Falls back to `fallback` (the item's own untouched,
+ * already-valid source slug) whenever the result would be empty or still
+ * fail Webflow's own validation regex, so a bad candidate can never block
+ * or corrupt a real delivery (see the production incident documented on
+ * filterTranslatableFields above).
+ */
+function sanitizeSlug(value, { maxLength = 60, transliterate = false, fallback = "" } = {}) {
+  let s = transliterate ? transliterateToLatin(value) : String(value || "");
+  s = s
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (s.length > maxLength) {
+    const truncated = s.slice(0, maxLength);
+    // Prefer not to cut mid-word: drop back to the last dash boundary if
+    // there is one, otherwise keep the hard truncation.
+    const lastDash = truncated.lastIndexOf("-");
+    s = (lastDash > 0 ? truncated.slice(0, lastDash) : truncated).replace(/^-+|-+$/g, "");
+  }
+  return s && WEBFLOW_SLUG_REGEX.test(s) ? s : fallback || "";
+}
+
 const DEFAULT_WORK_UNIT_NAME_PATTERN = "{collection}-{entry}";
 
 /**
@@ -702,4 +770,7 @@ module.exports = {
   updateComponentDom,
   buildComponentResourceFileName,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
+  sanitizeSlug,
+  transliterateToLatin,
+  WEBFLOW_SLUG_REGEX,
 };

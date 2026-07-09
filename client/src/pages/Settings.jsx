@@ -4,6 +4,8 @@ import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 import SettingsWxrks from "./settings/SettingsWxrks.jsx";
 import SettingsFieldExclusions from "./settings/SettingsFieldExclusions.jsx";
+import SettingsSlugHandling from "./settings/SettingsSlugHandling.jsx";
+import SettingsLlm from "./settings/SettingsLlm.jsx";
 
 /**
  * App-level configuration: timezone, naming patterns, automation toggles,
@@ -62,6 +64,7 @@ export default function Settings() {
         autoApprove: settings.autoApprove,
         autoPublish: settings.autoPublish,
         sourceLocale: settings.sourceLocale,
+        slugHandling: settings.slugHandling,
       });
       setSettings((prev) => ({ ...prev, ...updated }));
       setSaved(true);
@@ -80,6 +83,20 @@ export default function Settings() {
 
       <div className="max-w-2xl">
         <SettingsAccount settings={settings} markDirty={markDirty} webflowLocales={webflowLocales} />
+
+        <div className="mt-8">
+          <SettingsSlugHandling settings={settings} markDirty={markDirty} />
+        </div>
+
+        {settings.slugHandling?.mode === "transliterate" && (
+          <div className="mt-8">
+            <SettingsLlm
+              llmConnected={settings.llmConnected}
+              llmApiKeyMasked={settings.llmApiKeyMasked}
+              onChange={loadSettings}
+            />
+          </div>
+        )}
 
         <div className="mt-8">
           <SettingsWxrks

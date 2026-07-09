@@ -56,7 +56,15 @@ async function syncItemIntoBatch({ accountId, projectUuid, collection, item, tar
     filename,
     targetLocales,
     workflows,
-    mappingFields: { entityType: "cmsItem", webflowCollectionId: collection.id, webflowItemId: item.id },
+    mappingFields: {
+      entityType: "cmsItem",
+      webflowCollectionId: collection.id,
+      webflowItemId: item.id,
+      // Carried through to write-back time (webhooks.js) so slugHandling
+      // can derive/validate a new slug without a second live Webflow fetch.
+      sourceName: item.fieldData?.name,
+      sourceSlug: item.fieldData?.slug,
+    },
   });
 }
 

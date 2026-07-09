@@ -80,6 +80,9 @@ const api = {
   saveWxrksConnection: (accessKey, secret) =>
     request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }),
   deleteWxrksConnection: () => request("/settings/wxrks-connection", { method: "DELETE" }),
+  saveLlmConnection: (apiKey) =>
+    request("/settings/llm-connection", { method: "PUT", body: JSON.stringify({ apiKey }) }),
+  deleteLlmConnection: () => request("/settings/llm-connection", { method: "DELETE" }),
   getPages: () => request("/sync/pages/list"),
   getPageFolders: () => request("/sync/pages/folders"),
   syncPagesItem: (pageIds, options = {}) =>
@@ -99,6 +102,9 @@ const api = {
   flushAutomationNow: (id) => request(`/automations/${id}/flush`, { method: "POST" }),
   flushAllAutomations: () => request("/automations/flush-all", { method: "POST" }),
   getAutomationStatus: (id) => request(`/automations/${id}/status`),
+  listSlugSuggestions: () => request("/slug-suggestions"),
+  resolveSlugSuggestion: (id, body) =>
+    request(`/slug-suggestions/${id}/resolve`, { method: "POST", body: JSON.stringify(body) }),
 };
 
 export default api;

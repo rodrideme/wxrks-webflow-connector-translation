@@ -39,6 +39,21 @@ const DEFAULT_SETTINGS = {
   // { [collectionId]: string[] of field slugs to never translate, on top of
   // the automatic type-based filter }
   fieldExclusions: {},
+  // Controls whether/how a CMS item's Webflow slug is regenerated for each
+  // target locale on write-back (see webhooks.js's wxrks-webhook handler).
+  // "source": never touch the slug (today's behavior, default). "translate"/
+  // "transliterate": derive a new slug from the item's name (translated or
+  // transliterated respectively) -- never from the raw slug string itself,
+  // since that's what caused slug translation to be hard-blocked before
+  // (see NON_TRANSLATABLE_KEYS above). finalization/maxLength only matter
+  // once mode !== "source": "auto" writes the sanitized candidate slug
+  // immediately; "review" holds it as a pending suggestion (see
+  // addPendingSlugSuggestion below) an admin must approve first.
+  slugHandling: {
+    mode: "source", // "source" | "translate" | "transliterate"
+    finalization: "auto", // "auto" | "review"
+    maxLength: 60,
+  },
   // Placeholders: {collection}, {entry}. Becomes the wxrks resource/work-
   // unit file name (wxrks has no separate "name" field -- it derives the
   // work unit name from the uploaded file name).
@@ -157,6 +172,8 @@ async function addItemToProjectMapping(
     resourceFileName,
     fieldKeys,
     wordCount,
+    sourceName,
+    sourceSlug,
   }
 ) {
   const existing = await getProjectMapping(wxrksProjectUUID);
@@ -184,6 +201,8 @@ async function addItemToProjectMapping(
         resourceFileName,
         fieldKeys,
         wordCount,
+        sourceName,
+        sourceSlug,
       },
     ],
   });
@@ -313,6 +332,10 @@ function mergeSettings(stored) {
   merged.sitePublishWebhook = {
     ...DEFAULT_SETTINGS.sitePublishWebhook,
     ...(stored.sitePublishWebhook || {}),
+  };
+  merged.slugHandling = {
+    ...DEFAULT_SETTINGS.slugHandling,
+    ...(stored.slugHandling || {}),
   };
   return merged;
 }
@@ -628,6 +651,38 @@ async function deleteWxrksConnection(accountId) {
 }
 
 // ---------------------------------------------------------------------------
+// Optional per-account LLM connection (slugHandling's "transliterate"
+// fallback for scripts the built-in map can't handle -- see
+// services/transliterationLlm.js). Same shape/conventions as the wxrks
+// connection above, just a single secret instead of a key/secret pair.
+
+async function upsertLlmConnection(accountId, { apiKey, connectedByUserId }) {
+  const tokenCrypto = require("./services/tokenCrypto");
+  const { ciphertext: apiKeyCiphertext, iv: apiKeyIv } = tokenCrypto.encrypt(apiKey);
+  await db.query(
+    `INSERT INTO llm_connections (account_id, api_key_ciphertext, api_key_iv, connected_by_user_id, status)
+     VALUES ($1, $2, $3, $4, 'active')
+     ON CONFLICT (account_id) DO UPDATE SET
+       api_key_ciphertext = $2, api_key_iv = $3, connected_by_user_id = $4, status = 'active', connected_at = now()`,
+    [accountId, apiKeyCiphertext, apiKeyIv, connectedByUserId]
+  );
+}
+
+async function getLlmConnection(accountId) {
+  const { rows } = await db.query(`SELECT * FROM llm_connections WHERE account_id = $1 AND status = 'active'`, [
+    accountId,
+  ]);
+  if (!rows[0]) return undefined;
+  const tokenCrypto = require("./services/tokenCrypto");
+  const apiKey = tokenCrypto.decrypt(rows[0].api_key_ciphertext, rows[0].api_key_iv);
+  return { apiKey };
+}
+
+async function deleteLlmConnection(accountId) {
+  await db.query(`DELETE FROM llm_connections WHERE account_id = $1`, [accountId]);
+}
+
+// ---------------------------------------------------------------------------
 // Automations: a real table (not settings JSONB) since each automation's
 // checkpoint/flush needs to read-modify-write independently without
 // contending with other automations' or unrelated settings' concurrent
@@ -898,6 +953,67 @@ async function getDebugWebhookPayload(accountId) {
   return rows[0] ? rows[0].value : [];
 }
 
+// Candidate slugs awaiting admin approval when slugHandling.finalization is
+// "review" (see webhooks.js's wxrks-webhook handler). Stored the same way
+// as debugWebhookHistory above -- a single JSON array under one app_state
+// key per account -- rather than a new table, since this is a small,
+// bounded list with no relational needs of its own. Deliberately NOT folded
+// into project_mappings.updates[]: that array's shape drives the existing
+// delivery-dedup check and batch-completion counter in webhooks.js, and
+// giving it a separate pending/approved/rejected lifecycle risks corrupting
+// those.
+async function addPendingSlugSuggestion(accountId, suggestion) {
+  const entry = {
+    id: crypto.randomUUID(),
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    ...suggestion,
+  };
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
+    accountId,
+  ]);
+  const existing = rows[0] ? rows[0].value : [];
+  const updated = [...existing, entry];
+  await db.query(
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'pendingSlugSuggestions', $2)
+     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
+    [accountId, JSON.stringify(updated)]
+  );
+  return entry;
+}
+
+async function listPendingSlugSuggestions(accountId, { status = "pending" } = {}) {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
+    accountId,
+  ]);
+  const all = rows[0] ? rows[0].value : [];
+  return status ? all.filter((s) => s.status === status) : all;
+}
+
+async function getPendingSlugSuggestion(accountId, suggestionId) {
+  const all = await listPendingSlugSuggestions(accountId, { status: null });
+  return all.find((s) => s.id === suggestionId);
+}
+
+async function resolvePendingSlugSuggestion(accountId, suggestionId, { action, appliedSlug } = {}) {
+  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
+    accountId,
+  ]);
+  const all = rows[0] ? rows[0].value : [];
+  let resolved;
+  const updated = all.map((s) => {
+    if (s.id !== suggestionId) return s;
+    resolved = { ...s, status: action === "approve" ? "approved" : "rejected", resolvedAt: new Date().toISOString(), appliedSlug };
+    return resolved;
+  });
+  await db.query(
+    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'pendingSlugSuggestions', $2)
+     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
+    [accountId, JSON.stringify(updated)]
+  );
+  return resolved;
+}
+
 module.exports = {
   createProjectMapping,
   addItemToProjectMapping,
@@ -931,6 +1047,9 @@ module.exports = {
   upsertWxrksConnection,
   getWxrksConnection,
   deleteWxrksConnection,
+  upsertLlmConnection,
+  getLlmConnection,
+  deleteLlmConnection,
   listAutomations,
   getAutomation,
   getAutomationByIdUnscoped,
@@ -942,6 +1061,10 @@ module.exports = {
   advanceAutomationCheckpoint,
   setLastSync,
   getLastSync,
+  addPendingSlugSuggestion,
+  listPendingSlugSuggestions,
+  getPendingSlugSuggestion,
+  resolvePendingSlugSuggestion,
   setDebugWebhookPayload,
   getDebugWebhookPayload,
   createSyncJob,

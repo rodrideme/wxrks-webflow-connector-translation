@@ -2,6 +2,7 @@ const express = require("express");
 const store = require("../store");
 const wxrks = require("../services/wxrks");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
+const transliterationLlm = require("../services/transliterationLlm");
 
 const router = express.Router();
 
@@ -20,11 +21,14 @@ router.get("/", async (req, res) => {
     const settings = await store.getSettings(req.account.id);
     const account = await store.getAccount(req.account.id);
     const wxrksConnection = await store.getWxrksConnection(req.account.id);
+    const llmConnection = await store.getLlmConnection(req.account.id);
     const isOriginalAccount = account?.webflowSiteId && account.webflowSiteId === process.env.WEBFLOW_SITE_ID;
     res.json({
       ...settings,
       wxrksConnected: Boolean(wxrksConnection) || isOriginalAccount,
       wxrksAccessKeyMasked: wxrksConnection ? mask(wxrksConnection.accessKey) : isOriginalAccount ? mask(process.env.WXRKS_ACCESS_KEY) : "",
+      llmConnected: Boolean(llmConnection),
+      llmApiKeyMasked: llmConnection ? mask(llmConnection.apiKey) : "",
       env: {
         WEBFLOW_SITE_ID: process.env.WEBFLOW_SITE_ID || "",
         WEBFLOW_API_TOKEN: mask(process.env.WEBFLOW_API_TOKEN),
@@ -43,7 +47,7 @@ router.get("/", async (req, res) => {
 
 /**
  * PUT /api/settings
- * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, workUnitNamePattern?, timezone?, pagesWorkUnitNamePattern?, componentsWorkUnitNamePattern? }
+ * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, workUnitNamePattern?, timezone?, pagesWorkUnitNamePattern?, componentsWorkUnitNamePattern?, slugHandling? }
  * Env-backed connection secrets are not editable here — they're deploy-time
  * config. Automation config (schedule, content scope, org-unit/target-locale
  * override) lives in the `automations` table now -- see routes/automations.js,
@@ -63,6 +67,7 @@ router.put("/", async (req, res) => {
     timezone,
     pagesWorkUnitNamePattern,
     componentsWorkUnitNamePattern,
+    slugHandling,
   } = req.body || {};
   const patch = {};
   if (sourceLocale !== undefined) patch.sourceLocale = sourceLocale;
@@ -76,6 +81,15 @@ router.put("/", async (req, res) => {
   if (componentsWorkUnitNamePattern !== undefined) patch.componentsWorkUnitNamePattern = componentsWorkUnitNamePattern;
 
   try {
+    if (slugHandling !== undefined) {
+      const current = await store.getSettings(req.account.id);
+      patch.slugHandling = {
+        ...current.slugHandling,
+        ...(["source", "translate", "transliterate"].includes(slugHandling.mode) ? { mode: slugHandling.mode } : {}),
+        ...(["auto", "review"].includes(slugHandling.finalization) ? { finalization: slugHandling.finalization } : {}),
+        ...(Number.isFinite(slugHandling.maxLength) ? { maxLength: Math.min(200, Math.max(20, Math.round(slugHandling.maxLength))) } : {}),
+      };
+    }
     await store.updateSettings(req.account.id, patch);
     res.json(await store.getSettings(req.account.id));
   } catch (err) {
@@ -115,6 +129,44 @@ router.put("/wxrks-connection", async (req, res) => {
 router.delete("/wxrks-connection", async (req, res) => {
   try {
     await store.deleteWxrksConnection(req.account.id);
+    res.json({ connected: false });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * PUT /api/settings/llm-connection
+ * body: { apiKey }
+ * Optional, only used as a fallback for slugHandling's "transliterate" mode
+ * on scripts the built-in Cyrillic/Greek map can't handle (see
+ * services/transliterationLlm.js). Validated against Anthropic's real API
+ * before saving, same reasoning as the wxrks connection above.
+ */
+router.put("/llm-connection", async (req, res) => {
+  const { apiKey } = req.body || {};
+  if (!apiKey) {
+    return res.status(400).json({ error: "apiKey is required" });
+  }
+  try {
+    await transliterationLlm.testApiKey(apiKey);
+  } catch (err) {
+    return res.status(400).json({ error: err.response?.data?.error?.message || err.message || "Invalid API key" });
+  }
+  try {
+    await store.upsertLlmConnection(req.account.id, { apiKey, connectedByUserId: req.user.id });
+    res.json({ connected: true, apiKeyMasked: mask(apiKey) });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/settings/llm-connection
+ */
+router.delete("/llm-connection", async (req, res) => {
+  try {
+    await store.deleteLlmConnection(req.account.id);
     res.json({ connected: false });
   } catch (err) {
     res.status(502).json({ error: err.message });
