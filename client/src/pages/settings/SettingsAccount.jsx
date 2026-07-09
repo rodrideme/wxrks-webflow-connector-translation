@@ -26,14 +26,29 @@ const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
 
 /**
  * App-level configuration: timezone, the 3 work-unit naming patterns (CMS/
- * Pages/Components), and the 2 automation toggles. Rendered as the
- * "Account" tab of Settings.jsx, alongside "Translation" (SettingsGeneral --
- * org unit/locales) and "Collections" (SettingsCollections), since these
- * are app-behavior concerns, not "what gets translated" concerns.
+ * Pages/Components), and the 2 automation toggles, plus a read-only display
+ * of the detected source locale. Org unit + target locales used to live
+ * here too (as an editable "Translation" tab) but now that the wizard
+ * always sends its own explicit values per send/automation, there's
+ * nothing left to configure here for those -- source locale isn't
+ * overridable by the wizard at all, so it's shown read-only, auto-detected
+ * from the connected Webflow site's real primary locale.
  */
-export default function SettingsAccount({ settings, markDirty }) {
+export default function SettingsAccount({ settings, markDirty, webflowLocales }) {
   return (
     <div className="flex flex-col gap-5">
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Language</h2>
+        <p className="text-sm text-ink-soft">
+          Source locale:{" "}
+          <strong className="text-ink">{webflowLocales?.primary?.displayName || settings.sourceLocale}</strong>
+        </p>
+        <p className={`mt-1 ${hintClass}`}>
+          Auto-detected from your connected Webflow site's primary locale — not editable here. Target
+          locales and org unit are chosen per send/automation in the "Send to wxrks" wizard instead.
+        </p>
+      </Card>
+
       <Card className="p-5">
         <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Timezone</h2>
         <label className={labelClass}>

@@ -37,11 +37,14 @@ router.get("/", async (req, res) => {
 
 /**
  * PUT /api/settings
- * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, enabledCollectionIds?, pages?, components? }
+ * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, workUnitNamePattern?, timezone?, pagesWorkUnitNamePattern?, componentsWorkUnitNamePattern? }
  * Env-backed connection secrets are not editable here — they're deploy-time
- * config. Automation config (schedule, content scope, org-unit override)
- * lives in the `automations` table now -- see routes/automations.js, not
- * this endpoint.
+ * config. Automation config (schedule, content scope, org-unit/target-locale
+ * override) lives in the `automations` table now -- see routes/automations.js,
+ * not this endpoint. targetLocales/orgUnitUUID have no dedicated editing UI
+ * anymore (the wizard sends its own per-send/per-automation values) but stay
+ * accepted here as the frozen fallback default for pre-existing automations
+ * and direct API use.
  */
 router.put("/", async (req, res) => {
   const {
@@ -50,13 +53,9 @@ router.put("/", async (req, res) => {
     autoPublish,
     autoApprove,
     orgUnitUUID,
-    allCollectionsEnabled,
-    enabledCollectionIds,
     workUnitNamePattern,
     timezone,
-    pages,
     pagesWorkUnitNamePattern,
-    components,
     componentsWorkUnitNamePattern,
   } = req.body || {};
   const patch = {};
@@ -65,13 +64,9 @@ router.put("/", async (req, res) => {
   if (autoPublish !== undefined) patch.autoPublish = autoPublish;
   if (autoApprove !== undefined) patch.autoApprove = autoApprove;
   if (orgUnitUUID !== undefined) patch.orgUnitUUID = orgUnitUUID;
-  if (allCollectionsEnabled !== undefined) patch.allCollectionsEnabled = allCollectionsEnabled;
-  if (enabledCollectionIds !== undefined) patch.enabledCollectionIds = enabledCollectionIds;
   if (workUnitNamePattern !== undefined) patch.workUnitNamePattern = workUnitNamePattern;
   if (timezone !== undefined) patch.timezone = timezone;
-  if (pages !== undefined) patch.pages = pages;
   if (pagesWorkUnitNamePattern !== undefined) patch.pagesWorkUnitNamePattern = pagesWorkUnitNamePattern;
-  if (components !== undefined) patch.components = components;
   if (componentsWorkUnitNamePattern !== undefined) patch.componentsWorkUnitNamePattern = componentsWorkUnitNamePattern;
 
   try {

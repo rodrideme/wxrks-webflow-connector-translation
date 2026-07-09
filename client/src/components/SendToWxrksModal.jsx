@@ -58,6 +58,8 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   const [settings, setSettings] = useState(null);
   const [orgUnits, setOrgUnits] = useState([]);
   const [webflowLocales, setWebflowLocales] = useState(null);
+  const [orgUnitResources, setOrgUnitResources] = useState(null);
+  const [orgUnitResourcesLoading, setOrgUnitResourcesLoading] = useState(false);
 
   const [step, setStep] = useState(0);
   const [orgUnitUUID, setOrgUnitUUID] = useState("");
@@ -84,9 +86,11 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       setSettings(s);
       setOrgUnitUUID(s.orgUnitUUID || "");
       setTargetLocales(s.targetLocales || []);
+      if (s.orgUnitUUID) loadOrgUnitResources(s.orgUnitUUID);
     });
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
     api.getWebflowLocales().then(setWebflowLocales).catch(() => setWebflowLocales(null));
+    setOrgUnitResources(null);
     setStep(0);
     setRunMode("now");
     setCadenceKind("daily");
@@ -110,6 +114,15 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     setWorkflowSteps((prev) => prev.filter((s) => s !== step));
   }
 
+  function loadOrgUnitResources(uuid) {
+    setOrgUnitResourcesLoading(true);
+    api
+      .getOrgUnitResources(uuid)
+      .then(setOrgUnitResources)
+      .catch(() => setOrgUnitResources(null))
+      .finally(() => setOrgUnitResourcesLoading(false));
+  }
+
   function selectOrgUnit(uuid) {
     setOrgUnitUUID(uuid);
     const org = orgUnits.find((o) => o.uuid === uuid);
@@ -117,6 +130,8 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       const orgBaseLangs = new Set(org.targetLanguages.map(baseLang));
       setTargetLocales(webflowLocales.secondary.filter((l) => orgBaseLangs.has(baseLang(l.tag))).map((l) => l.tag));
     }
+    setOrgUnitResources(null);
+    if (uuid) loadOrgUnitResources(uuid);
   }
 
   function toggleLocale(tag) {
@@ -147,9 +162,11 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           scope === "all"
             ? { scope: "all" }
             : { scope: "leaves", leaves: selection.groups.map((g) => ({ kind: g.kind, id: g.leafId, filters: g.filters || [] })) };
-        const targetLocalesChanged =
-          targetLocales.length !== (settings?.targetLocales || []).length ||
-          targetLocales.some((l) => !(settings?.targetLocales || []).includes(l));
+        // Always pass this automation's own org unit/target locales
+        // explicitly, rather than only when they differ from the account's
+        // stored default -- makes every new automation fully self-contained
+        // instead of silently depending on a "global default" that has no
+        // dedicated editing UI anymore (see Settings.jsx).
         const automation = await api.createAutomation({
           name: `${contentLabel} · ${new Date().toLocaleDateString()}`,
           contentScope,
@@ -157,8 +174,8 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           workflows: workflowSteps,
           projectName: projectName || null,
           includeExisting,
-          orgUnitOverride: orgUnitUUID !== settings?.orgUnitUUID ? orgUnitUUID : null,
-          targetLocalesOverride: targetLocalesChanged ? targetLocales : null,
+          orgUnitOverride: orgUnitUUID,
+          targetLocalesOverride: targetLocales,
         });
         onRecurringCreated?.(automation);
         // "Include existing content on the first run" backfills immediately
@@ -241,6 +258,31 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
               ))}
             </select>
           </label>
+
+          {orgUnitUUID && (
+            <div className="rounded-md border border-border bg-surface-sunken p-3 text-sm">
+              {orgUnitResourcesLoading && <p className="text-xs text-ink-faint">Loading translation memories &amp; glossaries...</p>}
+              {orgUnitResources && (
+                <>
+                  <p className="text-ink-soft">
+                    <strong className="text-ink">Translation memories:</strong>{" "}
+                    {orgUnitResources.translationMemories.length === 0
+                      ? "none bound to this org unit"
+                      : orgUnitResources.translationMemories.map((tm) => tm.name).join(", ")}
+                  </p>
+                  <p className="mt-1 text-ink-soft">
+                    <strong className="text-ink">Glossaries:</strong>{" "}
+                    {orgUnitResources.glossaries.length === 0
+                      ? "none bound to this org unit"
+                      : orgUnitResources.glossaries.map((g) => g.name).join(", ")}
+                  </p>
+                  <p className="mt-2 text-xs text-ink-faint">
+                    Read-only — wxrks attaches these to each project automatically based on the org unit.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           <div>
             <div className="mb-1.5 text-sm font-medium text-ink-soft">Target languages · {targetLocales.length}</div>

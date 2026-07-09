@@ -10,13 +10,8 @@ const router = express.Router();
  */
 router.get("/", async (req, res) => {
   try {
-    const [collections, settings] = await Promise.all([webflow.listCollections(), store.getSettings(req.account.id)]);
-    res.json({
-      collections: collections.map((c) => ({
-        ...c,
-        enabled: store.isCollectionEnabled(settings, c.id),
-      })),
-    });
+    const collections = await webflow.listCollections();
+    res.json({ collections });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -147,14 +142,16 @@ router.get("/:id/items", async (req, res) => {
 
 /**
  * Shared handler for GET /api/backlog — all non-source-locale items that are
- * still Draft (= untranslated), across every collection.
+ * still Draft (= untranslated), across every collection. Scoped by Webflow's
+ * own configured site locales, not by settings -- there's no per-collection
+ * enable/disable concept here, every collection is scanned.
  */
 async function backlogHandler(req, res) {
   try {
-    const settings = await store.getSettings(req.account.id);
-    const { sourceLocale, targetLocales } = settings;
-    const allCollections = await webflow.listCollections();
-    const collections = allCollections.filter((c) => store.isCollectionEnabled(settings, c.id));
+    const collections = await webflow.listCollections();
+    const { primary, secondary } = await webflow.getSiteLocales();
+    const sourceLocale = primary.tag;
+    const targetLocales = secondary.map((l) => l.tag);
     const backlog = [];
 
     for (const collection of collections) {

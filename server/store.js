@@ -34,12 +34,6 @@ const DEFAULT_SETTINGS = {
   autoPublish: process.env.AUTO_PUBLISH === "true",
   autoApprove: false,
   orgUnitUUID: process.env.WXRKS_ORG_UNIT_UUID || "",
-  // Explicit flag rather than "empty enabledCollectionIds means all" -- that
-  // convention couldn't represent "user unchecked every collection", so
-  // "check all" / "uncheck all" need a real on/off switch instead of relying
-  // on array emptiness.
-  allCollectionsEnabled: true,
-  enabledCollectionIds: [],
   // { [collectionId]: string[] of field slugs to never translate, on top of
   // the automatic type-based filter }
   fieldExclusions: {},
@@ -330,8 +324,8 @@ async function getSettings(accountId) {
     accountId,
   ]);
   // Merge over defaults so a settings field added after a row was first
-  // written (e.g. allCollectionsEnabled) still gets a sane value instead of
-  // undefined for existing installs.
+  // written still gets a sane value instead of undefined for existing
+  // installs.
   if (rows[0]) return mergeSettings(rows[0].value);
 
   await db.query(
@@ -350,12 +344,6 @@ async function updateSettings(accountId, patch) {
     [accountId, JSON.stringify(updated)]
   );
   return updated;
-}
-
-// Pure helper -- no DB access. Callers fetch settings once via getSettings()
-// and reuse it across a loop, rather than hitting the DB per collection.
-function isCollectionEnabled(settings, collectionId) {
-  return settings.allCollectionsEnabled || settings.enabledCollectionIds.includes(collectionId);
 }
 
 async function getFieldExclusions(accountId, collectionId) {
@@ -883,7 +871,6 @@ module.exports = {
   computeLocaleStatus,
   getSettings,
   updateSettings,
-  isCollectionEnabled,
   getFieldExclusions,
   setFieldExclusions,
   updateAutoSyncWebhookState,
