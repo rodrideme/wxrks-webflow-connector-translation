@@ -561,7 +561,15 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             </button>
           )}
           <button type="button" onClick={handleNext} disabled={submitting || targetLocales.length === 0 || !orgUnitUUID} className={btnPrimary}>
-            {submitting ? "Sending…" : step === 2 ? (runMode === "auto" ? "Create automation" : "Send to wxrks") : "Continue"}
+            {submitting
+              ? "Sending…"
+              : step === 2
+              ? runMode === "auto"
+                ? includeExisting
+                  ? "Send to translation & create automation"
+                  : "Create automation"
+                : "Send to wxrks"
+              : "Continue"}
           </button>
         </div>
       </div>
