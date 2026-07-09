@@ -52,8 +52,18 @@ router.get("/login", (req, res) => {
  * the same site land in the same account), and establishes a session.
  */
 router.get("/callback", async (req, res) => {
-  const { code, state } = req.query;
+  const { code, state, error, error_description: errorDescription } = req.query;
   const cookies = parseCookies(req.headers.cookie);
+
+  // Webflow echoes the original `state` back even on an error redirect (no
+  // code at all) -- e.g. the user declined the consent screen, or the app's
+  // registration itself has a problem (bad redirect_uri, disabled scopes).
+  // Surface *that* real reason instead of falling through to a generic
+  // "missing code" message that hides what actually happened.
+  if (error) {
+    console.error("Webflow OAuth error redirect:", error, errorDescription);
+    return res.status(400).json({ error: `Webflow declined the request: ${error}${errorDescription ? ` -- ${errorDescription}` : ""}` });
+  }
 
   if (!state || !cookies[OAUTH_STATE_COOKIE] || state !== cookies[OAUTH_STATE_COOKIE]) {
     return res.status(400).json({ error: "Invalid or expired OAuth state -- please try signing in again" });
