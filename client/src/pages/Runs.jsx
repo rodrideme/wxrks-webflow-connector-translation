@@ -69,9 +69,6 @@ export default function Runs() {
   const [flushing, setFlushing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [slugSuggestions, setSlugSuggestions] = useState([]);
-  const [editedSlugs, setEditedSlugs] = useState({});
-  const [resolvingSlugId, setResolvingSlugId] = useState(null);
 
   function loadAutomations() {
     setRefreshing(true);
@@ -87,34 +84,11 @@ export default function Runs() {
       .finally(() => setRefreshing(false));
   }
 
-  function loadSlugSuggestions() {
-    return api
-      .listSlugSuggestions()
-      .then((res) => setSlugSuggestions(res.suggestions || []))
-      .catch(() => {});
-  }
-
   useEffect(() => {
     loadAutomations();
-    loadSlugSuggestions();
-    const interval = setInterval(() => {
-      loadAutomations();
-      loadSlugSuggestions();
-    }, 8000);
+    const interval = setInterval(loadAutomations, 8000);
     return () => clearInterval(interval);
   }, []);
-
-  async function resolveSlugSuggestion(suggestion, action) {
-    setResolvingSlugId(suggestion.id);
-    try {
-      await api.resolveSlugSuggestion(suggestion.id, { action, editedSlug: editedSlugs[suggestion.id] });
-      await loadSlugSuggestions();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setResolvingSlugId(null);
-    }
-  }
 
   useEffect(() => {
     Promise.all([
@@ -311,48 +285,6 @@ export default function Runs() {
           ))
         )}
       </Card>
-
-      {/* Pending slug suggestions -- only when Settings' slugHandling.finalization is "review" */}
-      {slugSuggestions.length > 0 && (
-        <Card className="mb-6">
-          <div className="flex items-baseline justify-between gap-3 border-b border-border px-4 py-3">
-            <span className="text-[13px] font-semibold text-ink">Pending slug suggestions</span>
-            <span className="text-[11.5px] text-ink-faint">Settings → Slug handling</span>
-          </div>
-          {slugSuggestions.map((s) => (
-            <div key={s.id} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] font-medium text-ink">
-                  {s.itemName} <span className="font-mono text-[11px] text-ink-faint">({s.locale})</span>
-                </div>
-                <div className="font-mono text-[11.5px] text-ink-faint">source: {s.sourceSlug}</div>
-              </div>
-              <input
-                type="text"
-                defaultValue={s.candidateSlug}
-                onChange={(e) => setEditedSlugs((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                className="w-64 rounded-md border border-border-strong bg-surface px-2.5 py-1 font-mono text-[12.5px] text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => resolveSlugSuggestion(s, "approve")}
-                  disabled={resolvingSlugId === s.id}
-                  className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => resolveSlugSuggestion(s, "reject")}
-                  disabled={resolvingSlugId === s.id}
-                  className="rounded-md border border-border-strong bg-surface px-3 py-1 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Reject
-                </button>
-              </div>
-            </div>
-          ))}
-        </Card>
-      )}
 
       {/* History */}
       <div className="mb-3 flex items-baseline justify-between gap-3">

@@ -102,9 +102,6 @@ const api = {
   flushAutomationNow: (id) => request(`/automations/${id}/flush`, { method: "POST" }),
   flushAllAutomations: () => request("/automations/flush-all", { method: "POST" }),
   getAutomationStatus: (id) => request(`/automations/${id}/status`),
-  listSlugSuggestions: () => request("/slug-suggestions"),
-  resolveSlugSuggestion: (id, body) =>
-    request(`/slug-suggestions/${id}/resolve`, { method: "POST", body: JSON.stringify(body) }),
 };
 
 export default api;

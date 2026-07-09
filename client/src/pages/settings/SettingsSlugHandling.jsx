@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Card from "../../components/Card.jsx";
 
 const labelClass = "flex flex-col gap-1 text-sm font-medium text-ink-soft";
@@ -13,13 +14,31 @@ const hintClass = "text-xs text-ink-faint";
  * handler and store.js's slugHandling default). Slugs themselves are never
  * sent to wxrks for translation -- the candidate is always derived locally
  * from the item's name -- so this only ever changes what happens after a
- * normal translation completes.
+ * normal translation completes. Always applied automatically, no review
+ * step, so this is the single, self-contained on/off + tuning control.
  */
-export default function SettingsSlugHandling({ settings, markDirty }) {
+export default function SettingsSlugHandling({ settings, markDirty, saveFields }) {
   const slugHandling = settings.slugHandling;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
 
   function patchSlugHandling(patch) {
     markDirty({ slugHandling: { ...slugHandling, ...patch } });
+    setSaved(false);
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      await saveFields(["slugHandling"]);
+      setSaved(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -28,7 +47,8 @@ export default function SettingsSlugHandling({ settings, markDirty }) {
       <p className={hintClass}>
         Slugs matter for SEO and usability, so translated content doesn't have to keep the source-language
         slug. Webflow requires dashes (not underscores) and a lowercase, URL-safe format — this app enforces
-        that automatically any time it writes a new slug, regardless of the mode below.
+        that automatically any time it writes a new slug, regardless of the mode below. A new slug is always
+        applied automatically as soon as translation completes — there's no manual review step.
       </p>
 
       <label className={`mt-4 ${labelClass}`}>
@@ -45,24 +65,7 @@ export default function SettingsSlugHandling({ settings, markDirty }) {
       </label>
 
       {slugHandling.mode !== "source" && (
-        <div className="mt-4 flex flex-col gap-4 border-t border-border pt-4">
-          <label className={labelClass}>
-            When a new slug is generated:
-            <select
-              value={slugHandling.finalization}
-              onChange={(e) => patchSlugHandling({ finalization: e.target.value })}
-              className={selectClass}
-            >
-              <option value="auto">Apply automatically</option>
-              <option value="review">Hold for review (Runs page)</option>
-            </select>
-          </label>
-          <p className={hintClass}>
-            "Hold for review" doesn't send anything extra to wxrks — it computes the same best-practices
-            slug locally, then waits for you to approve or edit it on the Runs page before it's written to
-            Webflow.
-          </p>
-
+        <div className="mt-4 border-t border-border pt-4">
           <label className={labelClass}>
             Max length (characters):
             <input
@@ -74,8 +77,25 @@ export default function SettingsSlugHandling({ settings, markDirty }) {
               className={inputClass}
             />
           </label>
+          {slugHandling.mode === "transliterate" && (
+            <p className={`mt-2 ${hintClass}`}>
+              For scripts the built-in transliteration can't handle (Korean, Japanese, Chinese, Arabic,
+              Hebrew, etc.), connect an LLM under "LLM connectors" as a fallback.
+            </p>
+          )}
         </div>
       )}
+
+      {error && <p className="mt-3 text-sm font-medium text-status-error-fg">{error}</p>}
+      {saved && <p className="mt-3 text-sm font-medium text-status-success-fg">Saved.</p>}
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="mt-4 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving ? "Saving..." : "Save settings"}
+      </button>
     </Card>
   );
 }

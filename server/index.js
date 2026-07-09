@@ -15,7 +15,6 @@ const automationsRouter = require("./routes/automations");
 const webhooksRouter = require("./routes/webhooks");
 const settingsRouter = require("./routes/settings");
 const configRouter = require("./routes/config");
-const slugSuggestionsRouter = require("./routes/slugSuggestions");
 const authRouter = require("./routes/auth");
 const { requireSession } = require("./middleware/auth");
 const autoSyncWebhook = require("./services/autoSyncWebhook");
@@ -66,7 +65,6 @@ app.use("/api/sync/components", syncComponentsRouter);
 app.use("/api/automations", automationsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/config", configRouter);
-app.use("/api/slug-suggestions", slugSuggestionsRouter);
 
 // Serve the built React app in production.
 const clientDist = path.join(__dirname, "..", "client", "dist");

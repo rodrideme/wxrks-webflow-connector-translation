@@ -155,12 +155,10 @@ router.post("/wxrks", async (req, res) => {
     // Slug handling (settings.slugHandling): the raw slug is never sent to
     // wxrks (see the guard above) -- instead, when enabled, a new slug is
     // derived locally from the item's name (translated, for "translate"
-    // mode; source-locale, for "transliterate" mode) and either written
-    // straight into this same patch ("auto") or held as a suggestion an
-    // admin must approve first ("review"). Skipped entirely for
-    // pages/components (no slug concept) and whenever the source item had
-    // no slug to begin with (nothing to validate a fallback against).
-    let pendingSlugSuggestion = null;
+    // mode; source-locale, for "transliterate" mode) and written straight
+    // into this same patch. Skipped entirely for pages/components (no slug
+    // concept) and whenever the source item had no slug to begin with
+    // (nothing to validate a fallback against).
     if (entityType === "cmsItem" && slugHandling.mode !== "source" && sourceSlug) {
       const nameForSlug = slugHandling.mode === "transliterate" ? sourceName : translation?.name ?? sourceName;
       let candidateSlug = webflow.sanitizeSlug(nameForSlug, {
@@ -185,23 +183,8 @@ router.post("/wxrks", async (req, res) => {
         }
       }
       if (candidateSlug && candidateSlug !== sourceSlug) {
-        if (slugHandling.finalization === "auto") {
-          fieldData.slug = candidateSlug;
-        } else {
-          pendingSlugSuggestion = {
-            wxrksProjectUUID,
-            webflowCollectionId,
-            webflowItemId,
-            locale,
-            sourceSlug,
-            candidateSlug,
-            itemName: translation?.name || sourceName,
-          };
-        }
+        fieldData.slug = candidateSlug;
       }
-    }
-    if (pendingSlugSuggestion) {
-      await store.addPendingSlugSuggestion(mapping.accountId, pendingSlugSuggestion);
     }
 
     let resultsByLocale;

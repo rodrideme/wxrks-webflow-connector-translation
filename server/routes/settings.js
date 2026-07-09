@@ -86,7 +86,6 @@ router.put("/", async (req, res) => {
       patch.slugHandling = {
         ...current.slugHandling,
         ...(["source", "translate", "transliterate"].includes(slugHandling.mode) ? { mode: slugHandling.mode } : {}),
-        ...(["auto", "review"].includes(slugHandling.finalization) ? { finalization: slugHandling.finalization } : {}),
         ...(Number.isFinite(slugHandling.maxLength) ? { maxLength: Math.min(200, Math.max(20, Math.round(slugHandling.maxLength))) } : {}),
       };
     }

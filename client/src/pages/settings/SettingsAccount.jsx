@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Card from "../../components/Card.jsx";
 import Toggle from "../../components/Toggle.jsx";
 
@@ -34,7 +35,32 @@ const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
  * overridable by the wizard at all, so it's shown read-only, auto-detected
  * from the connected Webflow site's real primary locale.
  */
-export default function SettingsAccount({ settings, markDirty, webflowLocales }) {
+export default function SettingsAccount({ settings, markDirty, webflowLocales, saveFields }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      await saveFields([
+        "timezone",
+        "workUnitNamePattern",
+        "pagesWorkUnitNamePattern",
+        "componentsWorkUnitNamePattern",
+        "autoApprove",
+        "autoPublish",
+        "sourceLocale",
+      ]);
+      setSaved(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <Card className="p-5">
@@ -146,6 +172,17 @@ export default function SettingsAccount({ settings, markDirty, webflowLocales })
           Auto-publish translated Webflow items (otherwise leave as Draft)
         </label>
       </Card>
+
+      {error && <p className="text-sm font-medium text-status-error-fg">{error}</p>}
+      {saved && <p className="text-sm font-medium text-status-success-fg">Settings saved.</p>}
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="self-start rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving ? "Saving..." : "Save settings"}
+      </button>
     </div>
   );
 }

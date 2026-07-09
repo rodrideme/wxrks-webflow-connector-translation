@@ -35,7 +35,7 @@ export default function App() {
           <Route path="/automation" element={<Navigate to="/runs" replace />} />
           <Route path="/logs" element={<Navigate to="/runs" replace />} />
           <Route path="/templates" element={<Navigate to="/settings" replace />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/*" element={<Settings />} />
         </Routes>
       </main>
     </div>

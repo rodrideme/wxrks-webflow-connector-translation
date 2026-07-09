@@ -8,13 +8,14 @@ const inputClass =
 const hintClass = "text-xs text-ink-faint";
 
 /**
- * Optional, per-account Anthropic API key used only as a fallback for the
- * "Slug handling" card's "Transliterate" mode -- specifically for scripts
- * the built-in Cyrillic/Greek map can't handle (Korean, Japanese, Chinese,
- * Arabic, Hebrew, etc). Every other slugHandling mode, and transliteration
- * of scripts the built-in map already covers, never touches this at all --
- * connecting a key here changes nothing unless "Transliterate" mode hits
- * one of those scripts.
+ * Optional, per-account LLM connection -- its own tab rather than a sub-
+ * section of Slug handling, since it's meant to power more than one
+ * feature over time (e.g. a future "run a marketing prompt after
+ * translation" action). Today it powers exactly one thing: Slug handling's
+ * "Transliterate" mode falls back to this for scripts the built-in
+ * Cyrillic/Greek map can't handle (Korean, Japanese, Chinese, Arabic,
+ * Hebrew, etc). Connecting a key here changes nothing on its own until a
+ * feature that uses it is turned on elsewhere.
  */
 export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange }) {
   const [apiKey, setApiKey] = useState("");
@@ -54,7 +55,7 @@ export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange })
 
   return (
     <Card className="p-5">
-      <h2 className="mb-3 text-[13.5px] font-semibold text-ink">LLM transliteration (optional)</h2>
+      <h2 className="mb-3 text-[13.5px] font-semibold text-ink">LLM connectors</h2>
 
       {llmConnected && llmApiKeyMasked && (
         <p className="mb-3 text-sm text-ink-soft">
@@ -75,10 +76,11 @@ export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange })
       </label>
 
       <p className={`mt-2 ${hintClass}`}>
-        Only used when Slug handling is set to "Transliterate" and an item's name contains a script the
-        built-in transliteration can't handle on its own (Korean, Japanese, Chinese, Arabic, Hebrew, etc.) —
-        Latin, Cyrillic, and Greek are always handled locally without this. Validated against Anthropic
-        before saving.
+        Connect once here, then use it from wherever it applies. Right now that's{" "}
+        <strong className="text-ink-soft">Slug handling</strong>'s "Transliterate" mode, as a fallback for
+        scripts the built-in transliteration can't handle on its own (Korean, Japanese, Chinese, Arabic,
+        Hebrew, etc.) — Latin, Cyrillic, and Greek are always handled locally without this. More features
+        may use this connection later. Validated against Anthropic before saving.
       </p>
 
       {error && <p className="mt-2 text-sm font-medium text-status-error-fg">{error}</p>}

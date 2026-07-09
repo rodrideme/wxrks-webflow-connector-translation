@@ -45,13 +45,10 @@ const DEFAULT_SETTINGS = {
   // "transliterate": derive a new slug from the item's name (translated or
   // transliterated respectively) -- never from the raw slug string itself,
   // since that's what caused slug translation to be hard-blocked before
-  // (see NON_TRANSLATABLE_KEYS above). finalization/maxLength only matter
-  // once mode !== "source": "auto" writes the sanitized candidate slug
-  // immediately; "review" holds it as a pending suggestion (see
-  // addPendingSlugSuggestion below) an admin must approve first.
+  // (see NON_TRANSLATABLE_KEYS above) -- and write it immediately alongside
+  // the rest of that locale's translated fields.
   slugHandling: {
     mode: "source", // "source" | "translate" | "transliterate"
-    finalization: "auto", // "auto" | "review"
     maxLength: 60,
   },
   // Placeholders: {collection}, {entry}. Becomes the wxrks resource/work-
@@ -953,67 +950,6 @@ async function getDebugWebhookPayload(accountId) {
   return rows[0] ? rows[0].value : [];
 }
 
-// Candidate slugs awaiting admin approval when slugHandling.finalization is
-// "review" (see webhooks.js's wxrks-webhook handler). Stored the same way
-// as debugWebhookHistory above -- a single JSON array under one app_state
-// key per account -- rather than a new table, since this is a small,
-// bounded list with no relational needs of its own. Deliberately NOT folded
-// into project_mappings.updates[]: that array's shape drives the existing
-// delivery-dedup check and batch-completion counter in webhooks.js, and
-// giving it a separate pending/approved/rejected lifecycle risks corrupting
-// those.
-async function addPendingSlugSuggestion(accountId, suggestion) {
-  const entry = {
-    id: crypto.randomUUID(),
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    ...suggestion,
-  };
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
-    accountId,
-  ]);
-  const existing = rows[0] ? rows[0].value : [];
-  const updated = [...existing, entry];
-  await db.query(
-    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'pendingSlugSuggestions', $2)
-     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
-    [accountId, JSON.stringify(updated)]
-  );
-  return entry;
-}
-
-async function listPendingSlugSuggestions(accountId, { status = "pending" } = {}) {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
-    accountId,
-  ]);
-  const all = rows[0] ? rows[0].value : [];
-  return status ? all.filter((s) => s.status === status) : all;
-}
-
-async function getPendingSlugSuggestion(accountId, suggestionId) {
-  const all = await listPendingSlugSuggestions(accountId, { status: null });
-  return all.find((s) => s.id === suggestionId);
-}
-
-async function resolvePendingSlugSuggestion(accountId, suggestionId, { action, appliedSlug } = {}) {
-  const { rows } = await db.query(`SELECT value FROM app_state WHERE account_id = $1 AND key = 'pendingSlugSuggestions'`, [
-    accountId,
-  ]);
-  const all = rows[0] ? rows[0].value : [];
-  let resolved;
-  const updated = all.map((s) => {
-    if (s.id !== suggestionId) return s;
-    resolved = { ...s, status: action === "approve" ? "approved" : "rejected", resolvedAt: new Date().toISOString(), appliedSlug };
-    return resolved;
-  });
-  await db.query(
-    `INSERT INTO app_state (account_id, key, value) VALUES ($1, 'pendingSlugSuggestions', $2)
-     ON CONFLICT (account_id, key) DO UPDATE SET value = $2`,
-    [accountId, JSON.stringify(updated)]
-  );
-  return resolved;
-}
-
 module.exports = {
   createProjectMapping,
   addItemToProjectMapping,
@@ -1061,10 +997,6 @@ module.exports = {
   advanceAutomationCheckpoint,
   setLastSync,
   getLastSync,
-  addPendingSlugSuggestion,
-  listPendingSlugSuggestions,
-  getPendingSlugSuggestion,
-  resolvePendingSlugSuggestion,
   setDebugWebhookPayload,
   getDebugWebhookPayload,
   createSyncJob,

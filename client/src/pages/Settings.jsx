@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import api from "../services/api.js";
 import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
@@ -7,27 +8,52 @@ import SettingsFieldExclusions from "./settings/SettingsFieldExclusions.jsx";
 import SettingsSlugHandling from "./settings/SettingsSlugHandling.jsx";
 import SettingsLlm from "./settings/SettingsLlm.jsx";
 
+const TABS = [
+  { to: "account", label: "General" },
+  { to: "slug-handling", label: "Slug handling" },
+  { to: "llm", label: "LLM connectors" },
+  { to: "wxrks", label: "wxrks connection" },
+  { to: "fields", label: "Field exclusions" },
+  { to: "keys", label: "Keys" },
+];
+
+function SettingsNav() {
+  return (
+    <nav className="w-44 flex-none">
+      <div className="flex flex-col gap-0.5">
+        {TABS.map((tab) => (
+          <NavLink
+            key={tab.to}
+            to={tab.to}
+            className={({ isActive }) =>
+              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
+              (isActive ? "bg-accent-subtle text-accent-text" : "text-ink-soft hover:text-ink")
+            }
+          >
+            {tab.label}
+          </NavLink>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
 /**
- * App-level configuration: timezone, naming patterns, automation toggles,
- * wxrks connection, per-field translation exclusions, and env keys. Org
- * unit + target locales used to live here too, but now that the wizard
- * (Send to wxrks) always sends its own explicit values for every one-time
- * send and automation (see SendToWxrksModal.jsx), this page only shows the
- * source locale read-only -- auto-detected from the connected Webflow
- * site, not something to configure manually. Per-collection SYNC scope
- * (enable/disable a whole collection) moved out too: the Dashboard's
- * backlog widget now scans every collection and derives locales from
- * Webflow directly instead of from settings (see routes/collections.js's
- * backlogHandler). Per-FIELD exclusions (SettingsFieldExclusions below)
- * stayed -- that's a different, still-needed concern with no other UI
- * surface in the app.
+ * App-level configuration, split into its own tabs (vertical nav on the
+ * left) now that there are enough sections to make one long scrolling page
+ * unwieldy: General (timezone, naming patterns, automation toggles,
+ * source locale), Slug handling, LLM connectors, wxrks connection, Field
+ * exclusions, and read-only env Keys. Org unit + target locales used to
+ * live here too, but now that the wizard (Send to wxrks) always sends its
+ * own explicit values for every one-time send and automation (see
+ * SendToWxrksModal.jsx), General only shows the source locale read-only --
+ * auto-detected from the connected Webflow site, not something to
+ * configure manually.
  */
 export default function Settings() {
   const [settings, setSettings] = useState(null);
   const [webflowLocales, setWebflowLocales] = useState(null);
   const [error, setError] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   function loadSettings() {
     return Promise.all([api.getSettings(), api.getWebflowLocales().catch(() => null)])
@@ -49,30 +75,16 @@ export default function Settings() {
 
   function markDirty(patch) {
     setSettings((prev) => ({ ...prev, ...patch }));
-    setSaved(false);
   }
 
-  async function save() {
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await api.updateSettings({
-        timezone: settings.timezone,
-        workUnitNamePattern: settings.workUnitNamePattern,
-        pagesWorkUnitNamePattern: settings.pagesWorkUnitNamePattern,
-        componentsWorkUnitNamePattern: settings.componentsWorkUnitNamePattern,
-        autoApprove: settings.autoApprove,
-        autoPublish: settings.autoPublish,
-        sourceLocale: settings.sourceLocale,
-        slugHandling: settings.slugHandling,
-      });
-      setSettings((prev) => ({ ...prev, ...updated }));
-      setSaved(true);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+  // Saves only the given top-level settings fields (read from current draft
+  // state) rather than the whole object -- each tab now has its own Save
+  // button and shouldn't clobber another tab's unsaved draft edits.
+  async function saveFields(fields) {
+    const patch = {};
+    fields.forEach((f) => (patch[f] = settings[f]));
+    const updated = await api.updateSettings(patch);
+    setSettings((prev) => ({ ...prev, ...updated }));
   }
 
   if (!settings) return <p className="text-sm text-ink-soft">Loading settings...</p>;
@@ -80,49 +92,34 @@ export default function Settings() {
   return (
     <div>
       <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Settings</h1>
+      {error && <p className="mb-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
 
-      <div className="max-w-2xl">
-        <SettingsAccount settings={settings} markDirty={markDirty} webflowLocales={webflowLocales} />
-
-        <div className="mt-8">
-          <SettingsSlugHandling settings={settings} markDirty={markDirty} />
-        </div>
-
-        {settings.slugHandling?.mode === "transliterate" && (
-          <div className="mt-8">
-            <SettingsLlm
-              llmConnected={settings.llmConnected}
-              llmApiKeyMasked={settings.llmApiKeyMasked}
-              onChange={loadSettings}
+      <div className="flex gap-10">
+        <SettingsNav />
+        <div className="min-w-0 max-w-2xl flex-1">
+          <Routes>
+            <Route index element={<Navigate to="account" replace />} />
+            <Route
+              path="account"
+              element={
+                <SettingsAccount settings={settings} markDirty={markDirty} webflowLocales={webflowLocales} saveFields={saveFields} />
+              }
             />
-          </div>
-        )}
-
-        <div className="mt-8">
-          <SettingsWxrks
-            wxrksConnected={settings.wxrksConnected}
-            wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked}
-            onChange={loadSettings}
-          />
-        </div>
-
-        <div className="mt-8">
-          <SettingsFieldExclusions />
-        </div>
-
-        {error && <p className="mt-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
-        {saved && <p className="mt-4 text-sm font-medium text-status-success-fg">Settings saved.</p>}
-
-        <button
-          onClick={save}
-          disabled={saving}
-          className="mt-4 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {saving ? "Saving..." : "Save settings"}
-        </button>
-
-        <div className="mt-8">
-          <SettingsKeys settings={settings} />
+            <Route
+              path="slug-handling"
+              element={<SettingsSlugHandling settings={settings} markDirty={markDirty} saveFields={saveFields} />}
+            />
+            <Route
+              path="llm"
+              element={<SettingsLlm llmConnected={settings.llmConnected} llmApiKeyMasked={settings.llmApiKeyMasked} onChange={loadSettings} />}
+            />
+            <Route
+              path="wxrks"
+              element={<SettingsWxrks wxrksConnected={settings.wxrksConnected} wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked} onChange={loadSettings} />}
+            />
+            <Route path="fields" element={<SettingsFieldExclusions />} />
+            <Route path="keys" element={<SettingsKeys settings={settings} />} />
+          </Routes>
         </div>
       </div>
     </div>
