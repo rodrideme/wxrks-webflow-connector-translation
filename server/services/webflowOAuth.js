@@ -17,12 +17,15 @@ const API_BASE = "https://api.webflow.com/v2";
 // Phase 2: this token is now actually used for real Webflow API calls (see
 // services/webflow.js's resolveConnection()), so the grant needs to cover
 // everything this app's existing static WEBFLOW_API_TOKEN could already do
-// -- CMS items, Pages, and Components (which the API treats as pages/DOM
-// endpoints, confirmed no separate "components" scope exists). Every
-// existing connected account's token predates this and only has the
-// Phase 1 scopes -- those users must log out/in once to pick up a token
-// with the broader grant before their account's Webflow calls will work.
-const SCOPES = "authorized_user:read sites:read cms:read cms:write pages:read pages:write";
+// -- CMS items, Pages, and Components. `components:read`/`components:write`
+// ARE real, separate scopes (confirmed live via a real 403: "OAuthForbidden:
+// You are missing the following scopes - 'components:read'") -- an earlier
+// assumption that Components used the Pages scopes was wrong. Every
+// existing connected account's token predates this and only has whatever
+// scopes were requested before -- those users must log out/in once to pick
+// up a token with the broader grant before their account's Webflow calls
+// will work.
+const SCOPES = "authorized_user:read sites:read cms:read cms:write pages:read pages:write components:read components:write";
 
 function requireEnv(name) {
   const value = process.env[name];

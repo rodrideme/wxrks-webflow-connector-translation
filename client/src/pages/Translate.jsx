@@ -820,6 +820,7 @@ export default function Translate() {
         ruleBased={ruleBased}
         allTotalItems={allTotalItems}
         allTotalWords={allTotalWords}
+        allItemsLoading={allItemsLoading}
         phase={phase}
         progress={jobProgress}
         result={result}

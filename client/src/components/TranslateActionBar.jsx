@@ -18,7 +18,7 @@ const btnGhost =
  * real wxrks API calls and take minutes, so a fire-and-forget "Sending…"
  * spinner isn't enough).
  */
-export default function TranslateActionBar({ mode, selCount, selWords, targetCount, ruleBased, allTotalItems, allTotalWords, phase, progress, result, onOpenSend, onReset, onCancel }) {
+export default function TranslateActionBar({ mode, selCount, selWords, targetCount, ruleBased, allTotalItems, allTotalWords, allItemsLoading, phase, progress, result, onOpenSend, onReset, onCancel }) {
   const plural = (n) => `item${n === 1 ? "" : "s"}`;
 
   return (
@@ -52,12 +52,16 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
 
       {phase === "idle" && mode === "all" && (
         <div className="flex items-center gap-4">
-          <span className="text-[13.5px]">
-            <b className="font-semibold">All content</b> · {allTotalItems} items · ~{allTotalWords?.toLocaleString()} words ·{" "}
-            {targetCount} locales
+          <span className={"text-[13.5px] " + (allItemsLoading ? "text-ink-faint" : "")}>
+            <b className="font-semibold">All content</b>{" "}
+            {allItemsLoading ? (
+              "· still counting items…"
+            ) : (
+              <>· {allTotalItems} items · ~{allTotalWords?.toLocaleString()} words · {targetCount} locales</>
+            )}
           </span>
-          <button onClick={onOpenSend} className={btnPrimary + " ml-auto"}>
-            Translate all — {allTotalItems} items
+          <button onClick={onOpenSend} disabled={allItemsLoading} className={btnPrimary + " ml-auto"}>
+            {allItemsLoading ? "Counting items…" : `Translate all — ${allTotalItems} items`}
           </button>
         </div>
       )}
