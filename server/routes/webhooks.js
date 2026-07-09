@@ -58,6 +58,7 @@ router.post("/wxrks", async (req, res) => {
     project_file_name: fileName,
     target_locale: locale,
     translated_file_url: directTranslatedFileUrl,
+    is_last_workflow: isLastWorkflow,
   } = req.body || {};
 
   if (eventType === "WEBHOOK_VALIDATION") {
@@ -72,6 +73,19 @@ router.post("/wxrks", async (req, res) => {
     return res
       .status(400)
       .json({ error: "Missing id, project_uuid, project_file_name, or target_locale in webhook payload" });
+  }
+  // A multi-step workflow (e.g. Translation -> Review) fires this same
+  // "delivered"/"file ready" signal at the end of EVERY step, not just the
+  // last one -- only the last step's output is the final, fully-approved
+  // content that should ever be written to Webflow. Writing back after an
+  // intermediate step would push a not-yet-reviewed draft, then get
+  // silently overwritten by the real content later (or worse, race with
+  // it). `=== false` (not just falsy) so payloads that omit this field
+  // entirely (e.g. a single-step "just Translation" workflow, confirmed
+  // live to always report true there) are treated as "proceed normally"
+  // rather than blocked by a missing field.
+  if (isLastWorkflow === false) {
+    return res.status(200).json({ ignored: true, reason: "not the last workflow step yet" });
   }
 
   const mapping = await store.getProjectMapping(wxrksProjectUUID);
