@@ -258,27 +258,54 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
 
   if (!settings) return <Modal open={open} onClose={onClose} title="Send for translation"><p className="text-sm text-ink-faint">Loading…</p></Modal>;
 
-  return (
-    <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-4xl">
-      <div className="mb-5 flex items-center gap-2">
-        {["Settings", "Run", "Review"].map((label, i) => (
-          <div key={label} className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => i <= step && setStep(i)}
-              className={
-                "flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs font-semibold " +
-                (i <= step ? "bg-ink text-canvas" : "border border-border-strong text-ink-faint")
-              }
-            >
-              {i < step ? "✓" : i + 1}
-            </button>
-            <span className={"text-[13px] font-semibold " + (i === step ? "text-ink" : "text-ink-faint")}>{label}</span>
-            {i < 2 && <span className="mx-2 h-px w-8 bg-border-strong" />}
-          </div>
-        ))}
-      </div>
+  const stagesBar = (
+    <div className="flex items-center gap-2">
+      {["Settings", "Run", "Review"].map((label, i) => (
+        <div key={label} className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => i <= step && setStep(i)}
+            className={
+              "flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs font-semibold " +
+              (i <= step ? "bg-ink text-canvas" : "border border-border-strong text-ink-faint")
+            }
+          >
+            {i < step ? "✓" : i + 1}
+          </button>
+          <span className={"text-[13px] font-semibold " + (i === step ? "text-ink" : "text-ink-faint")}>{label}</span>
+          {i < 2 && <span className="mx-2 h-px w-8 bg-border-strong" />}
+        </div>
+      ))}
+    </div>
+  );
 
+  const footerBar = (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-ink-faint">Nothing is sent until you confirm.</span>
+      {error && <span className="text-xs font-medium text-status-error-fg">Error: {error}</span>}
+      <div className="ml-auto flex gap-2.5">
+        {step > 0 && (
+          <button type="button" onClick={() => setStep(step - 1)} className={btnGhost}>
+            Back
+          </button>
+        )}
+        <button type="button" onClick={handleNext} disabled={submitting || targetLocales.length === 0 || !orgUnitUUID} className={btnPrimary}>
+          {submitting
+            ? "Sending…"
+            : step === 2
+            ? runMode === "auto"
+              ? includeExisting
+                ? "Send to translation & create automation"
+                : "Create automation"
+              : "Send to wxrks"
+            : "Continue"}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-4xl" height="h-[38rem]" subheader={stagesBar} footer={footerBar}>
       {step === 0 && (
         <div className="space-y-4">
           <label className="flex flex-col gap-1 text-sm font-medium text-ink-soft">
@@ -556,30 +583,6 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           </div>
         </div>
       )}
-
-      {error && <p className="mt-3 text-sm font-medium text-status-error-fg">Error: {error}</p>}
-
-      <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
-        <span className="text-xs text-ink-faint">Nothing is sent until you confirm.</span>
-        <div className="ml-auto flex gap-2.5">
-          {step > 0 && (
-            <button type="button" onClick={() => setStep(step - 1)} className={btnGhost}>
-              Back
-            </button>
-          )}
-          <button type="button" onClick={handleNext} disabled={submitting || targetLocales.length === 0 || !orgUnitUUID} className={btnPrimary}>
-            {submitting
-              ? "Sending…"
-              : step === 2
-              ? runMode === "auto"
-                ? includeExisting
-                  ? "Send to translation & create automation"
-                  : "Create automation"
-                : "Send to wxrks"
-              : "Continue"}
-          </button>
-        </div>
-      </div>
     </Modal>
   );
 }
