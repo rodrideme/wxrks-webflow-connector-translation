@@ -68,6 +68,7 @@ router.put("/", async (req, res) => {
     targetLocales,
     autoPublish,
     autoApprove,
+    combineIntoOneProject,
     orgUnitUUID,
     workUnitNamePattern,
     timezone,
@@ -80,6 +81,7 @@ router.put("/", async (req, res) => {
   if (targetLocales !== undefined) patch.targetLocales = targetLocales;
   if (autoPublish !== undefined) patch.autoPublish = autoPublish;
   if (autoApprove !== undefined) patch.autoApprove = autoApprove;
+  if (combineIntoOneProject !== undefined) patch.combineIntoOneProject = Boolean(combineIntoOneProject);
   if (orgUnitUUID !== undefined) patch.orgUnitUUID = orgUnitUUID;
   if (workUnitNamePattern !== undefined) patch.workUnitNamePattern = workUnitNamePattern;
   if (timezone !== undefined) patch.timezone = timezone;

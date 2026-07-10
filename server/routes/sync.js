@@ -3,7 +3,7 @@ const express = require("express");
 const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
-const { syncItemIntoBatch, requestBatchApproval } = require("../services/syncCore");
+const { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval } = require("../services/syncCore");
 
 const router = express.Router();
 
@@ -116,6 +116,165 @@ router.post("/item", async (req, res) => {
       }
     })().catch((err) => {
       console.error(`Item sync job ${jobId} crashed:`, err.message);
+      store.updateSyncJob(jobId, { status: "error", error: err.message });
+    });
+  } catch (err) {
+    if (err.code === "WXRKS_NOT_CONNECTED") {
+      return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
+    }
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/sync/combined
+ * body: { groups: [{ kind: "collection"|"pagesFolder"|"components", leafId?, ids }], workflows, projectName, orgUnitUUID, targetLocales }
+ * Sends items spanning multiple collections/pages/components into a single
+ * shared wxrks project instead of one project per group -- the default
+ * behavior (settings.combineIntoOneProject) once a selection spans more
+ * than one kind/collection. Mirrors autoSyncQueue.js's flush(), which
+ * already does exactly this for automations (one project per batch,
+ * regardless of how many entity types it contains); this is the same
+ * pattern for a one-time send instead of a scheduled batch.
+ */
+router.post("/combined", async (req, res) => {
+  const { groups, workflows, projectName, orgUnitUUID: orgUnitUUIDOverride, targetLocales: targetLocalesOverride } = req.body || {};
+  const accountId = req.account.id;
+  try {
+    const {
+      sourceLocale,
+      targetLocales: settingsTargetLocales,
+      orgUnitUUID: settingsOrgUnitUUID,
+      autoApprove,
+      workUnitNamePattern,
+      pagesWorkUnitNamePattern,
+      componentsWorkUnitNamePattern,
+    } = await store.getSettings(accountId);
+    const targetLocales = targetLocalesOverride?.length ? targetLocalesOverride : settingsTargetLocales;
+
+    if (!Array.isArray(groups) || groups.length === 0) {
+      return res.status(400).json({ error: "At least one group is required" });
+    }
+    if (targetLocales.length === 0) {
+      return res.status(400).json({ error: "No target locales configured. Set them in Settings first." });
+    }
+
+    const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
+    const totalItems = groups.reduce((sum, g) => sum + (g.ids?.length || 0), 0);
+
+    const project = await wxrks.createProject({
+      reference: projectName || `Combined Sync / ${new Date().toISOString()}`,
+      sourceLocale,
+      orgUnitUUID,
+    });
+    await store.createProjectMapping(accountId, project.uuid, {
+      mode: "combined",
+      sourceLocale,
+      targetLocales,
+      orgUnitUUID,
+      workUnitNamePattern,
+      status: "in_progress",
+      wxrksStatus: "DRAFT",
+    });
+
+    const jobId = crypto.randomUUID();
+    store.createSyncJob({ id: jobId, mode: "combined", total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    res.json({ jobId, total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+
+    // Runs after the response is sent, same "respond fast, process in
+    // background" pattern as every other one-time send endpoint above.
+    (async () => {
+      for (const g of groups) {
+        if (store.getSyncJob(jobId).cancelled) break;
+
+        if (g.kind === "collection") {
+          const collection = await webflow.getCollection(g.leafId);
+          for (const id of g.ids) {
+            if (store.getSyncJob(jobId).cancelled) break;
+            try {
+              const item = await webflow.getItem(g.leafId, id, { locale: sourceLocale });
+              const result = await syncItemIntoBatch({
+                accountId,
+                projectUuid: project.uuid,
+                collection,
+                item,
+                targetLocales,
+                namePattern: workUnitNamePattern,
+                workflows,
+              });
+              store.appendSyncJobResult(jobId, { itemId: id, ...result });
+            } catch (err) {
+              store.appendSyncJobResult(jobId, { itemId: id, error: err.message });
+            }
+          }
+        } else if (g.kind === "pagesFolder") {
+          const allPages = await webflow.listStaticPages();
+          const pagesById = new Map(allPages.map((p) => [p.id, p]));
+          for (const id of g.ids) {
+            if (store.getSyncJob(jobId).cancelled) break;
+            try {
+              const page = pagesById.get(id);
+              if (!page) throw new Error(`Page ${id} not found`);
+              const nodes = await webflow.getPageDom(id, { locale: sourceLocale });
+              const result = await syncPageIntoBatch({
+                projectUuid: project.uuid,
+                page,
+                nodes,
+                targetLocales,
+                namePattern: pagesWorkUnitNamePattern,
+                workflows,
+              });
+              store.appendSyncJobResult(jobId, { webflowPageId: id, ...result });
+            } catch (err) {
+              store.appendSyncJobResult(jobId, { webflowPageId: id, error: err.message });
+            }
+          }
+        } else {
+          const allComponents = await webflow.listComponents();
+          const componentsById = new Map(allComponents.map((c) => [c.id, c]));
+          for (const id of g.ids) {
+            if (store.getSyncJob(jobId).cancelled) break;
+            try {
+              const component = componentsById.get(id);
+              if (!component) throw new Error(`Component ${id} not found`);
+              const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
+              const result = await syncComponentIntoBatch({
+                projectUuid: project.uuid,
+                component,
+                nodes,
+                targetLocales,
+                namePattern: componentsWorkUnitNamePattern,
+                workflows,
+              });
+              store.appendSyncJobResult(jobId, { webflowComponentId: id, ...result });
+            } catch (err) {
+              store.appendSyncJobResult(jobId, { webflowComponentId: id, error: err.message });
+            }
+          }
+        }
+      }
+
+      const finalJob = store.getSyncJob(jobId);
+      const itemsSynced = finalJob.results.filter((r) => !r.skipped && !r.error).length;
+      const summary = {
+        itemsProcessed: finalJob.processed,
+        itemsSynced,
+        skipped: finalJob.results.filter((r) => r.skipped).length,
+        errors: finalJob.results.filter((r) => r.error).length,
+        estimatedWordCount: finalJob.results.reduce((sum, r) => sum + (r.wordCount || 0), 0),
+        wxrksProjectUUID: project.uuid,
+        orgUnitUUID,
+        targetLocales,
+      };
+      store.updateSyncJob(jobId, { status: finalJob.cancelled ? "cancelled" : "completed" });
+      await store.setLastSync(accountId, { mode: "combined", summary });
+
+      if (autoApprove && itemsSynced > 0) {
+        requestBatchApproval(project.uuid);
+      }
+    })().catch((err) => {
+      console.error(`Combined sync job ${jobId} crashed:`, err.message);
       store.updateSyncJob(jobId, { status: "error", error: err.message });
     });
   } catch (err) {

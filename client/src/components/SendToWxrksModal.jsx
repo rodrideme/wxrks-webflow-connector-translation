@@ -224,20 +224,35 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
         return;
       }
 
-      // One-time: dispatch per kind/leaf -- each call now creates its wxrks
-      // project and returns a jobId immediately (processing continues in
-      // the background), rather than blocking until every item is done.
-      // A selection spanning multiple kinds/leaves becomes multiple jobs/
-      // projects, tracked together by the parent's job poller.
+      // One-time send. A selection spanning multiple kinds/leaves used to
+      // always become one job/project per group -- now, by default
+      // (settings.combineIntoOneProject), everything shares a single wxrks
+      // project instead, matching how automations already behave. Turning
+      // that setting off restores the old one-project-per-group behavior,
+      // with each project's name auto-suffixed "(1 of N)" etc.
       const options = { workflows: workflowSteps, projectName: projectName || undefined, orgUnitUUID, targetLocales };
       const sourceGroups = (scope === "all" ? allSummary.groups : selection.groups).filter((g) => g.ids.length > 0);
       const jobs = [];
-      for (const g of sourceGroups) {
-        let res;
-        if (g.kind === "collection") res = await api.syncItem(g.leafId, g.ids, options);
-        else if (g.kind === "pagesFolder") res = await api.syncPagesItem(g.ids, options);
-        else res = await api.syncComponentsItem(g.ids, options);
-        jobs.push({ jobId: res.jobId, total: res.total, wxrksProjectUUID: res.wxrksProjectUUID, kind: g.kind, label: g.label });
+
+      if (sourceGroups.length > 1 && settings?.combineIntoOneProject !== false) {
+        const res = await api.syncCombined(
+          sourceGroups.map((g) => ({ kind: g.kind, leafId: g.leafId, ids: g.ids })),
+          options
+        );
+        jobs.push({ jobId: res.jobId, total: res.total, wxrksProjectUUID: res.wxrksProjectUUID, kind: "combined", label: contentLabel });
+      } else {
+        for (let i = 0; i < sourceGroups.length; i++) {
+          const g = sourceGroups[i];
+          const groupOptions =
+            sourceGroups.length > 1
+              ? { ...options, projectName: `${options.projectName || contentLabel} (${i + 1} of ${sourceGroups.length})` }
+              : options;
+          let res;
+          if (g.kind === "collection") res = await api.syncItem(g.leafId, g.ids, groupOptions);
+          else if (g.kind === "pagesFolder") res = await api.syncPagesItem(g.ids, groupOptions);
+          else res = await api.syncComponentsItem(g.ids, groupOptions);
+          jobs.push({ jobId: res.jobId, total: res.total, wxrksProjectUUID: res.wxrksProjectUUID, kind: g.kind, label: g.label });
+        }
       }
       onJobsStarted(jobs);
       onClose();

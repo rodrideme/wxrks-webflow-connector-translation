@@ -52,6 +52,7 @@ export default function SettingsAccount({ settings, markDirty, webflowLocales, s
         "autoApprove",
         "autoPublish",
         "sourceLocale",
+        "combineIntoOneProject",
       ]);
       setSaved(true);
     } catch (err) {
@@ -150,6 +151,25 @@ export default function SettingsAccount({ settings, markDirty, webflowLocales, s
         <p className={`mt-4 ${hintClass}`}>
           These become the wxrks resource/work-unit names. Keep the entity's own placeholder in each
           pattern so names stay unique within a project.
+        </p>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Multi-collection sends</h2>
+        <label className="flex items-center gap-2 text-sm text-ink-soft">
+          <Toggle
+            checked={settings.combineIntoOneProject}
+            onChange={(e) => markDirty({ combineIntoOneProject: e.target.checked })}
+            label="Combine everything into one wxrks project"
+          />
+          Combine everything into one wxrks project
+        </label>
+        <p className={`mt-1 ${hintClass}`}>
+          When a one-time send (the "Send to wxrks" wizard's "All content" or "Select specific
+          content") spans more than one collection, page, or component, combine them into a
+          single wxrks project instead of one project per group. Turn this off to get a
+          separate project per group again, each named with an auto-added "(1 of 2)",
+          "(2 of 2)", etc. suffix.
         </p>
       </Card>
 

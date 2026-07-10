@@ -35,6 +35,15 @@ const DEFAULT_SETTINGS = {
   timezone: "UTC",
   autoPublish: process.env.AUTO_PUBLISH === "true",
   autoApprove: false,
+  // A one-time send spanning multiple collections/pages/components used to
+  // always create one wxrks project per group (confirmed live: selecting
+  // items from 2 collections created 2 separate projects) -- default now
+  // combines everything into a single project instead, matching how
+  // automations already behave (autoSyncQueue.flush() always shares one
+  // project across a whole batch regardless of entity type). Turning this
+  // off restores the old per-group behavior, with each project's name
+  // auto-suffixed "(1 of N)" etc. so they're distinguishable.
+  combineIntoOneProject: true,
   orgUnitUUID: process.env.WXRKS_ORG_UNIT_UUID || "",
   // { [collectionId]: string[] of field slugs to never translate, on top of
   // the automatic type-based filter }

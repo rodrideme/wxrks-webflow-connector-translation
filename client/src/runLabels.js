@@ -10,6 +10,7 @@ export function modeLabel(mode, automationName) {
   if (mode === "components-item") return "Components · Item Sync";
   if (mode === "bulk") return "Bulk Sync";
   if (mode === "item") return "Item Sync";
+  if (mode === "combined") return "Combined Sync";
   if (mode === "auto") return "Auto Sync";
   if (mode === "automation") return automationName ? `Automation · ${automationName}` : "Automation";
   return mode;

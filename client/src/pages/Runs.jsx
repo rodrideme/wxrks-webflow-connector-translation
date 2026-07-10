@@ -134,6 +134,27 @@ export default function Runs() {
     const c = components.find((c) => c.id === id);
     return c ? c.name : id;
   }
+  // "combined" mode's items[] can mix all three entity types in one project
+  // (see routes/sync.js's POST /combined) -- unlike the single-kind modes,
+  // there's no one collectionIds/pages/components list to fall back on, so
+  // this tallies directly from the items themselves, deduping collections
+  // (an item-per-item list would repeat the same collection name for every
+  // item in it) while just counting pages/components.
+  function combinedContentSummary(batch) {
+    const collectionIds = new Set();
+    let pageCount = 0;
+    let componentCount = 0;
+    for (const i of batch.items) {
+      if (i.webflowPageId) pageCount += 1;
+      else if (i.webflowComponentId) componentCount += 1;
+      else if (i.webflowCollectionId) collectionIds.add(i.webflowCollectionId);
+    }
+    const parts = [];
+    if (collectionIds.size > 0) parts.push([...collectionIds].map(collectionName).join(", "));
+    if (pageCount > 0) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
+    if (componentCount > 0) parts.push(`${componentCount} component${componentCount === 1 ? "" : "s"}`);
+    return parts.join(" · ") || "—";
+  }
   function orgUnitName(uuid) {
     const o = orgUnits.find((o) => o.uuid === uuid);
     return o ? o.name : uuid;
@@ -377,9 +398,19 @@ export default function Runs() {
                     }
                   />
                   <Field
-                    label={batch.mode?.startsWith("pages-") ? "Pages" : batch.mode?.startsWith("components-") ? "Components" : "Collections"}
+                    label={
+                      batch.mode === "combined"
+                        ? "Content"
+                        : batch.mode?.startsWith("pages-")
+                        ? "Pages"
+                        : batch.mode?.startsWith("components-")
+                        ? "Components"
+                        : "Collections"
+                    }
                     value={
-                      batch.mode?.startsWith("pages-")
+                      batch.mode === "combined"
+                        ? combinedContentSummary(batch)
+                        : batch.mode?.startsWith("pages-")
                         ? batch.items.map((i) => pageName(i.webflowPageId)).join(", ") || "—"
                         : batch.mode?.startsWith("components-")
                         ? batch.items.map((i) => componentName(i.webflowComponentId)).join(", ") || "—"
