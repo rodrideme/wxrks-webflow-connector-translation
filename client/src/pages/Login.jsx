@@ -11,9 +11,7 @@ export default function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <Card className="w-full max-w-sm p-8 text-center">
-        <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-md bg-gradient-to-br from-accent to-accent-strong text-sm font-bold text-white">
-          W→
-        </div>
+        <img src="/wxrks-logo.svg" alt="wxrks" className="mx-auto mb-4 h-12 w-12" />
         <h1 className="text-[17px] font-semibold text-ink">wxrks Sync</h1>
         <p className="mt-1.5 text-[13px] text-ink-faint">Sign in with your Webflow account to continue.</p>
 
