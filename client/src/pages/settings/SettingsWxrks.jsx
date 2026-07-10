@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "../../services/api.js";
 import Card from "../../components/Card.jsx";
 
@@ -16,12 +16,37 @@ const hintClass = "text-xs text-ink-faint";
  * connect its own before any wxrks-dependent feature (the "Send to wxrks"
  * wizard, automations) will work.
  */
-export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, onChange }) {
+export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, onChange, settings, markDirty, saveFields }) {
   const [accessKey, setAccessKey] = useState("");
   const [secret, setSecret] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+
+  const [orgUnits, setOrgUnits] = useState([]);
+  const [orgUnitsError, setOrgUnitsError] = useState(null);
+  const [orgUnitsLoading, setOrgUnitsLoading] = useState(true);
+  const [savingOrgUnit, setSavingOrgUnit] = useState(false);
+  const [orgUnitSaved, setOrgUnitSaved] = useState(false);
+
+  useEffect(() => {
+    api
+      .getOrgUnits()
+      .then((res) => setOrgUnits(res.orgUnits || []))
+      .catch((err) => setOrgUnitsError(err.message))
+      .finally(() => setOrgUnitsLoading(false));
+  }, []);
+
+  async function saveOrgUnit() {
+    setSavingOrgUnit(true);
+    setOrgUnitSaved(false);
+    try {
+      await saveFields(["orgUnitUUID"]);
+      setOrgUnitSaved(true);
+    } finally {
+      setSavingOrgUnit(false);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -55,6 +80,7 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
   }
 
   return (
+    <>
     <Card className="p-5">
       <h2 className="mb-3 text-[13.5px] font-semibold text-ink">wxrks connection</h2>
 
@@ -126,5 +152,45 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
         )}
       </div>
     </Card>
+
+    <Card className="mt-5 p-5">
+      <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Default org unit</h2>
+      <p className={hintClass}>
+        Pre-fills the org unit when starting a new send or automation -- you can always pick a
+        different one at that point instead.
+      </p>
+
+      <label className={`mt-3 ${labelClass}`}>
+        Org unit
+        <select
+          value={settings?.orgUnitUUID || ""}
+          onChange={(e) => markDirty({ orgUnitUUID: e.target.value })}
+          disabled={orgUnitsLoading}
+          className={inputClass}
+        >
+          <option value="">— none —</option>
+          {orgUnits.map((o) => (
+            <option key={o.uuid} value={o.uuid}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {orgUnitsError && (
+        <p className="mt-2 text-xs font-medium text-status-error-fg">Couldn't load org units: {orgUnitsError}</p>
+      )}
+      {orgUnitSaved && <p className="mt-2 text-sm font-medium text-status-success-fg">Default org unit saved.</p>}
+
+      <button
+        type="button"
+        onClick={saveOrgUnit}
+        disabled={savingOrgUnit}
+        className="mt-3 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {savingOrgUnit ? "Saving..." : "Save"}
+      </button>
+    </Card>
+    </>
   );
 }

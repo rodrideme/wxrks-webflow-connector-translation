@@ -115,7 +115,16 @@ export default function Settings() {
             />
             <Route
               path="wxrks"
-              element={<SettingsWxrks wxrksConnected={settings.wxrksConnected} wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked} onChange={loadSettings} />}
+              element={
+                <SettingsWxrks
+                  wxrksConnected={settings.wxrksConnected}
+                  wxrksAccessKeyMasked={settings.wxrksAccessKeyMasked}
+                  onChange={loadSettings}
+                  settings={settings}
+                  markDirty={markDirty}
+                  saveFields={saveFields}
+                />
+              }
             />
             <Route path="fields" element={<SettingsFieldExclusions />} />
             <Route path="keys" element={<SettingsKeys settings={settings} />} />
