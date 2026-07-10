@@ -1,5 +1,7 @@
+import { Link } from "react-router-dom";
 import StatusPill from "./StatusPill.jsx";
 import ProgressBar from "./ProgressBar.jsx";
+import { wxrksProjectUrl } from "../wxrksLinks.js";
 
 const btnPrimary =
   "inline-flex items-center gap-1.5 rounded-md bg-accent px-5 py-2 text-[13.5px] font-semibold text-white transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50";
@@ -54,7 +56,23 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
               <StatusPill variant={result.errors > 0 ? "error" : "success"} label={result.errors > 0 ? `${result.errors} error(s)` : "Sent"} />
               {result.itemsSynced} {plural(result.itemsSynced)} sent
             </div>
-            <div className="mt-0.5 font-mono text-[11.5px] text-ink-faint">{result.wxrksProjectUUID}</div>
+            <div className="mt-0.5 flex items-center gap-3 text-[11.5px] text-ink-faint">
+              {result.wxrksProjectUUID && (
+                <a
+                  href={wxrksProjectUrl(result.wxrksProjectUUID)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-accent-text hover:underline"
+                >
+                  {result.wxrksProjectUUIDs?.length > 1
+                    ? `View in wxrks (+${result.wxrksProjectUUIDs.length - 1} more) ↗`
+                    : "View in wxrks ↗"}
+                </a>
+              )}
+              <Link to={result.wxrksProjectUUID ? `/runs#${result.wxrksProjectUUID}` : "/runs"} className="font-medium text-accent-text hover:underline">
+                See all runs →
+              </Link>
+            </div>
           </div>
           <button onClick={onReset} className={btnGhost + " ml-auto"}>
             Start another
