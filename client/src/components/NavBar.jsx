@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import api from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import logo from "../assets/wxrks-logo.svg";
+
+// Served as-is from client/public/ (not a Vite-processed src import) so the
+// docs site's static HTML pages can reference this exact same URL/file
+// instead of keeping a second copy of the logo.
+const logo = "/wxrks-logo.svg";
 
 const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },

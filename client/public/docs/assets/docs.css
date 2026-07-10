@@ -122,14 +122,9 @@ a:hover {
 .brand-mark {
   width: 22px;
   height: 22px;
+  flex: none;
   border-radius: 6px;
-  background: linear-gradient(to bottom right, var(--accent), var(--accent-strong));
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
 }
 
 .brand-name {

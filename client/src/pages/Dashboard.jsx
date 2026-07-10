@@ -30,18 +30,24 @@ function projectTotalWords(p) {
 /**
  * Checklist row: a StatusPill + label + detail text + a link to the
  * relevant Settings tab. "Optional" rows never render as an error/blocking
- * state when incomplete -- just a neutral "Optional" pill.
+ * state when incomplete -- just a neutral "Optional" pill. "failed" is a
+ * distinct third state from "not set up" -- something IS configured but
+ * has actually stopped working (e.g. wxrks rejecting a regenerated key),
+ * which needs to read as urgent (red), not the same neutral grey as never
+ * having been set up at all.
  */
-function ChecklistRow({ label, detail, complete, optional = false, to }) {
+function ChecklistRow({ label, detail, complete, optional = false, failed = false, to }) {
+  const variant = failed ? "error" : complete ? "success" : "draft";
+  const pillLabel = failed ? "Failed" : complete ? "Done" : optional ? "Optional" : "Not set up";
   return (
     <div className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
-      <StatusPill variant={complete ? "success" : "draft"} label={complete ? "Done" : optional ? "Optional" : "Not set up"} />
+      <StatusPill variant={variant} label={pillLabel} />
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] font-semibold text-ink">{label}</div>
         <div className="mt-0.5 text-xs text-ink-faint">{detail}</div>
       </div>
       <Link to={to} className={linkClass + " flex-none text-[13px]"}>
-        {complete ? "Manage" : "Set up"} →
+        {failed ? "Reconnect" : complete ? "Manage" : "Set up"} →
       </Link>
     </div>
   );
@@ -56,6 +62,12 @@ export default function Dashboard() {
   const [automations, setAutomations] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  // wxrksConnected only means "a credential is stored" -- a key regenerated
+  // on wxrks's own side silently invalidates the old one, so this re-checks
+  // for real (same live check as Settings > wxrks connection) instead of
+  // leaving the checklist showing "Done" for a connection that's actually
+  // broken. null = not checked yet (or nothing to check).
+  const [wxrksHealthy, setWxrksHealthy] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -71,6 +83,9 @@ export default function Dashboard() {
         setSettings(settingsRes);
         setHistory(historyRes.history || []);
         setAutomations(automationsRes.automations || []);
+        if (settingsRes?.wxrksConnected) {
+          api.testWxrksConnection().then((res) => setWxrksHealthy(res.ok)).catch(() => setWxrksHealthy(false));
+        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -140,8 +155,15 @@ export default function Dashboard() {
           />
           <ChecklistRow
             label="wxrks connected"
-            detail={settings?.wxrksConnected ? settings.wxrksAccessKeyMasked : "Not connected"}
-            complete={Boolean(settings?.wxrksConnected)}
+            detail={
+              !settings?.wxrksConnected
+                ? "Not connected"
+                : wxrksHealthy === false
+                ? "wxrks rejected these credentials — they may have been regenerated. Reconnect below."
+                : settings.wxrksAccessKeyMasked
+            }
+            complete={Boolean(settings?.wxrksConnected) && wxrksHealthy !== false}
+            failed={Boolean(settings?.wxrksConnected) && wxrksHealthy === false}
             to="/settings/wxrks"
           />
           <ChecklistRow

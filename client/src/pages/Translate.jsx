@@ -728,7 +728,24 @@ export default function Translate() {
                             </th>
                             <th className="px-3 py-2">Name</th>
                             {activeLeaf.kind === "collection" && <th className="px-3 py-2 text-right">Words</th>}
-                            <th className="px-3 py-2">Status</th>
+                            <th className="px-3 py-2">
+                              <span className="group relative inline-flex cursor-help items-center gap-1">
+                                Status
+                                <span className="text-[11px] normal-case text-ink-faint">ⓘ</span>
+                                <span className="invisible absolute left-0 top-full z-20 mt-1.5 w-64 rounded-md border border-border bg-surface p-2.5 text-[11px] font-normal normal-case leading-snug tracking-normal text-ink-soft opacity-0 shadow-card transition-opacity group-hover:visible group-hover:opacity-100">
+                                  <strong className="text-ink">New</strong> = never sent &middot; <strong className="text-ink">Synced</strong> = up to date &middot;{" "}
+                                  <strong className="text-ink">Stale</strong> = source changed since last send &middot; <strong className="text-ink">Failed</strong> = last attempt errored.{" "}
+                                  <a
+                                    href="/docs/translating-content.html#sync-status"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-medium text-accent-text hover:underline"
+                                  >
+                                    Learn more →
+                                  </a>
+                                </span>
+                              </span>
+                            </th>
                             <th className="px-3 py-2 text-right">Last update</th>
                           </tr>
                         </thead>

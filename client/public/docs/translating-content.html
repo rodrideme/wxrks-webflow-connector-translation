@@ -10,7 +10,7 @@
 <div class="layout">
   <nav class="sidebar">
     <div class="brand">
-      <div class="brand-mark">W&rarr;</div>
+      <img class="brand-mark" src="/wxrks-logo.svg" alt="wxrks" />
       <span class="brand-name">wxrks Sync</span>
     </div>
 
@@ -50,6 +50,33 @@
         Item and word counts load progressively per collection — on a large site this can take a
         moment, shown as "<em>N of M collections done</em>" while it works in the background.
       </p>
+
+      <h2 id="sync-status">Understanding sync status</h2>
+      <p>
+        When you choose <strong>Select specific content</strong> and open a collection, page
+        folder, or the components list, each item shows a <strong>Status</strong> pill — not just
+        whether it was ever sent, but whether it's actually up to date right now:
+      </p>
+      <table class="field-table">
+        <thead><tr><th>Status</th><th>What it means</th></tr></thead>
+        <tbody>
+          <tr><td><strong>New</strong></td><td>Never sent for translation yet (and no translation already exists in Webflow for it either).</td></tr>
+          <tr><td><strong>Synced</strong></td><td>Every target language is up to date with the current source content.</td></tr>
+          <tr><td><strong>Stale</strong></td><td>It was translated before, but the source has been edited or republished since — it needs sending again.</td></tr>
+          <tr><td><strong>Failed</strong></td><td>The last delivery attempt for at least one language errored out. The item's row shows the actual error message.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Status always looks at the <em>most recent</em> delivery attempt, and compares your
+        source content's last-updated time against when it was last actually delivered — so
+        republishing a page or CMS item after it's already been translated automatically flips it
+        back to <strong>Stale</strong>, without anyone having to track that by hand.
+      </p>
+      <div class="callout">
+        A row's Status covers every target language at once: if even one language failed, the row
+        shows <strong>Failed</strong>; it only shows <strong>Synced</strong> once every language
+        is current.
+      </div>
 
       <figure class="figure">
         <img src="assets/images/translate-cta.png" alt="Translate page with the send button highlighted" />
