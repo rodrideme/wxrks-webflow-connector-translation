@@ -49,6 +49,20 @@ function webhookPill(status, label, onReregister, busy) {
   );
 }
 
+const TABS = [
+  ["history", "History"],
+  ["recurring", "Recurring Automation"],
+  ["pending", "Pending Queue"],
+];
+
+// Dashboard's "Running automations" widget deep-links to /runs#automation-<id>;
+// its "Recent runs" widget deep-links to /runs#<wxrksProjectUUID> instead --
+// land on whichever tab actually holds that element so the scroll-into-view
+// effect below has something to find.
+function initialTabFromHash() {
+  return window.location.hash.startsWith("#automation-") ? "recurring" : "history";
+}
+
 export default function Runs() {
   const [automations, setAutomations] = useState(null);
   const [pendingItems, setPendingItems] = useState([]);
@@ -61,7 +75,9 @@ export default function Runs() {
   const [components, setComponents] = useState([]);
   const [orgUnits, setOrgUnits] = useState([]);
   const [timezone, setTimezone] = useState(undefined);
+  const [activeTab, setActiveTab] = useState(initialTabFromHash);
   const [logType, setLogType] = useState("all"); // all | one-time | recurring
+  const [showArchived, setShowArchived] = useState(false);
   const [detailAutomation, setDetailAutomation] = useState(null);
   const [flushing, setFlushing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -211,6 +227,9 @@ export default function Runs() {
     return type === logType;
   });
 
+  const archivedCount = (automations || []).filter((a) => a.archived).length;
+  const visibleAutomations = (automations || []).filter((a) => showArchived || !a.archived);
+
   return (
     <div>
       <div className="mb-5">
@@ -220,20 +239,49 @@ export default function Runs() {
 
       {error && <p className="mb-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
 
+      <div className="mb-5 flex gap-1 border-b border-border">
+        {TABS.map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setActiveTab(value)}
+            className={
+              "-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors " +
+              (activeTab === value ? "border-accent text-ink" : "border-transparent text-ink-faint hover:text-ink")
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "recurring" && (
+      <>
       {/* Recurring automations */}
       <Card className="mb-4">
         <div className="flex items-baseline justify-between gap-3 border-b border-border px-4 py-3">
           <span className="text-[13px] font-semibold text-ink">Recurring automations</span>
-          <span className="text-[11.5px] text-ink-faint">Created from Translate → Send</span>
+          <div className="flex items-center gap-3">
+            {archivedCount > 0 && (
+              <button
+                onClick={() => setShowArchived((v) => !v)}
+                className="text-[11.5px] font-semibold text-accent-text hover:underline"
+              >
+                {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+              </button>
+            )}
+            <span className="text-[11.5px] text-ink-faint">Created from Translate → Send</span>
+          </div>
         </div>
         {automations === null ? (
           <p className="p-4 text-sm text-ink-faint">Loading…</p>
         ) : automations.length === 0 ? (
           <p className="p-4 text-sm text-ink-faint">No automations yet — create one from Translate → Send.</p>
+        ) : visibleAutomations.length === 0 ? (
+          <p className="p-4 text-sm text-ink-faint">All automations are archived — click "Show archived" to view them.</p>
         ) : (
           <div className="overflow-x-auto">
             <div className="min-w-[46rem]">
-              {automations.map((a) => (
+              {visibleAutomations.map((a) => (
                 <div
                   key={a.id}
                   id={`automation-${a.id}`}
@@ -283,7 +331,11 @@ export default function Runs() {
             webhookPill(pagesWebhook.status, "Pages/Components publish webhook", () => reregisterWebhook("pages"), reregistering === "pages")}
         </div>
       )}
+      </>
+      )}
 
+      {activeTab === "pending" && (
+      <>
       {/* Pending queue */}
       <Card className="mb-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -331,7 +383,11 @@ export default function Runs() {
           ))
         )}
       </Card>
+      </>
+      )}
 
+      {activeTab === "history" && (
+      <>
       {/* History */}
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <span className="text-[14px] font-semibold text-ink">History</span>
@@ -477,6 +533,8 @@ export default function Runs() {
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       {detailAutomation && (
