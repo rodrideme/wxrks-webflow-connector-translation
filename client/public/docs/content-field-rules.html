@@ -50,7 +50,7 @@
         <tbody>
           <tr><td><strong>Keep the source slug</strong></td><td>The translated item reuses the exact same slug as the source language.</td></tr>
           <tr><td><strong>Translate</strong></td><td>The slug is translated into the target language's words, then slugified.</td></tr>
-          <tr><td><strong>Transliterate</strong></td><td>The source slug's characters are converted into the target language's script (e.g. Cyrillic &rarr; Latin) rather than translated word-for-word — built in for Cyrillic and Greek, with the <a href="connecting-accounts.html">LLM connector</a> as a fallback for scripts it doesn't cover.</td></tr>
+          <tr><td><strong>Transliterate</strong></td><td>The item's translated name is romanized into Latin script for the slug (e.g. a Russian translation's Cyrillic name becomes a phonetic Latin slug) rather than translated word-for-word — built in for Cyrillic and Greek, with the <a href="connecting-accounts.html">LLM connector</a> as a fallback for scripts it doesn't cover (Arabic, Hebrew, CJK, etc.).</td></tr>
         </tbody>
       </table>
       <p>

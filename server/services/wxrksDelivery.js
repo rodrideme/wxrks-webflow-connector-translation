@@ -54,13 +54,20 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
 
   // Slug handling (settings.slugHandling): the raw slug is never sent to
   // wxrks (see the guard above) -- instead, when enabled, a new slug is
-  // derived locally from the item's name (translated, for "translate"
-  // mode; source-locale, for "transliterate" mode) and written straight
-  // into this same patch. Skipped entirely for pages/components (no slug
-  // concept) and whenever the source item had no slug to begin with
-  // (nothing to validate a fallback against).
+  // derived locally from the item's own TRANSLATED name (both modes --
+  // this used to feed "transliterate" mode the source-locale name instead,
+  // which is a no-op whenever the source is already Latin script, e.g. an
+  // English site: transliterating "Cases" produces "cases" every time,
+  // regardless of target locale, since there's nothing non-Latin in it to
+  // convert. Confirmed live against a real Arabic target -- the slug came
+  // back as the plain English word. Using the translated name instead means
+  // "transliterate" romanizes whatever script THAT target locale's
+  // translation actually came back in.) and written straight into this
+  // same patch. Skipped entirely for pages/components (no slug concept)
+  // and whenever the source item had no slug to begin with (nothing to
+  // validate a fallback against).
   if (entityType === "cmsItem" && slugHandling.mode !== "source" && sourceSlug) {
-    const nameForSlug = slugHandling.mode === "transliterate" ? sourceName : translation?.name ?? sourceName;
+    const nameForSlug = translation?.name ?? sourceName;
     let candidateSlug = webflow.sanitizeSlug(nameForSlug, {
       maxLength: slugHandling.maxLength,
       transliterate: slugHandling.mode === "transliterate",

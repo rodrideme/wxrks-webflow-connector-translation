@@ -60,7 +60,7 @@ export default function SettingsSlugHandling({ settings, markDirty, saveFields }
         >
           <option value="source">Keep the source slug</option>
           <option value="translate">Translate (derived from the translated name)</option>
-          <option value="transliterate">Transliterate (Latin script, no translation)</option>
+          <option value="transliterate">Transliterate (romanized version of the translated name)</option>
         </select>
       </label>
 
