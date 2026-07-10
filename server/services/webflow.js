@@ -578,6 +578,15 @@ function listFieldSchema(collection) {
       displayName: f.displayName,
       type: f.type,
       translatableByDefault: isFieldTypeTranslatable(f.type),
+      // Reference/MultiReference fields link to an item (or items) in
+      // ANOTHER collection (e.g. a blog post's "Author" or "Tags") --
+      // confirmed live against a real site's field schema that Webflow
+      // puts that linked collection's id at validations.collectionId.
+      // Only sent for these two types so callers can tell a Reference
+      // field apart from a plain field without a linked collection.
+      ...(["Reference", "MultiReference"].includes(f.type) && f.validations?.collectionId
+        ? { linkedCollectionId: f.validations.collectionId }
+        : {}),
     }));
 }
 

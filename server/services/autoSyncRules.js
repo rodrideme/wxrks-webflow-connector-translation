@@ -25,6 +25,17 @@ function evaluateCondition(cond, fieldData) {
       return Boolean(value) === Boolean(cond.value);
     case "PlainText":
       return String(value ?? "") === String(cond.value);
+    // Kept in sync with client/src/leafHelpers.js's identical cases -- see
+    // that file's comment for why cond.value is always an array.
+    case "Reference": {
+      const matches = Array.isArray(cond.value) && cond.value.includes(value);
+      return cond.operator === "notEquals" ? !matches : matches;
+    }
+    case "MultiReference": {
+      const itemIds = Array.isArray(value) ? value : [];
+      const matches = Array.isArray(cond.value) && cond.value.some((id) => itemIds.includes(id));
+      return cond.operator === "notEquals" ? !matches : matches;
+    }
     default:
       return false;
   }

@@ -4,6 +4,7 @@ import api from "../services/api.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import ContentBrowserRail from "../components/ContentBrowserRail.jsx";
+import ReferenceFilterValue from "../components/ReferenceFilterValue.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import TranslateActionBar from "../components/TranslateActionBar.jsx";
 import SendToWxrksModal from "../components/SendToWxrksModal.jsx";
@@ -20,6 +21,17 @@ const DATE_FILTER_OPTS = [
   { value: "2026-06-01", label: "After 1 Jun 2026" },
   { value: "2026-07-01", label: "After 1 Jul 2026" },
 ];
+
+const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference"];
+
+// Reference/MultiReference default to an empty picked-options array (matches
+// nothing until the user actually picks something), same "must actively
+// choose a value" behavior the other field types already default to.
+function defaultFilterValue(fieldType) {
+  if (fieldType === "Switch") return true;
+  if (fieldType === "Reference" || fieldType === "MultiReference") return [];
+  return "";
+}
 
 export default function Translate() {
   const [mode, setMode] = useState("all"); // "all" | "specific"
@@ -191,12 +203,14 @@ export default function Translate() {
   }
 
   async function loadCollectionFields(collectionId) {
-    if (fieldsByCollection[collectionId]) return;
+    if (fieldsByCollection[collectionId]) return fieldsByCollection[collectionId];
     try {
       const res = await api.getCollectionFields(collectionId);
       setFieldsByCollection((prev) => ({ ...prev, [collectionId]: res.fields }));
+      return res.fields;
     } catch (err) {
       setError(err.message);
+      return [];
     }
   }
 
@@ -208,7 +222,18 @@ export default function Translate() {
       } catch {
         return; // recorded in collectionLoadErrors; rendered below with a retry action
       }
-      await loadCollectionFields(id);
+      const fields = await loadCollectionFields(id);
+      // A filter saved against this leaf earlier (or loaded from a saved
+      // automation) may already reference a linked collection -- make sure
+      // its real option names are ready before the filter row renders,
+      // rather than only fetching them the moment the user picks the field
+      // fresh (see the field-picker's onChange and addFilter below).
+      const existingFilters = filtersByLeaf[leafKeyOf(kind, id)] || [];
+      for (const f of existingFilters) {
+        if (f.fieldType !== "Reference" && f.fieldType !== "MultiReference") continue;
+        const fd = fields.find((x) => x.slug === f.fieldSlug);
+        if (fd?.linkedCollectionId) loadCollectionItems(fd.linkedCollectionId).catch(() => {});
+      }
     }
   }
 
@@ -467,12 +492,13 @@ export default function Translate() {
   }
 
   function addFilter() {
-    const fields = activeFields.filter((f) => ["DateTime", "Switch", "PlainText"].includes(f.type));
+    const fields = activeFields.filter((f) => FILTERABLE_FIELD_TYPES.includes(f.type));
     if (fields.length === 0) return;
     const fd = fields[0];
+    if (fd.linkedCollectionId) loadCollectionItems(fd.linkedCollectionId).catch(() => {});
     updateFilters(activeLeaf, (arr) => [
       ...arr,
-      { fieldSlug: fd.slug, fieldType: fd.type, operator: "equals", value: fd.type === "Switch" ? true : "" },
+      { fieldSlug: fd.slug, fieldType: fd.type, operator: "equals", value: defaultFilterValue(fd.type) },
     ]);
   }
 
@@ -670,22 +696,25 @@ export default function Translate() {
 
                 {activeLeaf.kind === "collection" && (
                   <div className="mb-3 flex flex-col gap-2">
-                    {activeFilters.map((f, i) => (
+                    {activeFilters.map((f, i) => {
+                      const fd = activeFields.find((x) => x.slug === f.fieldSlug);
+                      return (
                       <div key={i} className="flex flex-wrap items-center gap-2">
                         <span className="min-w-[34px] text-[11.5px] font-semibold text-ink-faint">{i === 0 ? "Where" : "and"}</span>
                         <select
                           value={f.fieldSlug}
                           onChange={(e) => {
-                            const fd = activeFields.find((x) => x.slug === e.target.value);
-                            updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { fieldSlug: fd.slug, fieldType: fd.type, operator: "equals", value: fd.type === "Switch" ? true : "" } : c)));
+                            const newFd = activeFields.find((x) => x.slug === e.target.value);
+                            if (newFd.linkedCollectionId) loadCollectionItems(newFd.linkedCollectionId).catch(() => {});
+                            updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { fieldSlug: newFd.slug, fieldType: newFd.type, operator: "equals", value: defaultFilterValue(newFd.type) } : c)));
                           }}
                           className="rounded-md border border-border-strong bg-surface px-2 py-1 text-xs"
                         >
                           {activeFields
-                            .filter((fd) => ["DateTime", "Switch", "PlainText"].includes(fd.type))
-                            .map((fd) => (
-                              <option key={fd.slug} value={fd.slug}>
-                                {fd.displayName}
+                            .filter((x) => FILTERABLE_FIELD_TYPES.includes(x.type))
+                            .map((x) => (
+                              <option key={x.slug} value={x.slug}>
+                                {x.displayName}
                               </option>
                             ))}
                         </select>
@@ -716,6 +745,25 @@ export default function Translate() {
                             <option value="true">true</option>
                             <option value="false">false</option>
                           </select>
+                        ) : f.fieldType === "Reference" || f.fieldType === "MultiReference" ? (
+                          <>
+                            <select
+                              value={f.operator}
+                              onChange={(e) => updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { ...c, operator: e.target.value } : c)))}
+                              className="rounded-md border border-border-strong bg-surface px-2 py-1 text-xs"
+                            >
+                              <option value="equals">is</option>
+                              <option value="notEquals">is not</option>
+                            </select>
+                            <ReferenceFilterValue
+                              options={itemsByCollection[fd?.linkedCollectionId] || []}
+                              loading={Boolean(fd?.linkedCollectionId) && !itemsByCollection[fd.linkedCollectionId] && !collectionLoadErrors[fd.linkedCollectionId]}
+                              error={fd?.linkedCollectionId ? collectionLoadErrors[fd.linkedCollectionId] : null}
+                              onRetry={() => fd?.linkedCollectionId && loadCollectionItems(fd.linkedCollectionId).catch(() => {})}
+                              selectedIds={f.value || []}
+                              onChange={(ids) => updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { ...c, value: ids } : c)))}
+                            />
+                          </>
                         ) : (
                           <input
                             type="text"
@@ -729,7 +777,8 @@ export default function Translate() {
                           ✕
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                     <button onClick={addFilter} className="self-start rounded-md border border-dashed border-border-strong px-2.5 py-1 text-xs font-semibold text-accent-text">
                       + Add filter
                     </button>
