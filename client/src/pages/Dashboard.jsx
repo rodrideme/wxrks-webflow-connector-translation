@@ -162,7 +162,7 @@ export default function Dashboard() {
                 ? "Not connected"
                 : wxrksHealthy === false
                 ? "wxrks rejected these credentials — they may have been regenerated. Reconnect below."
-                : settings.wxrksAccessKeyMasked
+                : "Connected"
             }
             complete={Boolean(settings?.wxrksConnected) && wxrksHealthy !== false}
             failed={Boolean(settings?.wxrksConnected) && wxrksHealthy === false}
@@ -197,7 +197,7 @@ export default function Dashboard() {
           />
           <ChecklistRow
             label="Timezone & work unit naming (optional)"
-            detail="Set the timezone used for schedules and timestamps, and how wxrks names each translated resource."
+            detail="Set the timezone used for schedules and timestamps."
             complete
             optional
             to="/settings/account"
