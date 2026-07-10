@@ -141,6 +141,22 @@ router.delete("/wxrks-connection", async (req, res) => {
 });
 
 /**
+ * POST /api/settings/wxrks-connection/test
+ * Re-checks whatever credentials this account is actually using right now
+ * against wxrks's real /auth endpoint -- unlike wxrksConnected (which only
+ * reflects "something is stored"), this catches a key that's been
+ * regenerated/revoked on wxrks's own side out from under this app.
+ */
+router.post("/wxrks-connection/test", async (req, res) => {
+  try {
+    await wxrks.testCurrentConnection();
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, error: err.response?.data?.message || err.message });
+  }
+});
+
+/**
  * PUT /api/settings/llm-connection
  * body: { apiKey }
  * Optional, only used as a fallback for slugHandling's "transliterate" mode

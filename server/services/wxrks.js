@@ -84,6 +84,25 @@ async function testCredentials(accessKey, secret) {
   await client.post("/auth", { accessKey, secret });
 }
 
+/**
+ * Re-validates whatever credentials THIS account is actually resolving to
+ * right now (its own stored connection, or the env-var fallback for the
+ * original account) against wxrks's real /auth endpoint -- distinguishes
+ * "a credential is configured" from "it still actually works." A key
+ * regenerated on wxrks's own side silently invalidates the old one; nothing
+ * else in this app would notice until a real send failed, since the cached
+ * session token (up to 50 minutes) and the passive wxrksConnected flag both
+ * only reflect "we have something stored," never "wxrks still accepts it."
+ */
+async function testCurrentConnection() {
+  const connection = await resolveConnection();
+  if (connection.staticToken) {
+    await client.get("/client", { headers: { "X-AUTH-TOKEN": connection.staticToken } });
+    return;
+  }
+  await testCredentials(connection.accessKey, connection.secret);
+}
+
 async function getToken() {
   const accountContext = require("./accountContext");
   const accountId = accountContext.getAccountId();
@@ -463,6 +482,7 @@ module.exports = {
   authenticate,
   getToken,
   testCredentials,
+  testCurrentConnection,
   getOrgUnit,
   listOrgUnits,
   getOrgUnitDetails,

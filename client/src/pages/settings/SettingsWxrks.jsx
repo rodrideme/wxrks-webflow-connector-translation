@@ -29,6 +29,13 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
   const [savingOrgUnit, setSavingOrgUnit] = useState(false);
   const [orgUnitSaved, setOrgUnitSaved] = useState(false);
 
+  // wxrksConnected only means "a credential is stored" -- it says nothing
+  // about whether wxrks still actually accepts it (e.g. a key regenerated
+  // on wxrks's own side silently invalidates the old one). Re-checked live
+  // as soon as this tab loads, so "Connected" here always reflects reality
+  // instead of just "something is configured."
+  const [connectionTest, setConnectionTest] = useState(null); // null | "checking" | { ok, error }
+
   useEffect(() => {
     api
       .getOrgUnits()
@@ -36,6 +43,21 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
       .catch((err) => setOrgUnitsError(err.message))
       .finally(() => setOrgUnitsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!wxrksConnected) return;
+    checkConnection();
+  }, [wxrksConnected]);
+
+  async function checkConnection() {
+    setConnectionTest("checking");
+    try {
+      const res = await api.testWxrksConnection();
+      setConnectionTest(res);
+    } catch (err) {
+      setConnectionTest({ ok: false, error: err.message });
+    }
+  }
 
   async function saveOrgUnit() {
     setSavingOrgUnit(true);
@@ -85,9 +107,23 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
       <h2 className="mb-3 text-[13.5px] font-semibold text-ink">wxrks connection</h2>
 
       {wxrksConnected && wxrksAccessKeyMasked && (
-        <p className="mb-3 text-sm text-ink-soft">
-          Connected as <strong className="font-mono text-ink">{wxrksAccessKeyMasked}</strong>
-        </p>
+        <div className="mb-3 flex items-center gap-2 text-sm text-ink-soft">
+          <span>
+            Connected as <strong className="font-mono text-ink">{wxrksAccessKeyMasked}</strong>
+          </span>
+          {connectionTest === "checking" && <span className="text-xs text-ink-faint">Checking…</span>}
+          {connectionTest && connectionTest !== "checking" && connectionTest.ok && (
+            <span className="text-xs font-medium text-status-success-fg">✓ Verified just now</span>
+          )}
+          {connectionTest && connectionTest !== "checking" && !connectionTest.ok && (
+            <span className="text-xs font-medium text-status-error-fg">✗ wxrks rejected this: {connectionTest.error}</span>
+          )}
+          {connectionTest !== "checking" && (
+            <button type="button" onClick={checkConnection} className="text-xs font-medium text-accent-text hover:underline">
+              Re-check
+            </button>
+          )}
+        </div>
       )}
 
       <div className="flex flex-col gap-3">

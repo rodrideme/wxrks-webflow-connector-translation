@@ -81,6 +81,7 @@ const api = {
   saveWxrksConnection: (accessKey, secret) =>
     request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }),
   deleteWxrksConnection: () => request("/settings/wxrks-connection", { method: "DELETE" }),
+  testWxrksConnection: () => request("/settings/wxrks-connection/test", { method: "POST" }),
   saveLlmConnection: (apiKey) =>
     request("/settings/llm-connection", { method: "PUT", body: JSON.stringify({ apiKey }) }),
   deleteLlmConnection: () => request("/settings/llm-connection", { method: "DELETE" }),
