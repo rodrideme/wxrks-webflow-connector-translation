@@ -212,16 +212,19 @@ export default function Translate() {
     }
   }
 
-  // Switching to "all" mode needs every collection's summary (id + word
-  // count) loaded to compute real aggregate stats (mirrors the old Bulk
-  // Sync dry-run's same full enumeration -- an explicit, occasional
-  // action, not a hot path). allSettled (not all) so one collection's
-  // transient failure doesn't wipe out the whole page with an error while
-  // every other collection's totals loaded fine; that collection's own
-  // error is tracked in collectionSummaryErrors instead (see
-  // loadCollectionSummary's per-collection retry above).
+  // Every collection's summary (id + word count) is loaded eagerly,
+  // regardless of mode -- "All content" needs it for its aggregate totals,
+  // and "Select specific content" needs it so the rail shows every
+  // collection/folder/component's real item count up front instead of a
+  // collection only getting a count once the user clicks it open (mirrors
+  // the old Bulk Sync dry-run's same full enumeration -- an explicit,
+  // occasional action, not a hot path). allSettled (not all) so one
+  // collection's transient failure doesn't wipe out the whole page with an
+  // error while every other collection's totals loaded fine; that
+  // collection's own error is tracked in collectionSummaryErrors instead
+  // (see loadCollectionSummary's per-collection retry above).
   useEffect(() => {
-    if (mode !== "all" || !initialDataLoaded) return;
+    if (!initialDataLoaded) return;
     const missing = collections.filter((c) => !collectionSummaries[c.id] && !collectionSummaryErrors[c.id]);
     if (missing.length === 0) {
       setAllItemsLoading(false);
@@ -230,7 +233,7 @@ export default function Translate() {
     setAllItemsLoading(true);
     Promise.allSettled(missing.map((c) => loadCollectionSummary(c.id))).finally(() => setAllItemsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, collections, initialDataLoaded]);
+  }, [collections, initialDataLoaded]);
 
   const collectionsDoneCount = collections.filter((c) => collectionSummaries[c.id] || collectionSummaryErrors[c.id]).length;
   const failedCollectionIds = Object.keys(collectionSummaryErrors);
@@ -283,7 +286,11 @@ export default function Translate() {
   function leafCount(leaf) {
     if (leaf.kind === "pagesFolder") return leaf.count;
     if (leaf.kind === "components") return leaf.count;
-    return itemsByCollection[leaf.id]?.length ?? "";
+    // itemsByCollection (full per-item data) only exists once the leaf's
+    // been opened; collectionSummaries (id + word count only) is loaded
+    // eagerly for every collection up front, so it's there from the very
+    // first render of the rail.
+    return itemsByCollection[leaf.id]?.length ?? collectionSummaries[leaf.id]?.length ?? "";
   }
 
   function isEntitySelected(kind, id) {
@@ -619,7 +626,19 @@ export default function Translate() {
         ))}
       </div>
 
-      {mode === "specific" && (
+      {mode === "specific" && allItemsLoading && (
+        <Card>
+          <LoadingState
+            label={
+              collections.length > 0
+                ? `${itemsCountedSoFar.toLocaleString()} items counted — ${collectionsDoneCount} of ${collections.length} collections done`
+                : "Computing totals across your site"
+            }
+          />
+        </Card>
+      )}
+
+      {mode === "specific" && !allItemsLoading && (
         <div className="flex items-start gap-4">
           <ContentBrowserRail groups={groups} dateFilter={{ value: dateAfter, onChange: setDateAfter, options: DATE_FILTER_OPTS }} />
 
@@ -785,8 +804,6 @@ export default function Translate() {
                       </button>
                     </div>
                   ) : activeLeaf.kind === "collection" && !itemsByCollection[activeLeaf.id] ? (
-                    <LoadingState label={`Loading ${activeLeaf.label}`} />
-                  ) : activeLeaf.kind !== "collection" && !initialDataLoaded ? (
                     <LoadingState label={`Loading ${activeLeaf.label}`} />
                   ) : (
                     <p className="p-4 text-sm text-ink-faint">No items{itemFilter !== "all" ? " match this filter" : ""}.</p>
