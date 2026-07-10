@@ -91,7 +91,15 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
 
       <p className={`mt-2 ${hintClass}`}>
         Validated against wxrks before saving. Every automation and one-time send under this account uses these
-        credentials -- without your own, translation features are unavailable.
+        credentials -- without your own, translation features are unavailable.{" "}
+        <a
+          href="/docs/connecting-accounts.html#generating-keys"
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-accent-text hover:underline"
+        >
+          Watch: how to generate your wxrks keys →
+        </a>
       </p>
 
       {error && <p className="mt-2 text-sm font-medium text-status-error-fg">{error}</p>}
