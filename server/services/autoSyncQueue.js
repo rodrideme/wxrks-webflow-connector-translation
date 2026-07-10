@@ -392,6 +392,7 @@ module.exports = {
     [...pending.entries()]
       .filter(([key]) => !automationId || key.startsWith(`${automationId}:`))
       .map(([, v]) => ({
+        automationId: v.automationId,
         entityType: v.entityType,
         trigger: v.trigger,
         collectionId: v.collection?.id,

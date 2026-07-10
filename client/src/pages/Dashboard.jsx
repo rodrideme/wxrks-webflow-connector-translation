@@ -221,6 +221,15 @@ export default function Dashboard() {
                           Runs
                         </Link>
                       </div>
+                      {p.mode === "automation" &&
+                        (() => {
+                          const auto = automations.find((a) => a.name === p.automationName);
+                          return auto ? (
+                            <div className="mt-0.5 truncate text-[11px] text-ink-faint">
+                              Project name: <span className="font-mono">{auto.projectName || `Automation "${auto.name}" · <send time>`}</span>
+                            </div>
+                          ) : null;
+                        })()}
                     </div>
                   );
                 })
@@ -246,6 +255,9 @@ export default function Dashboard() {
                       <Link to={`/runs#automation-${a.id}`} className={linkClass + " ml-auto"}>
                         Runs
                       </Link>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-ink-faint">
+                      Project name: <span className="font-mono">{a.projectName || `Automation "${a.name}" · <send time>`}</span>
                     </div>
                   </div>
                 ))

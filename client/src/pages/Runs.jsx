@@ -122,6 +122,9 @@ export default function Runs() {
     const o = orgUnits.find((o) => o.uuid === uuid);
     return o ? o.name : uuid;
   }
+  function automationName(id) {
+    return (automations || []).find((a) => a.id === id)?.name;
+  }
 
   async function togglePause(a) {
     try {
@@ -192,6 +195,10 @@ export default function Runs() {
                   <div className="min-w-0">
                     <div className="truncate text-[13.5px] font-medium text-ink">{a.name}</div>
                     <div className="truncate font-mono text-[11px] text-ink-faint">{scopeSummary(a.contentScope, collections, pageFolders)}</div>
+                    <div className="truncate text-[11px] text-ink-faint">
+                      Project name:{" "}
+                      <span className="font-mono">{a.projectName || `Automation "${a.name}" · <send time>`}</span>
+                    </div>
                   </div>
                   <span className="font-mono text-xs text-ink-soft">{cadenceLabel(a.cadence)}</span>
                   <span className="flex items-center gap-1.5 text-[11.5px] font-semibold">
@@ -263,7 +270,10 @@ export default function Runs() {
             <div key={i} className="flex items-center gap-4 border-t border-border px-4 py-2.5 text-sm first:border-t-0">
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium text-ink">{p.itemName || p.pageTitle || p.componentName}</div>
-                <div className="text-[11px] text-ink-faint">{p.collectionName || p.entityType}</div>
+                <div className="truncate text-[11px] text-ink-faint">
+                  {p.collectionName || p.entityType}
+                  {automationName(p.automationId) && <> &middot; caught by <span className="text-ink-soft">{automationName(p.automationId)}</span></>}
+                </div>
               </div>
               <span className="rounded-full bg-status-auto-bg px-2.5 py-0.5 text-[11px] font-semibold text-status-auto-fg">{p.trigger}</span>
               <span className="font-mono text-[11.5px] text-ink-faint">{formatDateTime(p.enqueuedAt, timezone)}</span>
