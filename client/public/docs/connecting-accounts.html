@@ -105,9 +105,9 @@
       <h3 id="wxrks-webhook">Registering the wxrks delivery webhook</h3>
       <p>
         wxrks needs a URL to call once a translation is ready, so it can be written back into
-        Webflow automatically. Unlike Webflow's own webhooks, this app can't register this one on
-        your behalf — wxrks doesn't offer an API for that, only its own dashboard — so this is a
-        one-time step you do directly in wxrks:
+        Webflow automatically. This is a one-time step you do directly in wxrks, registering the
+        URL for two events: <strong>Work Unit Status Changed</strong> and
+        <strong>Work Unit Translation File Ready</strong>.
       </p>
 
       <figure class="figure">
@@ -129,17 +129,18 @@
           integration (this lives in wxrks's own settings, not in this app).
         </li>
         <li>
-          Set its target URL to the one shown on the <strong>Webhooks</strong> tab of Settings
-          &rarr; wxrks connection in this app — copy it directly from there rather than retyping
-          it, so it always matches this app's actual current domain.
+          Register the URL shown on the <strong>Webhooks</strong> tab of Settings &rarr; wxrks
+          connection in this app — copy it directly from there rather than retyping it, so it
+          always matches this app's actual current domain — for both the
+          <strong>Work Unit Status Changed</strong> and <strong>Work Unit Translation File
+          Ready</strong> events.
         </li>
         <li>Save it in wxrks. That tab will show "Active" once the first real delivery arrives.</li>
       </ol>
       <div class="callout">
-        This app can't check wxrks's own configuration directly — there's no API for it. The
-        "Active" status is only ever proof after the fact (a real delivery arrived), not a live
-        check of wxrks's settings. If this app's domain ever changes, this URL changes too, and
-        needs to be updated in wxrks again.
+        The "Active" status shown in this app is only ever proof after the fact — once a real
+        delivery arrives. If this app's domain ever changes, this URL changes too, and needs to
+        be updated in wxrks again.
       </div>
 
       <h2>LLM connectors</h2>

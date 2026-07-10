@@ -34,11 +34,13 @@ function projectTotalWords(p) {
  * distinct third state from "not set up" -- something IS configured but
  * has actually stopped working (e.g. wxrks rejecting a regenerated key),
  * which needs to read as urgent (red), not the same neutral grey as never
- * having been set up at all.
+ * having been set up at all. `pendingLabel` overrides the default "Not set
+ * up" wording for rows where that's misleading -- e.g. something this app
+ * can't verify one way or the other, just waiting on a first event.
  */
-function ChecklistRow({ label, detail, complete, optional = false, failed = false, to }) {
+function ChecklistRow({ label, detail, complete, optional = false, failed = false, pendingLabel, to }) {
   const variant = failed ? "error" : complete ? "success" : "draft";
-  const pillLabel = failed ? "Failed" : complete ? "Done" : optional ? "Optional" : "Not set up";
+  const pillLabel = failed ? "Failed" : complete ? "Done" : optional ? "Optional" : pendingLabel || "Not set up";
   return (
     <div className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
       <StatusPill variant={variant} label={pillLabel} />
@@ -112,17 +114,13 @@ export default function Dashboard() {
           <ChecklistRow
             label="Webflow connected"
             detail={
-              <span>
-                <span className="block">
-                  {locales?.site?.displayName ? `${locales.site.displayName} — ${locales.site.url}` : "Connected"}
-                </span>
-                <span className="mt-0.5 block">
-                  You're already connected — this app supports one Webflow site per login. To switch sites,{" "}
-                  <button type="button" onClick={logout} className="font-medium text-accent-text hover:underline">
-                    sign out
-                  </button>{" "}
-                  and sign back in with the other one.
-                </span>
+              <span className="truncate">
+                {locales?.site?.displayName ? `${locales.site.displayName} — ${locales.site.url}` : "Connected"}
+                {" — one Webflow site per login, to switch "}
+                <button type="button" onClick={logout} className="font-medium text-accent-text hover:underline">
+                  sign out
+                </button>
+                .
               </span>
             }
             complete
@@ -191,9 +189,10 @@ export default function Dashboard() {
             detail={
               settings?.wxrksWebhook?.lastEventAt
                 ? `Active — last delivery received ${formatDateTime(settings.wxrksWebhook.lastEventAt, timezone)}.`
-                : "This app can't register this one for you — wxrks has no API for it, only its own dashboard. Register the URL shown there so translations can be delivered back automatically."
+                : "Register this app's webhook URL in wxrks for the Work Unit Status Changed and Work Unit Translation File Ready events."
             }
             complete={Boolean(settings?.wxrksWebhook?.lastEventAt)}
+            pendingLabel="Not Received Yet"
             to="/settings/wxrks?subtab=webhooks"
           />
           <ChecklistRow

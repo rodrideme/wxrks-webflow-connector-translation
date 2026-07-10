@@ -273,10 +273,9 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
         <Card className="p-5">
           <h2 className="mb-3 text-[13.5px] font-semibold text-ink">wxrks delivery webhook</h2>
           <p className={hintClass}>
-            wxrks needs to know where to send a translation once it's finished, so it can be written back into
-            Webflow automatically. Unlike Webflow's own webhooks, this app can't register this one for you --
-            wxrks has no API for that, only its own dashboard. Register the URL below there once, and it'll keep
-            working even if this app's domain ever changes, as long as you update it here again.
+            Register the URL below in your wxrks account for two events: <strong className="text-ink-soft">Work Unit Status Changed</strong>{" "}
+            and <strong className="text-ink-soft">Work Unit Translation File Ready</strong>. That's how a finished translation gets
+            written back into Webflow automatically.
           </p>
 
           <label className={`mt-3 ${labelClass}`}>
@@ -300,10 +299,7 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
                 {formatDateTime(settings.wxrksWebhook.lastEventAt, settings?.timezone)}.
               </p>
             ) : (
-              <p className="text-ink-soft">
-                No delivery received yet. This app can't check wxrks's own webhook configuration directly (no API
-                for it exists), so this will only confirm itself once a real translation comes back.
-              </p>
+              <p className="text-ink-soft">Not received yet — this updates automatically once wxrks sends its first delivery.</p>
             )}
           </div>
 
