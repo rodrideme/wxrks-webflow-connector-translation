@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Content &amp; Field Rules — wxrks Sync Docs</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link active" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">03 &middot; Content &amp; Field Rules</p>
+      <h1>Slug handling &amp; field exclusions</h1>
+      <p class="dek">
+        Two settings tabs decide exactly what gets translated, and how translated URLs are built:
+        <strong>Slug handling</strong> and <strong>Field exclusions</strong>.
+      </p>
+
+      <h2>Slug handling</h2>
+      <figure class="figure">
+        <img src="assets/images/settings-slug.png" alt="Settings Slug handling tab: target-locale slug mode dropdown" />
+        <figcaption>Settings &rarr; Slug handling.</figcaption>
+      </figure>
+      <p>
+        Every translated CMS item, page, or component keeps its own slug in each target locale.
+        This setting controls what that translated slug looks like:
+      </p>
+      <table class="field-table">
+        <thead><tr><th>Mode</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Keep the source slug</strong></td><td>The translated item reuses the exact same slug as the source language.</td></tr>
+          <tr><td><strong>Translate</strong></td><td>The slug is translated into the target language's words, then slugified.</td></tr>
+          <tr><td><strong>Transliterate</strong></td><td>The source slug's characters are converted into the target language's script (e.g. Cyrillic &rarr; Latin) rather than translated word-for-word — built in for Cyrillic and Greek, with the <a href="connecting-accounts.html">LLM connector</a> as a fallback for scripts it doesn't cover.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Webflow requires slugs to be dashes (not underscores), lowercase, and URL-safe — this app
+        enforces that automatically no matter which mode is selected.
+      </p>
+      <div class="callout">
+        A new slug is applied <strong>automatically</strong> the moment translation completes —
+        there's no manual review or approval step to hold it for.
+      </div>
+
+      <h2>Field exclusions</h2>
+      <figure class="figure">
+        <img src="assets/images/settings-fields.png" alt="Settings Field exclusions tab: list of collections, each expandable to toggle individual fields" />
+        <figcaption>Settings &rarr; Field exclusions.</figcaption>
+      </figure>
+      <p>
+        By default, this app auto-selects every text-type field across every collection as
+        translatable (that's the "Automatic field adjustment" step on the
+        <a href="getting-started.html">Dashboard</a>). Expand any collection here to turn off
+        specific fields that shouldn't be sent for translation — typical candidates are internal
+        notes, IDs, or any field already handled by <strong>Slug handling</strong> above.
+      </p>
+    </div>
+
+    <div class="content">
+      <div class="page-nav">
+        <a href="connecting-accounts.html"><span class="dir">&larr; Back</span>Connecting Your Accounts</a>
+        <a class="next" href="translating-content.html"><span class="dir">Next &rarr;</span>Translating Content</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

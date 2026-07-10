@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Connecting Your Accounts — wxrks Sync Docs</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link active" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">02 &middot; Connecting Your Accounts</p>
+      <h1>Settings — General &amp; connections</h1>
+      <p class="dek">
+        Settings is split into tabs down the left. This page covers the three that establish
+        who you're syncing as: <strong>General</strong>, <strong>wxrks connection</strong>, and
+        <strong>LLM connectors</strong>.
+      </p>
+
+      <h2>General</h2>
+      <figure class="figure">
+        <img src="assets/images/settings-general.png" alt="Settings General tab: source locale, timezone, work unit naming, and auto-approve toggle" />
+        <figcaption>Settings &rarr; General.</figcaption>
+      </figure>
+      <ul>
+        <li>
+          <strong>Source locale</strong> is read-only here — it's auto-detected from your connected
+          Webflow site's primary locale. Target locales are chosen per-send instead, in the
+          <a href="translating-content.html">Send to wxrks wizard</a>.
+        </li>
+        <li>
+          <strong>Timezone</strong> controls how every date/time in the app is displayed — an
+          automation's send schedule, and every timestamp on the
+          <a href="runs-automations.html">Runs</a> page — so everyone on the team sees the same
+          wall-clock time regardless of their own browser's zone.
+        </li>
+        <li>
+          <strong>Work unit naming</strong> sets the name pattern wxrks uses for each resource it
+          creates — separate patterns for CMS items, Pages, and Components, each with its own
+          placeholder (<code>{collection}</code>, <code>{entry}</code>, <code>{page}</code>,
+          <code>{component}</code>) so names stay unique per project.
+        </li>
+        <li>
+          <strong>Auto-approve wxrks projects</strong> (further down this tab) skips manual approval
+          in wxrks so translation starts immediately after a project is created.
+        </li>
+      </ul>
+
+      <h2>wxrks connection</h2>
+      <figure class="figure">
+        <img src="assets/images/settings-wxrks.png" alt="Settings wxrks connection tab: access key and secret fields" />
+        <figcaption>Settings &rarr; wxrks connection.</figcaption>
+      </figure>
+      <p>
+        Your wxrks <strong>access key</strong> and <strong>secret</strong> — these are validated
+        against wxrks's own authentication endpoint the moment you click
+        <strong>Save &amp; test connection</strong>, so an invalid pair is caught immediately
+        instead of failing confusingly on your first real send. Every automation and one-time send
+        under this account uses these credentials; without them, translation features are
+        unavailable.
+      </p>
+      <div class="callout">
+        Access keys and secrets are issued from your own wxrks account — this app doesn't create
+        them. If you don't have one yet, that's a wxrks-side step, not something configured here.
+      </div>
+
+      <h2>LLM connectors</h2>
+      <figure class="figure">
+        <img src="assets/images/settings-llm.png" alt="Settings LLM connectors tab: Anthropic API key field" />
+        <figcaption>Settings &rarr; LLM connectors.</figcaption>
+      </figure>
+      <p>
+        An optional Anthropic API key. Today it's used for exactly one thing: as a fallback for
+        <a href="content-field-rules.html">Slug handling</a>'s "Transliterate" mode, for scripts
+        the built-in transliteration table can't handle on its own (Korean, Japanese, Chinese,
+        Arabic, Hebrew, etc.) — Latin, Cyrillic, and Greek are always handled locally without it.
+        It's kept as its own always-visible tab because more features are expected to use this
+        same connection later (for example, running a marketing-tone prompt over a translation
+        after it comes back from wxrks).
+      </p>
+    </div>
+
+    <div class="content">
+      <div class="page-nav">
+        <a href="getting-started.html"><span class="dir">&larr; Back</span>Getting Started</a>
+        <a class="next" href="content-field-rules.html"><span class="dir">Next &rarr;</span>Content &amp; Field Rules</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

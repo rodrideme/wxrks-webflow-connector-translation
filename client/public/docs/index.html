@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Documentation — wxrks Sync</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link active" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">Knowledge base</p>
+      <h1>wxrks Sync documentation</h1>
+      <p class="dek">
+        wxrks Sync sends your Webflow site's Collection items, Pages, and Components to
+        <strong>wxrks</strong> for translation, then writes the finished translations back into
+        Webflow's real locale variants for each language you've enabled. This guide covers how
+        the app is set up and how each part of it works.
+      </p>
+
+      <div class="topic-grid">
+        <a class="topic-card" href="getting-started.html">
+          <span class="num">01</span>
+          <h3>Getting Started</h3>
+          <p>The Dashboard's setup checklist, and what each step means.</p>
+        </a>
+        <a class="topic-card" href="connecting-accounts.html">
+          <span class="num">02</span>
+          <h3>Connecting Your Accounts</h3>
+          <p>Language &amp; timezone defaults, your wxrks credentials, and the optional LLM connector.</p>
+        </a>
+        <a class="topic-card" href="content-field-rules.html">
+          <span class="num">03</span>
+          <h3>Content &amp; Field Rules</h3>
+          <p>Slug handling on translated URLs, and excluding specific fields from translation.</p>
+        </a>
+        <a class="topic-card" href="translating-content.html">
+          <span class="num">04</span>
+          <h3>Translating Content</h3>
+          <p>Choosing what to send and walking through the Send to wxrks wizard.</p>
+        </a>
+        <a class="topic-card" href="runs-automations.html">
+          <span class="num">05</span>
+          <h3>Runs &amp; Automations</h3>
+          <p>Recurring automations, the pending queue, and past run history.</p>
+        </a>
+      </div>
+
+      <h2>How the sync works, in short</h2>
+      <p>
+        Every send — one-time or recurring — creates a <strong>project</strong> in wxrks containing
+        the selected content's translatable text. wxrks routes that project through whatever
+        workflow you chose (at minimum, <em>Automatic Translation</em>) and delivers the finished
+        text back to this app via webhook. If a workflow has more than one step, Webflow only gets
+        updated once the <strong>last</strong> step delivers — an in-progress intermediate step
+        never partially overwrites your site.
+      </p>
+      <p>
+        Nothing is ever sent silently: every real request to wxrks or Webflow happens either
+        because you clicked <strong>Send to wxrks</strong> yourself, or because a recurring
+        automation you configured fired on its schedule.
+      </p>
+    </div>
+  </main>
+</div>
+</body>
+</html>

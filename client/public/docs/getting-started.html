@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Getting Started — wxrks Sync Docs</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link active" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">01 &middot; Getting Started</p>
+      <h1>The Dashboard</h1>
+      <p class="dek">
+        The Dashboard is the app's home screen. It doubles as an onboarding checklist while
+        you're setting up, and a live summary of recent activity once you're running.
+      </p>
+
+      <figure class="figure">
+        <img src="assets/images/dashboard.png" alt="Dashboard with the 5-step setup checklist and Latest runs / Running automations panels" />
+        <figcaption>The Dashboard — setup checklist on top, recent activity below.</figcaption>
+      </figure>
+
+      <h2>The setup checklist</h2>
+      <p>Five steps, each showing <strong>Done</strong>, <strong>Optional</strong>, or a <strong>Set up</strong> link if it still needs attention:</p>
+
+      <ol class="steps">
+        <li>
+          <strong>Webflow connected</strong> — the Webflow site this account is linked to, with its
+          live URL. This is established the first time someone signs in with Webflow.
+        </li>
+        <li>
+          <strong>Localization enabled</strong> — the target languages this app can translate into.
+          These come directly from the locales you've enabled in Webflow's own Localization
+          settings, not a separate list — see
+          <a href="connecting-accounts.html">Connecting Your Accounts</a>.
+        </li>
+        <li>
+          <strong>Automatic field adjustment</strong> — how many fields, across how many
+          collections, this app has automatically identified as translatable text (versus, say,
+          number or image fields, which are skipped automatically). You can still exclude
+          specific fields by hand — see <a href="content-field-rules.html">Content &amp; Field Rules</a>.
+        </li>
+        <li>
+          <strong>wxrks connected</strong> — your wxrks access key/secret, validated live against
+          wxrks before being saved.
+        </li>
+        <li>
+          <strong>LLM connector (optional)</strong> — an Anthropic API key, only needed as a
+          fallback for transliterating slugs in scripts the built-in transliteration table can't
+          handle on its own (Korean, Japanese, Chinese, Arabic, Hebrew). Skippable entirely if you
+          don't use Slug handling's "Transliterate" mode, or only translate into scripts it already
+          covers (Latin, Cyrillic, Greek).
+        </li>
+      </ol>
+
+      <h2>Latest runs &amp; running automations</h2>
+      <p>
+        Below the checklist, two panels summarize what's actually happened recently:
+      </p>
+      <ul>
+        <li>
+          <strong>Latest runs</strong> — your 3 most recent sends (one-time or automation-triggered),
+          with delivery status and a word count. Click <strong>Runs</strong> on any row to jump
+          straight to its full detail on the <a href="runs-automations.html">Runs &amp; Automations</a> page.
+        </li>
+        <li>
+          <strong>Running automations</strong> — up to 3 recurring automations currently active,
+          so you can see at a glance what's scheduled without leaving the Dashboard.
+        </li>
+      </ul>
+
+      <div class="callout">
+        <strong>Nothing here requires action once everything shows Done.</strong> The checklist
+        exists purely to guide first-time setup — an already-configured account can ignore it and
+        go straight to <a href="translating-content.html">Translating Content</a>.
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="page-nav">
+        <a href="index.html"><span class="dir">&larr; Back</span>Overview</a>
+        <a class="next" href="connecting-accounts.html"><span class="dir">Next &rarr;</span>Connecting Your Accounts</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translating Content — wxrks Sync Docs</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link active" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">04 &middot; Translating Content</p>
+      <h1>The Translate page</h1>
+      <p class="dek">
+        This is where a send starts — either everything on your site, or a hand-picked subset,
+        walked through a 3-step wizard before anything actually goes to wxrks.
+      </p>
+
+      <figure class="figure">
+        <img src="assets/images/translate.png" alt="Translate page: All content vs Select specific content, with items being counted" />
+        <figcaption>Choosing scope: <strong>All content</strong> or <strong>Select specific content</strong>.</figcaption>
+      </figure>
+
+      <h2>Choosing what to send</h2>
+      <ul>
+        <li><strong>All content</strong> — every Collection item, Page, and Component on the site.</li>
+        <li><strong>Select specific content</strong> — pick individual collections, page folders, or components.</li>
+      </ul>
+      <p>
+        Item and word counts load progressively per collection — on a large site this can take a
+        moment, shown as "<em>N of M collections done</em>" while it works in the background.
+      </p>
+
+      <figure class="figure">
+        <img src="assets/images/translate-cta.png" alt="Translate page with the send button highlighted" />
+        <figcaption>Once ready, this button opens the wizard.</figcaption>
+      </figure>
+
+      <h2>The Send to wxrks wizard</h2>
+
+      <h3>Step 1 — Settings</h3>
+      <figure class="figure">
+        <img src="assets/images/wizard-step1-settings.png" alt="Wizard step 1: org unit, target languages, and workflow" />
+        <figcaption>Org unit, target languages, and workflow.</figcaption>
+      </figure>
+      <ul>
+        <li><strong>Org unit</strong> — which wxrks org unit the project is created under.</li>
+        <li>
+          <strong>Target languages</strong> — pulled directly from the locales enabled in
+          Webflow's own Localization settings, never a hardcoded list. Webflow silently falls back
+          to the primary locale for any tag it doesn't recognize, so only real, registered locales
+          are ever offered.
+        </li>
+        <li>
+          <strong>Workflow</strong> — starts at <em>Automatic Translation</em>; additional steps
+          can be appended for review processes beyond machine translation.
+        </li>
+      </ul>
+
+      <h3>Step 2 — Run</h3>
+      <figure class="figure">
+        <img src="assets/images/wizard-step2-run.png" alt="Wizard step 2: one-time send vs recurring pull content automation" />
+        <figcaption>One-time, or recurring on a schedule.</figcaption>
+      </figure>
+      <ul>
+        <li><strong>One-time send</strong> — sends this exact selection once, right now.</li>
+        <li>
+          <strong>Recurring pull content automation</strong> — saves this scope and schedule as an
+          automation that checks for matching new/changed content and sends it automatically —
+          managed afterward on the <a href="runs-automations.html">Runs &amp; Automations</a> page.
+        </li>
+      </ul>
+
+      <h3>Step 3 — Review</h3>
+      <figure class="figure">
+        <img src="assets/images/wizard-step3-review.png" alt="Wizard step 3: final review before sending, with a Send to wxrks button" />
+        <figcaption>Final confirmation — nothing is sent until this button is clicked.</figcaption>
+      </figure>
+      <p>
+        A last look at content scope, run type, and translation settings before anything is
+        actually sent.
+      </p>
+
+      <div class="callout">
+        <strong>Multi-step workflows update Webflow only once, at the end.</strong> If a workflow
+        has more than one step (e.g. machine translation followed by a human review pass),
+        Webflow's content is left untouched until the <em>last</em> step delivers — an
+        intermediate step finishing never partially overwrites your site.
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="page-nav">
+        <a href="content-field-rules.html"><span class="dir">&larr; Back</span>Content &amp; Field Rules</a>
+        <a class="next" href="runs-automations.html"><span class="dir">Next &rarr;</span>Runs &amp; Automations</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

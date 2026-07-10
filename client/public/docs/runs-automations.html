@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Runs &amp; Automations — wxrks Sync Docs</title>
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">W&rarr;</div>
+      <span class="brand-name">wxrks Sync</span>
+    </div>
+
+    <div class="nav-eyebrow">Documentation</div>
+    <a class="nav-link" href="index.html"><span class="ic">&#9635;</span>Overview</a>
+    <a class="nav-link" href="getting-started.html"><span class="ic">&#9673;</span>Getting Started</a>
+    <a class="nav-link" href="connecting-accounts.html"><span class="ic">&#128279;</span>Connecting Your Accounts</a>
+    <a class="nav-link" href="content-field-rules.html"><span class="ic">&#9998;</span>Content &amp; Field Rules</a>
+    <a class="nav-link" href="translating-content.html"><span class="ic">&#8644;</span>Translating Content</a>
+    <a class="nav-link active" href="runs-automations.html"><span class="ic">&#9776;</span>Runs &amp; Automations</a>
+
+    <div class="sidebar-footer">
+      <a class="back-link" href="/"><span class="ic">&larr;</span>Back to app</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <p class="eyebrow">05 &middot; Runs &amp; Automations</p>
+      <h1>The Runs page</h1>
+      <p class="dek">
+        Everything that's scheduled, queued, or already happened lives here — recurring
+        automations, their pending content queue, and the full history of past sends.
+      </p>
+
+      <figure class="figure">
+        <img src="assets/images/runs.png" alt="Runs page: Recurring automations, Pending queue, and History sections" />
+        <figcaption>Runs &amp; Automations overview.</figcaption>
+      </figure>
+
+      <h2>Recurring automations</h2>
+      <p>
+        Every automation created from the <a href="translating-content.html">Send to wxrks
+        wizard</a>'s "Recurring pull content automation" option is listed here, with controls to
+        pause, resume, or archive it.
+      </p>
+
+      <h2>Pending queue</h2>
+      <p>
+        New and edited Webflow content appears here in real time, as Webflow's CMS webhook
+        delivers item-changed events — then runs under whichever automation matches it, on that
+        automation's own schedule. A <strong>CMS webhook not registered</strong> notice means this
+        account's Webflow webhook needs to be (re-)registered before the queue can populate
+        automatically — the reconnect action is right there when that happens.
+      </p>
+
+      <h2>History</h2>
+      <p>
+        Every past run, one-time or automation-triggered, with delivery status per item and any
+        errors encountered along the way. Filter by <strong>All</strong>, <strong>One-time</strong>,
+        or <strong>Recurring</strong> using the pills at the top right.
+      </p>
+      <p>
+        A run's card here is exactly what the <a href="getting-started.html">Dashboard</a>'s
+        "Latest runs" links jump to — following one of those links lands you scrolled straight to
+        the matching card on this page.
+      </p>
+    </div>
+
+    <div class="content">
+      <div class="page-nav">
+        <a href="translating-content.html"><span class="dir">&larr; Back</span>Translating Content</a>
+        <a class="next" href="index.html"><span class="dir">Start over &rarr;</span>Overview</a>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

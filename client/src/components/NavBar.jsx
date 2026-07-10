@@ -37,7 +37,17 @@ export default function NavBar() {
         ))}
       </div>
 
-      <div className="mt-auto flex flex-col gap-1.5 border-t border-border px-2 pt-3 text-[11px] text-ink-faint">
+      <a
+        href="/docs/index.html"
+        target="_blank"
+        rel="noreferrer"
+        className="mt-auto flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-ink-soft transition-colors hover:text-ink"
+      >
+        <span className="w-[15px] text-center text-[13px] opacity-85">📖</span>
+        Docs
+      </a>
+
+      <div className="flex flex-col gap-1.5 border-t border-border px-2 pt-3 text-[11px] text-ink-faint">
         {account?.name || account?.webflowSiteId ? (
           <span className="truncate font-medium text-ink-soft" title={account.name || account.webflowSiteId}>
             {account.name || account.webflowSiteId}
