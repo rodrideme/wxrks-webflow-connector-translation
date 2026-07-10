@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import api from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import logo from "../assets/wxrks-logo.svg";
 
 const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
@@ -26,9 +27,7 @@ export default function NavBar() {
   return (
     <nav className="sticky top-0 flex h-screen w-[13.5rem] flex-none flex-col gap-0.5 border-r border-border bg-surface-sunken p-3">
       <div className="flex items-center gap-2 px-2 pb-4 pt-1">
-        <div className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-gradient-to-br from-accent to-accent-strong text-[10px] font-bold text-white">
-          W→
-        </div>
+        <img src={logo} alt="wxrks" className="h-[22px] w-[22px] flex-none rounded-md" />
         <span className="text-[12.5px] font-semibold text-ink">wxrks Sync</span>
       </div>
 
