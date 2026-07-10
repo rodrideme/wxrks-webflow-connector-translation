@@ -28,10 +28,25 @@ function scopeSummary(contentScope, collections, pageFolders) {
     .join(", ");
 }
 
-function webhookPill(status, label) {
+// "not_registered" is a normal, expected state (no automation needs this
+// webhook yet) -- only "deactivated"/other unexpected statuses get an actual
+// Reregister action, since that's the only case something is really broken.
+function webhookPill(status, label, onReregister, busy) {
   if (status === "active") return <StatusPill variant="success" label={`${label} healthy`} />;
   if (status === "not_registered") return <StatusPill variant="draft" label={`${label} not registered`} />;
-  return <StatusPill variant="error" label={`${label} ${status.replace("_", " ")}`} />;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <StatusPill variant="error" label={`${label} ${status.replace("_", " ")}`} />
+      <button
+        type="button"
+        onClick={onReregister}
+        disabled={busy}
+        className="text-[11px] font-semibold text-accent-text hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? "Reregistering…" : "Reregister"}
+      </button>
+    </span>
+  );
 }
 
 export default function Runs() {
@@ -50,6 +65,7 @@ export default function Runs() {
   const [detailAutomation, setDetailAutomation] = useState(null);
   const [flushing, setFlushing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [reregistering, setReregistering] = useState(null); // "cms" | "pages" | null
   const [error, setError] = useState(null);
 
   function loadAutomations() {
@@ -144,6 +160,18 @@ export default function Runs() {
     }
   }
 
+  async function reregisterWebhook(kind) {
+    setReregistering(kind);
+    try {
+      await (kind === "cms" ? api.reregisterAutoSyncWebhook() : api.reregisterPagesWebhook());
+      loadAutomations();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReregistering(null);
+    }
+  }
+
   async function flushAll() {
     setFlushing(true);
     try {
@@ -229,8 +257,9 @@ export default function Runs() {
 
       {(webhook || pagesWebhook) && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          {webhook && webhookPill(webhook.status, "CMS webhook")}
-          {pagesWebhook && pagesWebhook.status !== "not_registered" && webhookPill(pagesWebhook.status, "Pages/Components publish webhook")}
+          {webhook && webhookPill(webhook.status, "CMS webhook", () => reregisterWebhook("cms"), reregistering === "cms")}
+          {pagesWebhook && pagesWebhook.status !== "not_registered" &&
+            webhookPill(pagesWebhook.status, "Pages/Components publish webhook", () => reregisterWebhook("pages"), reregistering === "pages")}
         </div>
       )}
 

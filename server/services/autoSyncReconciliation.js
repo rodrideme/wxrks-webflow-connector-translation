@@ -21,7 +21,9 @@
 const webflow = require("./webflow");
 const store = require("../store");
 const autoSyncQueue = require("./autoSyncQueue");
+const autoSyncWebhook = require("./autoSyncWebhook");
 const accountContext = require("./accountContext");
+const wxrksDeliveryReconciliation = require("./wxrksDeliveryReconciliation");
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -88,17 +90,38 @@ async function reconcileForAccount(account) {
   // actually found real misses AND the webhook looked idle over the same
   // window -- a quiet window with genuinely zero publishes must not be
   // mistaken for a dead webhook.
-  const { autoSyncWebhook } = settings;
-  const webhookIdleTooLong = !autoSyncWebhook.lastEventAt || new Date(autoSyncWebhook.lastEventAt) < cutoffForWebhookCheck;
-  if (totalMissed > 0 && webhookIdleTooLong && autoSyncWebhook.status === "active") {
+  const { autoSyncWebhook: webhookState } = settings;
+  const webhookIdleTooLong = !webhookState.lastEventAt || new Date(webhookState.lastEventAt) < cutoffForWebhookCheck;
+  if (totalMissed > 0 && webhookIdleTooLong && webhookState.status === "active") {
     await store.updateAutoSyncWebhookState(account.id, { status: "deactivated" });
+    // Self-heal immediately rather than waiting for a human to notice a red
+    // pill and click "Reregister" -- ensureWebhookRegistered already checks
+    // Webflow for an existing matching registration before creating one, so
+    // this is safe to call unconditionally even if the real cause turns out
+    // to be something registration alone can't fix (e.g. a revoked OAuth
+    // grant); it just quietly retries again next hour in that case.
+    try {
+      await autoSyncWebhook.ensureWebhookRegistered(account.id);
+    } catch (err) {
+      console.error(`Auto-reregistration of CMS webhook failed for account ${account.id}:`, err.message);
+    }
   }
 }
 
 async function reconcile() {
   const accounts = await store.listAllAccounts();
   for (const account of accounts) {
-    await accountContext.run(account.id, () => reconcileForAccount(account));
+    await accountContext.run(account.id, async () => {
+      await reconcileForAccount(account);
+      // Runs for every account regardless of automations (a one-time send
+      // needs this exactly as much as a recurring one -- see this file's
+      // wxrksDeliveryReconciliation import for why this can't be
+      // auto-repaired at the webhook-registration level the way the CMS
+      // webhook above can).
+      await wxrksDeliveryReconciliation.reconcileWxrksDeliveriesForAccount(account.id).catch((err) =>
+        console.error(`wxrks delivery reconciliation failed for account ${account.id}:`, err.message)
+      );
+    });
   }
 }
 

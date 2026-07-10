@@ -96,7 +96,11 @@ export default function Dashboard() {
 
   const timezone = settings?.timezone;
   const recentRuns = history.slice(0, 3);
-  const runningAutomations = automations.filter((a) => a.enabled && !a.archived).slice(0, 3);
+  const activeAutomations = automations.filter((a) => a.enabled && !a.archived);
+  const runningAutomations = activeAutomations.slice(0, 3);
+  const webhookStatuses = [settings?.autoSyncWebhook?.status, settings?.sitePublishWebhook?.status].filter(Boolean);
+  const webhooksAllActive = webhookStatuses.length > 0 && webhookStatuses.every((s) => s === "active");
+  const webhooksFailed = webhookStatuses.some((s) => s !== "active" && s !== "not_registered");
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -165,6 +169,22 @@ export default function Dashboard() {
             complete={Boolean(settings?.wxrksConnected) && wxrksHealthy !== false}
             failed={Boolean(settings?.wxrksConnected) && wxrksHealthy === false}
             to="/settings/wxrks"
+          />
+          <ChecklistRow
+            label="Webhook health"
+            detail={
+              activeAutomations.length === 0
+                ? "Optional — enables automations to catch new/changed content automatically."
+                : webhooksFailed
+                ? "One or more webhooks stopped responding — this retries automatically every hour, or reconnect now."
+                : webhooksAllActive
+                ? "Webflow webhooks are healthy."
+                : "Setting up…"
+            }
+            complete={activeAutomations.length > 0 && webhooksAllActive}
+            optional={activeAutomations.length === 0}
+            failed={activeAutomations.length > 0 && webhooksFailed}
+            to="/runs"
           />
           <ChecklistRow
             label="Timezone & work unit naming (optional)"

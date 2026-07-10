@@ -78,6 +78,7 @@ const api = {
       body: JSON.stringify({ excludedFields }),
     }),
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
+  reregisterPagesWebhook: () => request("/settings/autosync/reregister-pages-webhook", { method: "POST" }),
   saveWxrksConnection: (accessKey, secret) =>
     request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }),
   deleteWxrksConnection: () => request("/settings/wxrks-connection", { method: "DELETE" }),
