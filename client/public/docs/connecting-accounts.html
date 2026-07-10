@@ -67,9 +67,13 @@
       </ul>
 
       <h2>wxrks connection</h2>
+      <p>
+        Split into two tabs: <strong>Keys</strong> (your access key/secret and default org unit)
+        and <strong>Webhooks</strong> (where translations get delivered back to).
+      </p>
       <figure class="figure">
         <img src="assets/images/settings-wxrks.png" alt="Settings wxrks connection tab: access key and secret fields" />
-        <figcaption>Settings &rarr; wxrks connection.</figcaption>
+        <figcaption>Settings &rarr; wxrks connection &rarr; Keys.</figcaption>
       </figure>
       <p>
         Your wxrks <strong>access key</strong> and <strong>secret</strong> — these are validated
@@ -97,6 +101,46 @@
         </div>
         <figcaption>A quick walkthrough of where to find your wxrks access key &amp; secret.</figcaption>
       </figure>
+
+      <h3 id="wxrks-webhook">Registering the wxrks delivery webhook</h3>
+      <p>
+        wxrks needs a URL to call once a translation is ready, so it can be written back into
+        Webflow automatically. Unlike Webflow's own webhooks, this app can't register this one on
+        your behalf — wxrks doesn't offer an API for that, only its own dashboard — so this is a
+        one-time step you do directly in wxrks:
+      </p>
+
+      <figure class="figure">
+        <div style="position: relative; width: 100%; padding-top: 68.97%;">
+          <iframe
+            src="https://player.vimeo.com/video/1208859125?app_id=122963"
+            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
+            allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share"
+            title="Adding the wxrks webhook"
+            allowfullscreen
+          ></iframe>
+        </div>
+        <figcaption>A quick walkthrough of registering this app's webhook URL in wxrks.</figcaption>
+      </figure>
+
+      <ol class="steps">
+        <li>
+          In your wxrks account, find the webhook/notification configuration for this
+          integration (this lives in wxrks's own settings, not in this app).
+        </li>
+        <li>
+          Set its target URL to the one shown on the <strong>Webhooks</strong> tab of Settings
+          &rarr; wxrks connection in this app — copy it directly from there rather than retyping
+          it, so it always matches this app's actual current domain.
+        </li>
+        <li>Save it in wxrks. That tab will show "Active" once the first real delivery arrives.</li>
+      </ol>
+      <div class="callout">
+        This app can't check wxrks's own configuration directly — there's no API for it. The
+        "Active" status is only ever proof after the fact (a real delivery arrived), not a live
+        check of wxrks's settings. If this app's domain ever changes, this URL changes too, and
+        needs to be updated in wxrks again.
+      </div>
 
       <h2>LLM connectors</h2>
       <figure class="figure">

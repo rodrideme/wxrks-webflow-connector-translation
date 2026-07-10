@@ -171,7 +171,7 @@ export default function Dashboard() {
             to="/settings/wxrks"
           />
           <ChecklistRow
-            label="Webhook health"
+            label="Webflow webhook health"
             detail={
               activeAutomations.length === 0
                 ? "Optional — enables automations to catch new/changed content automatically."
@@ -185,6 +185,16 @@ export default function Dashboard() {
             optional={activeAutomations.length === 0}
             failed={activeAutomations.length > 0 && webhooksFailed}
             to="/runs"
+          />
+          <ChecklistRow
+            label="wxrks webhook registered"
+            detail={
+              settings?.wxrksWebhook?.lastEventAt
+                ? `Active — last delivery received ${formatDateTime(settings.wxrksWebhook.lastEventAt, timezone)}.`
+                : "This app can't register this one for you — wxrks has no API for it, only its own dashboard. Register the URL shown there so translations can be delivered back automatically."
+            }
+            complete={Boolean(settings?.wxrksWebhook?.lastEventAt)}
+            to="/settings/wxrks?subtab=webhooks"
           />
           <ChecklistRow
             label="Timezone & work unit naming (optional)"

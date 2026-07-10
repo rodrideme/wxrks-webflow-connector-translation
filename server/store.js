@@ -90,6 +90,17 @@ const DEFAULT_SETTINGS = {
     status: "not_registered",
     lastError: null,
   },
+  // Unlike the two above, this isn't something this app can register itself
+  // -- wxrks exposes no webhook-management API at all (confirmed against
+  // their real API docs), so its delivery webhook is configured once,
+  // manually, in wxrks's own dashboard. `lastEventAt` is the only signal
+  // this app can offer: whether a real delivery has ever actually arrived,
+  // updated in routes/webhooks.js's /wxrks handler once it resolves which
+  // account a delivery belongs to (that handler has no account context
+  // until then, unlike Webflow's per-account webhook URLs).
+  wxrksWebhook: {
+    lastEventAt: null,
+  },
 };
 
 // jobId -> { id, mode, total, processed, results: [], status, cancelled, startedAt }
@@ -330,6 +341,10 @@ function mergeSettings(stored) {
     ...DEFAULT_SETTINGS.sitePublishWebhook,
     ...(stored.sitePublishWebhook || {}),
   };
+  merged.wxrksWebhook = {
+    ...DEFAULT_SETTINGS.wxrksWebhook,
+    ...(stored.wxrksWebhook || {}),
+  };
   merged.slugHandling = {
     ...DEFAULT_SETTINGS.slugHandling,
     ...(stored.slugHandling || {}),
@@ -409,6 +424,13 @@ async function updateSitePublishWebhookState(accountId, patch) {
   const sitePublishWebhook = { ...settings.sitePublishWebhook, ...patch };
   await updateSettings(accountId, { sitePublishWebhook });
   return sitePublishWebhook;
+}
+
+async function updateWxrksWebhookState(accountId, patch) {
+  const settings = await getSettings(accountId);
+  const wxrksWebhook = { ...settings.wxrksWebhook, ...patch };
+  await updateSettings(accountId, { wxrksWebhook });
+  return wxrksWebhook;
 }
 
 // ---------------------------------------------------------------------------
@@ -966,6 +988,7 @@ module.exports = {
   setFieldExclusions,
   updateAutoSyncWebhookState,
   updateSitePublishWebhookState,
+  updateWxrksWebhookState,
   getAccountByWebflowSiteId,
   getAccount,
   createAccount,

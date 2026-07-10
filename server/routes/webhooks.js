@@ -96,6 +96,13 @@ router.post("/wxrks", async (req, res) => {
   // per-work-unit handler above is proven out. Only possible once the
   // mapping resolves the account this delivery belongs to.
   await store.setDebugWebhookPayload(mapping.accountId, { headers: req.headers, body: req.body }).catch(() => {});
+  // Only signal this app can offer for "is wxrks's webhook actually
+  // registered" -- wxrks has no status/management API to ask directly (see
+  // wxrksWebhook's docstring in store.js), so a real delivery arriving is
+  // the only proof. Can't be set any earlier in this handler -- there's no
+  // account context until the mapping resolves one (unlike Webflow's own
+  // per-account webhook URLs).
+  await store.updateWxrksWebhookState(mapping.accountId, { lastEventAt: new Date().toISOString() }).catch(() => {});
 
   const batchItem = mapping.items.find((i) => i.resourceFileName === fileName);
   if (!batchItem) {
