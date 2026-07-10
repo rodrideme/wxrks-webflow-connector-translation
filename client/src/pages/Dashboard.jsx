@@ -4,6 +4,7 @@ import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
 import { formatDateTime } from "../formatDate.js";
 import { modeLabel, cadenceLabel } from "../runLabels.js";
+import { useAuth } from "../context/AuthContext.jsx";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
@@ -47,6 +48,7 @@ function ChecklistRow({ label, detail, complete, optional = false, to }) {
 }
 
 export default function Dashboard() {
+  const { logout } = useAuth();
   const [locales, setLocales] = useState(null);
   const [fieldsSummary, setFieldsSummary] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -91,9 +93,18 @@ export default function Dashboard() {
           <ChecklistRow
             label="Webflow connected"
             detail={
-              locales?.site?.displayName
-                ? `${locales.site.displayName} — ${locales.site.url}`
-                : "Connected"
+              <span>
+                <span className="block">
+                  {locales?.site?.displayName ? `${locales.site.displayName} — ${locales.site.url}` : "Connected"}
+                </span>
+                <span className="mt-0.5 block">
+                  You're already connected — this app supports one Webflow site per login. To switch sites,{" "}
+                  <button type="button" onClick={logout} className="font-medium text-accent-text hover:underline">
+                    sign out
+                  </button>{" "}
+                  and sign back in with the other one.
+                </span>
+              </span>
             }
             complete
             to="/settings/account"
@@ -115,10 +126,10 @@ export default function Dashboard() {
             to="/settings/account"
           />
           <ChecklistRow
-            label="Automatic field adjustment"
+            label="We automatically mapped out the translatable fields"
             detail={
               fieldsSummary
-                ? `${fieldsSummary.totalTranslatableFields} fields across ${fieldsSummary.collectionCount} collections auto-selected` +
+                ? `We selected ${fieldsSummary.totalTranslatableFields} fields across ${fieldsSummary.collectionCount} collections that will be sent to translation` +
                   (fieldsSummary.excludedFieldCount > 0
                     ? ` (${fieldsSummary.excludedFieldCount} excluded in ${fieldsSummary.collectionsWithExclusions} collection${fieldsSummary.collectionsWithExclusions === 1 ? "" : "s"})`
                     : "")
@@ -132,6 +143,13 @@ export default function Dashboard() {
             detail={settings?.wxrksConnected ? settings.wxrksAccessKeyMasked : "Not connected"}
             complete={Boolean(settings?.wxrksConnected)}
             to="/settings/wxrks"
+          />
+          <ChecklistRow
+            label="Timezone & work unit naming (optional)"
+            detail="Set the timezone used for schedules and timestamps, and how wxrks names each translated resource."
+            complete
+            optional
+            to="/settings/account"
           />
           <ChecklistRow
             label="LLM connector (optional)"
@@ -212,6 +230,34 @@ export default function Dashboard() {
               )}
             </Card>
           </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <Card accent className="p-5">
+            <h3 className="text-[13.5px] font-semibold text-ink">Sync entire website</h3>
+            <p className="mt-1 text-xs text-ink-faint">Send everything on your site to wxrks for translation in one go.</p>
+            <Link
+              to="/translate?autoSend=1"
+              className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md bg-accent px-4 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-accent-strong"
+            >
+              Sync entire website →
+            </Link>
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="text-[13.5px] font-semibold text-ink">Webflow Localization best practices (optional)</h3>
+            <p className="mt-1 text-xs text-ink-faint">
+              Understand the pros and cons of a full-site sync vs. managing content individually.
+            </p>
+            <a
+              href="/docs/translating-content.html#sync-modes"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-block text-[13px] font-medium text-accent-text hover:underline"
+            >
+              Read more →
+            </a>
+          </Card>
         </div>
       </div>
     </div>

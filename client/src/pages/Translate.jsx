@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../services/api.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
@@ -60,6 +61,18 @@ export default function Translate() {
   const jobsPollRef = useRef(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // Deep-link support for Dashboard's "Sync entire website" card
+  // (/translate?autoSend=1) -- waits for the same "counting done" gate the
+  // real "Translate all" button uses, then opens the modal itself and
+  // strips the param so a refresh/back-nav doesn't reopen it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("autoSend") && !allItemsLoading) {
+      setSendModalOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, allItemsLoading]);
 
   useEffect(() => {
     api.getSettings().then(setSettings);

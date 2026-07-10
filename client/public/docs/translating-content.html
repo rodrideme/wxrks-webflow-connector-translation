@@ -56,24 +56,54 @@
         <figcaption>Once ready, this button opens the wizard.</figcaption>
       </figure>
 
+      <h2 id="sync-modes">Full sync vs. selective sync</h2>
+      <p>
+        Both scopes send through the exact same wizard — the difference is entirely in how much
+        you hand-manage versus let the app handle for you.
+      </p>
+      <table class="field-table">
+        <thead><tr><th>Approach</th><th>Pros</th><th>Cons</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Full site sync</strong><br /><span style="color: var(--text-faint); font-size: 12px;">"All content"</span></td>
+            <td>Nothing to maintain — new collections, pages, and components are automatically included next time. Simplest to reason about.</td>
+            <td>Every send re-counts and re-evaluates the whole site, which takes longer on a large site.</td>
+          </tr>
+          <tr>
+            <td><strong>Selective sync</strong><br /><span style="color: var(--text-faint); font-size: 12px;">"Select specific content"</span></td>
+            <td>Precise control over exactly what's in scope — useful for a partial rollout, a single collection, or content that isn't ready for translation yet.</td>
+            <td>Requires deciding scope up front, and revisiting it as your site's structure changes.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        A good rule of thumb: start with <strong>All content</strong> unless you have a specific
+        reason to hold something back from translation.
+      </p>
+
       <h2>The Send to wxrks wizard</h2>
 
       <h3>Step 1 — Settings</h3>
       <figure class="figure">
-        <img src="assets/images/wizard-step1-settings.png" alt="Wizard step 1: org unit, target languages, and workflow" />
-        <figcaption>Org unit, target languages, and workflow.</figcaption>
+        <img src="assets/images/wizard-step1-settings.png" alt="Wizard step 1: target languages, workflow, and org unit" />
+        <figcaption>Target languages, workflow, and (under Advanced) org unit.</figcaption>
       </figure>
       <ul>
-        <li><strong>Org unit</strong> — which wxrks org unit the project is created under.</li>
         <li>
           <strong>Target languages</strong> — pulled directly from the locales enabled in
-          Webflow's own Localization settings, never a hardcoded list. Webflow silently falls back
-          to the primary locale for any tag it doesn't recognize, so only real, registered locales
-          are ever offered.
+          Webflow's own Localization settings, never a hardcoded list, and pre-selected by
+          default. Webflow silently falls back to the primary locale for any tag it doesn't
+          recognize, so only real, registered locales are ever offered.
         </li>
         <li>
           <strong>Workflow</strong> — starts at <em>Automatic Translation</em>; additional steps
           can be appended for review processes beyond machine translation.
+        </li>
+        <li>
+          <strong>Advanced — org unit &amp; project name</strong> — collapsed by default since
+          it's usually already pre-filled from your saved settings. Expand it to pick a different
+          wxrks org unit (this also shows any translation memories/glossaries bound to it) or set
+          a custom project name.
         </li>
       </ul>
 

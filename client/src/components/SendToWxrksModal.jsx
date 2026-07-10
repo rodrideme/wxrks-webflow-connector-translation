@@ -96,11 +96,19 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     api.getSettings().then((s) => {
       setSettings(s);
       setOrgUnitUUID(s.orgUnitUUID || "");
-      setTargetLocales(s.targetLocales || []);
       if (s.orgUnitUUID) loadOrgUnitResources(s.orgUnitUUID);
     });
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
-    api.getWebflowLocales().then(setWebflowLocales).catch(() => setWebflowLocales(null));
+    // Default to every locale enabled in Webflow -- most sends target
+    // everything the site actually has localized, so pre-checking all of
+    // them (rather than starting empty) matches the common case.
+    api
+      .getWebflowLocales()
+      .then((locales) => {
+        setWebflowLocales(locales);
+        setTargetLocales((locales?.secondary || []).map((l) => l.tag));
+      })
+      .catch(() => setWebflowLocales(null));
     setOrgUnitResources(null);
     setStep(0);
     setRunMode("now");
@@ -267,7 +275,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             onClick={() => i <= step && setStep(i)}
             className={
               "flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs font-semibold " +
-              (i <= step ? "bg-ink text-canvas" : "border border-border-strong text-ink-faint")
+              (i <= step ? "bg-accent text-white" : "border border-border-strong text-ink-faint")
             }
           >
             {i < step ? "✓" : i + 1}
@@ -282,6 +290,11 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   const footerBar = (
     <div className="flex items-center gap-3">
       <span className="text-xs text-ink-faint">Nothing is sent until you confirm.</span>
+      {step === 0 && !orgUnitUUID && !advOpen && (
+        <button type="button" onClick={() => setAdvOpen(true)} className="text-xs font-medium text-accent-text hover:underline">
+          Select an org unit under Advanced settings
+        </button>
+      )}
       {error && <span className="text-xs font-medium text-status-error-fg">Error: {error}</span>}
       <div className="ml-auto flex gap-2.5">
         {step > 0 && (
@@ -308,43 +321,6 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     <Modal open={open} onClose={onClose} title="Send for translation" width="max-w-4xl" height="h-[38rem]" subheader={stagesBar} footer={footerBar}>
       {step === 0 && (
         <div className="space-y-4">
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink-soft">
-            Org unit
-            <select value={orgUnitUUID} onChange={(e) => selectOrgUnit(e.target.value)} className={inputClass}>
-              <option value="">— select —</option>
-              {orgUnits.map((o) => (
-                <option key={o.uuid} value={o.uuid}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {orgUnitUUID && (
-            <div className="rounded-md border border-border bg-surface-sunken p-3 text-sm">
-              {orgUnitResourcesLoading && <p className="text-xs text-ink-faint">Loading translation memories &amp; glossaries...</p>}
-              {orgUnitResources && (
-                <>
-                  <p className="text-ink-soft">
-                    <strong className="text-ink">Translation memories:</strong>{" "}
-                    {orgUnitResources.translationMemories.length === 0
-                      ? "none bound to this org unit"
-                      : orgUnitResources.translationMemories.map((tm) => tm.name).join(", ")}
-                  </p>
-                  <p className="mt-1 text-ink-soft">
-                    <strong className="text-ink">Glossaries:</strong>{" "}
-                    {orgUnitResources.glossaries.length === 0
-                      ? "none bound to this org unit"
-                      : orgUnitResources.glossaries.map((g) => g.name).join(", ")}
-                  </p>
-                  <p className="mt-2 text-xs text-ink-faint">
-                    Read-only — wxrks attaches these to each project automatically based on the org unit.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
           <div>
             <div className="mb-1.5 text-sm font-medium text-ink-soft">Target languages · {targetLocales.length}</div>
             <div className="flex flex-wrap gap-1.5">
@@ -356,7 +332,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                   title={l.displayName}
                   className={
                     "rounded border px-2 py-1 font-mono text-[10.5px] font-semibold " +
-                    (targetLocales.includes(l.tag) ? "border-ink bg-ink text-canvas" : "border-dashed border-border-strong text-ink-faint")
+                    (targetLocales.includes(l.tag) ? "border-accent bg-accent-subtle text-accent-text" : "border-dashed border-border-strong text-ink-faint")
                   }
                 >
                   {l.tag.toUpperCase()}
@@ -371,7 +347,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
               {workflowSteps.map((step, i) => (
                 <div key={step} className="flex items-center gap-1.5">
                   {i > 0 && <span className="text-ink-faint">→</span>}
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-ink bg-ink px-3 py-1 text-xs font-semibold text-canvas">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-accent bg-accent-subtle px-3 py-1 text-xs font-semibold text-accent-text">
                     <span className="font-mono text-[9px] opacity-60">{i + 1}</span>
                     {WORKFLOW_LABELS[step]}
                     {step !== "TRANSLATION" && (
@@ -421,15 +397,54 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
 
           <div className="border-t border-border pt-3">
             <button type="button" onClick={() => setAdvOpen((v) => !v)} className="flex items-center gap-1.5 text-sm font-semibold text-ink">
-              <span className="text-ink-faint">{advOpen ? "▾" : "▸"}</span>Advanced — more settings
+              <span className="text-ink-faint">{advOpen ? "▾" : "▸"}</span>Advanced — org unit &amp; project name
             </button>
             {advOpen && (
-              <input
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder={`${contentLabel} · ${new Date().toLocaleDateString()}`}
-                className={inputClass + " mt-2"}
-              />
+              <div className="mt-2 space-y-3">
+                <label className="flex flex-col gap-1 text-sm font-medium text-ink-soft">
+                  Org unit
+                  <select value={orgUnitUUID} onChange={(e) => selectOrgUnit(e.target.value)} className={inputClass}>
+                    <option value="">— select —</option>
+                    {orgUnits.map((o) => (
+                      <option key={o.uuid} value={o.uuid}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {orgUnitUUID && (
+                  <div className="rounded-md border border-border bg-surface-sunken p-3 text-sm">
+                    {orgUnitResourcesLoading && <p className="text-xs text-ink-faint">Loading translation memories &amp; glossaries...</p>}
+                    {orgUnitResources && (
+                      <>
+                        <p className="text-ink-soft">
+                          <strong className="text-ink">Translation memories:</strong>{" "}
+                          {orgUnitResources.translationMemories.length === 0
+                            ? "none bound to this org unit"
+                            : orgUnitResources.translationMemories.map((tm) => tm.name).join(", ")}
+                        </p>
+                        <p className="mt-1 text-ink-soft">
+                          <strong className="text-ink">Glossaries:</strong>{" "}
+                          {orgUnitResources.glossaries.length === 0
+                            ? "none bound to this org unit"
+                            : orgUnitResources.glossaries.map((g) => g.name).join(", ")}
+                        </p>
+                        <p className="mt-2 text-xs text-ink-faint">
+                          Read-only — wxrks attaches these to each project automatically based on the org unit.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <input
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder={`${contentLabel} · ${new Date().toLocaleDateString()}`}
+                  className={inputClass}
+                />
+              </div>
             )}
           </div>
         </div>
