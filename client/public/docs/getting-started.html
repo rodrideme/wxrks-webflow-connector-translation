@@ -32,17 +32,22 @@
       <p class="eyebrow">01 &middot; Getting Started</p>
       <h1>The Dashboard</h1>
       <p class="dek">
-        The Dashboard is the app's home screen. It doubles as an onboarding checklist while
-        you're setting up, and a live summary of recent activity once you're running.
+        The Dashboard is the app's home screen: a collapsible setup checklist (it tucks itself
+        away once everything's done), your all-time stats, and a live summary of recent activity.
       </p>
 
       <figure class="figure">
-        <img src="assets/images/dashboard.png" alt="Dashboard with the 5-step setup checklist and Latest runs / Running automations panels" />
-        <figcaption>The Dashboard — setup checklist on top, recent activity below.</figcaption>
+        <img src="assets/images/dashboard.png" alt="Dashboard with the collapsible setup checklist, all-time stats, and Latest runs / Running automations panels" />
+        <figcaption>The Dashboard — collapsible setup checklist, all-time stats, then recent activity.</figcaption>
       </figure>
 
       <h2>The setup checklist</h2>
-      <p>Five steps, each showing <strong>Done</strong>, <strong>Optional</strong>, or a <strong>Set up</strong> link if it still needs attention:</p>
+      <p>
+        Eight checks, each showing <strong>Done</strong>, <strong>Optional</strong>, or a
+        <strong>Set up</strong> link if it still needs attention. The checklist collapses to a
+        single "N/N done" row automatically once the required checks all pass — click it to
+        expand again any time:
+      </p>
 
       <ol class="steps">
         <li>
@@ -63,7 +68,22 @@
         </li>
         <li>
           <strong>wxrks connected</strong> — your wxrks access key/secret, validated live against
-          wxrks before being saved.
+          wxrks before being saved, and re-checked live every time you open the Dashboard (so a
+          key regenerated on wxrks's own side shows up as broken here right away, not silently).
+        </li>
+        <li>
+          <strong>Webflow webhook health</strong> — only required once you have at least one
+          recurring automation (otherwise shown as Optional); confirms Webflow is actually
+          notifying this app about new/changed content.
+        </li>
+        <li>
+          <strong>wxrks webhook registered</strong> — confirms wxrks has delivered at least one
+          translation completion event to this app — see
+          <a href="connecting-accounts.html#wxrks-webhook">Connecting Your Accounts</a>.
+        </li>
+        <li>
+          <strong>Timezone &amp; work unit naming (optional)</strong> — a read-only reminder of
+          where to change the timezone used for schedules and timestamps.
         </li>
         <li>
           <strong>LLM connector (optional)</strong> — an Anthropic API key, only needed as a
@@ -74,9 +94,18 @@
         </li>
       </ol>
 
+      <h2>All-time stats</h2>
+      <p>Four numbers, computed from your account's real history — no separate reporting page needed:</p>
+      <ul>
+        <li><strong>Words translated</strong> — total words delivered back to Webflow across every run.</li>
+        <li><strong>Runs sent</strong> — how many translation projects have been created in total.</li>
+        <li><strong>Active languages</strong> — how many target locales are currently configured.</li>
+        <li><strong>Active automations</strong> — how many recurring automations are enabled right now.</li>
+      </ul>
+
       <h2>Latest runs &amp; running automations</h2>
       <p>
-        Below the checklist, two panels summarize what's actually happened recently:
+        Below the stats, two panels summarize what's actually happened recently:
       </p>
       <ul>
         <li>
@@ -92,8 +121,9 @@
 
       <div class="callout">
         <strong>Nothing here requires action once everything shows Done.</strong> The checklist
-        exists purely to guide first-time setup — an already-configured account can ignore it and
-        go straight to <a href="translating-content.html">Translating Content</a>.
+        exists purely to guide first-time setup and collapses itself out of the way — an
+        already-configured account can ignore it and go straight to
+        <a href="translating-content.html">Translating Content</a>.
       </div>
     </div>
 

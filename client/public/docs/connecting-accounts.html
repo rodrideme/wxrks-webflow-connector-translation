@@ -64,6 +64,12 @@
           <strong>Auto-approve wxrks projects</strong> (further down this tab) skips manual approval
           in wxrks so translation starts immediately after a project is created.
         </li>
+        <li>
+          <strong>Multi-collection sends</strong> controls what happens when a one-time send spans
+          more than one collection, page, or component: combine everything into a single wxrks
+          project (the default), or create a separate project per group, each named with an
+          auto-added "(1 of N)" suffix.
+        </li>
       </ul>
 
       <h2>wxrks connection</h2>
@@ -87,6 +93,11 @@
         Access keys and secrets are issued from your own wxrks account — this app doesn't create
         them. If you don't have one yet, that's a wxrks-side step, not something configured here.
       </div>
+      <p>
+        Also on this tab: a <strong>default org unit</strong>, which pre-fills the org unit every
+        time you start a new send or automation (you can always pick a different one at that
+        point instead).
+      </p>
 
       <h3 id="generating-keys">How to generate your wxrks keys</h3>
       <figure class="figure">

@@ -32,30 +32,15 @@
       <p class="eyebrow">05 &middot; Runs &amp; Automations</p>
       <h1>The Runs page</h1>
       <p class="dek">
-        Everything that's scheduled, queued, or already happened lives here — recurring
-        automations, their pending content queue, and the full history of past sends.
+        Everything that's scheduled, queued, or already happened lives here, organized into three
+        tabs: <strong>History</strong>, <strong>Recurring Automation</strong>, and
+        <strong>Pending Queue</strong>.
       </p>
 
       <figure class="figure">
-        <img src="assets/images/runs.png" alt="Runs page: Recurring automations, Pending queue, and History sections" />
-        <figcaption>Runs &amp; Automations overview.</figcaption>
+        <img src="assets/images/runs.png" alt="Runs page with History, Recurring Automation, and Pending Queue tabs" />
+        <figcaption>Runs — History is the default tab; switch to see automations or the pending queue.</figcaption>
       </figure>
-
-      <h2>Recurring automations</h2>
-      <p>
-        Every automation created from the <a href="translating-content.html">Send to wxrks
-        wizard</a>'s "Recurring pull content automation" option is listed here, with controls to
-        pause, resume, or archive it.
-      </p>
-
-      <h2>Pending queue</h2>
-      <p>
-        New and edited Webflow content appears here in real time, as Webflow's CMS webhook
-        delivers item-changed events — then runs under whichever automation matches it, on that
-        automation's own schedule. A <strong>CMS webhook not registered</strong> notice means this
-        account's Webflow webhook needs to be (re-)registered before the queue can populate
-        automatically — the reconnect action is right there when that happens.
-      </p>
 
       <h2>History</h2>
       <p>
@@ -65,8 +50,26 @@
       </p>
       <p>
         A run's card here is exactly what the <a href="getting-started.html">Dashboard</a>'s
-        "Latest runs" links jump to — following one of those links lands you scrolled straight to
-        the matching card on this page.
+        "Latest runs" links jump to — following one of those links lands you on this tab, scrolled
+        straight to the matching card.
+      </p>
+
+      <h2>Recurring Automation</h2>
+      <p>
+        Every automation created from the <a href="translating-content.html">Send to wxrks
+        wizard</a>'s "Recurring pull content automation" option is listed here, with controls to
+        pause, resume, or archive it. Archived automations are hidden by default — a
+        <strong>Show archived</strong> link appears whenever any exist, so they stay out of the
+        way without being permanently hidden.
+      </p>
+
+      <h2>Pending Queue</h2>
+      <p>
+        New and edited Webflow content appears here in real time, as Webflow's CMS webhook
+        delivers item-changed events — then runs under whichever automation matches it, on that
+        automation's own schedule. A <strong>CMS webhook not registered</strong> notice means this
+        account's Webflow webhook needs to be (re-)registered before the queue can populate
+        automatically — the reconnect action is right there when that happens.
       </p>
     </div>
 
