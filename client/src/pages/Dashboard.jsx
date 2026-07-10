@@ -82,10 +82,10 @@ export default function Dashboard() {
   const runningAutomations = automations.filter((a) => a.enabled && !a.archived).slice(0, 3);
 
   return (
-    <div>
+    <div className="mx-auto max-w-3xl">
       <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Dashboard</h1>
 
-      <div className="max-w-3xl">
+      <div>
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Setup</p>
         <Card className="mb-8">
           <ChecklistRow
@@ -158,22 +158,23 @@ export default function Dashboard() {
                   const delivered = projectWordsDelivered(p);
                   const total = projectTotalWords(p);
                   return (
-                    <div key={p.wxrksProjectUUID} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[13px] font-semibold text-ink">{modeLabel(p.mode, p.automationName)}</div>
-                        <div className="mt-0.5 text-[11px] text-ink-faint">{formatDateTime(p.createdAt, timezone)}</div>
+                    <div key={p.wxrksProjectUUID} className="border-t border-border px-4 py-3 first:border-t-0">
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">
+                          {modeLabel(p.mode, p.automationName)}
+                        </span>
+                        {errCount > 0 ? (
+                          <StatusPill variant="error" label={`${errCount} error${errCount === 1 ? "" : "s"}`} />
+                        ) : (
+                          <StatusPill variant="success" label="Delivered" />
+                        )}
                       </div>
-                      {errCount > 0 ? (
-                        <StatusPill variant="error" label={`${errCount} error${errCount === 1 ? "" : "s"}`} />
-                      ) : (
-                        <StatusPill variant="success" label="Delivered" />
-                      )}
-                      <div className="text-[12px] text-ink-soft">
-                        <span className="font-mono font-semibold tabular-nums text-ink">{delivered.toLocaleString()}</span> /{" "}
-                        <span className="font-mono tabular-nums">{total.toLocaleString()}</span> words
-                      </div>
-                      <div className="ml-auto flex gap-3 whitespace-nowrap text-xs">
-                        <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass}>
+                      <div className="mt-1 flex items-center gap-3 text-[11.5px] text-ink-faint">
+                        <span>{formatDateTime(p.createdAt, timezone)}</span>
+                        <span className="font-mono tabular-nums">
+                          {delivered.toLocaleString()} / {total.toLocaleString()} words
+                        </span>
+                        <a href={wxrksProjectUrl(p.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass + " ml-auto"}>
                           wxrks ↗
                         </a>
                         <Link to={`/runs#${p.wxrksProjectUUID}`} className={linkClass}>
@@ -194,18 +195,18 @@ export default function Dashboard() {
                 <p className="p-4 text-sm text-ink-soft">No automations running.</p>
               ) : (
                 runningAutomations.map((a) => (
-                  <div key={a.id} className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold text-ink">{a.name}</div>
-                      <div className="mt-0.5 text-[11px] text-ink-faint">{cadenceLabel(a.cadence)}</div>
+                  <div key={a.id} className="border-t border-border px-4 py-3 first:border-t-0">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{a.name}</span>
+                      <StatusPill variant="success" label="Running" />
                     </div>
-                    <StatusPill variant="success" label="Running" />
-                    {a.pendingCount > 0 && (
-                      <span className="font-mono text-[11.5px] text-ink-faint">{a.pendingCount} pending</span>
-                    )}
-                    <Link to={`/runs#automation-${a.id}`} className={linkClass + " ml-auto text-xs"}>
-                      Runs
-                    </Link>
+                    <div className="mt-1 flex items-center gap-3 text-[11.5px] text-ink-faint">
+                      <span>{cadenceLabel(a.cadence)}</span>
+                      {a.pendingCount > 0 && <span className="font-mono">{a.pendingCount} pending</span>}
+                      <Link to={`/runs#automation-${a.id}`} className={linkClass + " ml-auto"}>
+                        Runs
+                      </Link>
+                    </div>
                   </div>
                 ))
               )}
