@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import api from "../services/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
 const links = [
@@ -10,6 +12,16 @@ const links = [
 
 export default function NavBar() {
   const { user, account, logout } = useAuth();
+  const [site, setSite] = useState(null);
+
+  // Fetched once -- NavBar sits outside <Routes> in App.jsx and never
+  // remounts on navigation, so this doesn't refire per page.
+  useEffect(() => {
+    api.getWebflowLocales().then((res) => setSite(res?.site || null)).catch(() => setSite(null));
+  }, []);
+
+  const siteUrl = site?.url;
+  const siteHost = siteUrl ? siteUrl.replace(/^https?:\/\//, "") : null;
 
   return (
     <nav className="sticky top-0 flex h-screen w-[13.5rem] flex-none flex-col gap-0.5 border-r border-border bg-surface-sunken p-3">
@@ -47,14 +59,26 @@ export default function NavBar() {
         Docs
       </a>
 
-      <div className="flex flex-col gap-1.5 border-t border-border px-2 pt-3 text-[11px] text-ink-faint">
-        {account?.name || account?.webflowSiteId ? (
-          <span className="truncate font-medium text-ink-soft" title={account.name || account.webflowSiteId}>
+      <div className="flex flex-col gap-2 border-t border-border px-2 pt-3">
+        {siteUrl ? (
+          <a
+            href={siteUrl}
+            target="_blank"
+            rel="noreferrer"
+            title={siteUrl}
+            className="flex items-center gap-2.5 rounded-md py-1 text-[12.5px] font-medium text-ink-soft transition-colors hover:text-ink"
+          >
+            <span className="w-[15px] flex-none text-center text-[13px] opacity-85">🌐</span>
+            <span className="truncate">{siteHost}</span>
+          </a>
+        ) : account?.name || account?.webflowSiteId ? (
+          <span className="flex items-center gap-2.5 truncate py-1 text-[12.5px] font-medium text-ink-soft" title={account.name || account.webflowSiteId}>
+            <span className="w-[15px] flex-none text-center text-[13px] opacity-85">🌐</span>
             {account.name || account.webflowSiteId}
           </span>
         ) : null}
-        {user?.email && <span className="truncate">{user.email}</span>}
-        <button type="button" onClick={logout} className="self-start text-left text-accent-text hover:underline">
+        {user?.email && <span className="truncate px-0.5 text-[11px] text-ink-faint">{user.email}</span>}
+        <button type="button" onClick={logout} className="self-start px-0.5 text-left text-[11px] text-accent-text hover:underline">
           Sign out
         </button>
       </div>
