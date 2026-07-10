@@ -8,6 +8,8 @@ import { useAuth } from "../context/AuthContext.jsx";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
+import { Disclosure } from "../components/Disclosure.jsx";
+import LoadingState from "../components/LoadingState.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
 
@@ -55,6 +57,21 @@ function ChecklistRow({ label, detail, complete, optional = false, failed = fals
   );
 }
 
+/**
+ * Big-number-small-label KPI card -- the one thing on this page that
+ * should visually outrank everything else (nothing else here goes past
+ * text-[22px]), so the page reads as an actual dashboard, not just a
+ * checklist with some lists underneath it.
+ */
+function MetricCard({ value, label }) {
+  return (
+    <Card className="p-4">
+      <div className="text-[28px] font-bold leading-none tabular-nums text-ink">{value}</div>
+      <div className="mt-1.5 text-xs text-ink-faint">{label}</div>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { logout } = useAuth();
   const [locales, setLocales] = useState(null);
@@ -93,7 +110,7 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-sm text-ink-soft">Loading dashboard...</p>;
+  if (loading) return <LoadingState label="Loading dashboard…" />;
   if (error) return <p className="text-sm font-medium text-status-error-fg">Error: {error}</p>;
 
   const timezone = settings?.timezone;
@@ -104,13 +121,45 @@ export default function Dashboard() {
   const webhooksAllActive = webhookStatuses.length > 0 && webhookStatuses.every((s) => s === "active");
   const webhooksFailed = webhookStatuses.some((s) => s !== "active" && s !== "not_registered");
 
+  // Aggregate setup progress, for the collapsed checklist's summary count --
+  // only the genuinely required rows count (the two that are ALWAYS
+  // optional -- Timezone, LLM connector -- never gate this, or an account
+  // that simply never bothers with an optional nice-to-have would never
+  // see the checklist collapse). Webflow webhook health only counts while
+  // it's actually required (i.e. once an automation exists) -- otherwise
+  // it isn't in this array at all, same "optional = doesn't block" logic.
+  const requiredChecks = [
+    true, // Webflow connected -- always true today, kept for clarity
+    (locales?.secondary || []).length > 0, // Localization enabled
+    true, // Fields auto-mapped -- always true today
+    Boolean(settings?.wxrksConnected) && wxrksHealthy !== false, // wxrks connected
+    Boolean(settings?.wxrksWebhook?.lastEventAt), // wxrks webhook registered
+  ];
+  if (activeAutomations.length > 0) requiredChecks.push(webhooksAllActive); // Webflow webhook health
+  const setupTotal = requiredChecks.length;
+  const setupDoneCount = requiredChecks.filter(Boolean).length;
+  // Something genuinely BROKEN (not just "not set up yet") always keeps
+  // the checklist expanded, even if a user had previously collapsed it --
+  // matches the two existing `failed` conditions below.
+  const setupNeedsAttention =
+    (Boolean(settings?.wxrksConnected) && wxrksHealthy === false) || (activeAutomations.length > 0 && webhooksFailed);
+  const totalWordsTranslated = history.reduce((sum, p) => sum + projectWordsDelivered(p), 0);
+
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-4xl">
       <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-ink">Dashboard</h1>
 
       <div>
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Setup</p>
-        <Card className="mb-8">
+        <Disclosure
+          summary={
+            <span className="flex items-center gap-2">
+              Setup checklist
+              {setupNeedsAttention && <StatusPill variant="error" label="Action needed" />}
+            </span>
+          }
+          meta={`${setupDoneCount}/${setupTotal} done`}
+          defaultOpen={setupNeedsAttention || setupDoneCount < setupTotal}
+        >
           <ChecklistRow
             label="Webflow connected"
             detail={
@@ -213,9 +262,17 @@ export default function Dashboard() {
             optional
             to="/settings/llm"
           />
-        </Card>
+        </Disclosure>
 
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <p className="mb-2 mt-6 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">All time</p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <MetricCard value={totalWordsTranslated.toLocaleString()} label="Words translated" />
+          <MetricCard value={history.length.toLocaleString()} label="Runs sent" />
+          <MetricCard value={(settings?.targetLocales?.length ?? 0).toLocaleString()} label="Active languages" />
+          <MetricCard value={activeAutomations.length.toLocaleString()} label="Active automations" />
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Latest runs</p>
             <Card>
