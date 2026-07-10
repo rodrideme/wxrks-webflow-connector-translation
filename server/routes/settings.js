@@ -15,6 +15,18 @@ function mask(value) {
  * GET /api/settings
  * Runtime settings (source/target locales, auto-publish) plus a masked view
  * of the env-configured connection details.
+ *
+ * `env` deliberately only ever includes genuinely account-agnostic platform
+ * config (the shared wxrks API base URL, this app's own public URL) -- every
+ * other env var (WEBFLOW_SITE_ID, WEBFLOW_API_TOKEN, WXRKS_ACCESS_KEY,
+ * WXRKS_SECRET, WXRKS_API_TOKEN, WXRKS_ORG_UNIT_UUID) belongs to ONE specific
+ * account (the original single-tenant one, kept as its fallback -- see
+ * services/wxrks.js's resolveConnection()), not to every account that hits
+ * this endpoint. This used to return process.env values unconditionally,
+ * which leaked fragments of that account's real credentials/identifiers to
+ * every other logged-in account regardless of masking. Every account's own
+ * real connection status is already surfaced correctly and per-account via
+ * wxrksConnected/wxrksAccessKeyMasked/llmConnected/llmApiKeyMasked below.
  */
 router.get("/", async (req, res) => {
   try {
@@ -30,13 +42,7 @@ router.get("/", async (req, res) => {
       llmConnected: Boolean(llmConnection),
       llmApiKeyMasked: llmConnection ? mask(llmConnection.apiKey) : "",
       env: {
-        WEBFLOW_SITE_ID: process.env.WEBFLOW_SITE_ID || "",
-        WEBFLOW_API_TOKEN: mask(process.env.WEBFLOW_API_TOKEN),
         WXRKS_API_URL: process.env.WXRKS_API_URL || "",
-        WXRKS_API_TOKEN: mask(process.env.WXRKS_API_TOKEN),
-        WXRKS_ACCESS_KEY: mask(process.env.WXRKS_ACCESS_KEY),
-        WXRKS_SECRET: mask(process.env.WXRKS_SECRET),
-        WXRKS_ORG_UNIT_UUID: process.env.WXRKS_ORG_UNIT_UUID || "",
         APP_BASE_URL: process.env.APP_BASE_URL || "",
       },
     });

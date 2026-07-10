@@ -3,7 +3,7 @@ import Card from "../../components/Card.jsx";
 export default function SettingsKeys({ settings }) {
   return (
     <Card className="p-5">
-      <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Connection (env-configured)</h2>
+      <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Platform config</h2>
       <table className="w-full text-left text-sm">
         <tbody className="divide-y divide-border">
           {Object.entries(settings.env).map(([key, value]) => (
@@ -17,7 +17,8 @@ export default function SettingsKeys({ settings }) {
         </tbody>
       </table>
       <p className="mt-3 text-xs text-ink-faint">
-        These are configured via environment variables on Render and are read-only here.
+        Shared, account-agnostic configuration only — set via environment variables on Render, read-only here.
+        Your own Webflow/wxrks/LLM connections are managed in their own tabs above.
       </p>
     </Card>
   );
