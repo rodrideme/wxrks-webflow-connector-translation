@@ -673,8 +673,115 @@ async function deleteSession(sessionId) {
 }
 
 // ---------------------------------------------------------------------------
-// Webflow OAuth connections (Phase 2: consumed by services/webflow.js's
-// client()/siteId() for real per-account API access)
+// Invites (routes/connect.js): lets an existing owner admit a workspace
+// "Sign in with Webflow" OAuth can never reach on its own. account_id is
+// attribution only (which owner generated it) -- it grants no access into
+// whatever account the redemption later resolves to; see routes/connect.js.
+
+function inviteRowToObject(row) {
+  return {
+    id: row.id,
+    token: row.token,
+    accountId: row.account_id,
+    createdByUserId: row.created_by_user_id,
+    note: row.note,
+    expiresAt: row.expires_at,
+    failedAttempts: row.failed_attempts,
+    redeemedAt: row.redeemed_at,
+    redeemedByUserId: row.redeemed_by_user_id,
+    redeemedAccountId: row.redeemed_account_id,
+    revokedAt: row.revoked_at,
+    createdAt: row.created_at,
+  };
+}
+
+async function createInvite(accountId, { createdByUserId, note, expiresAt }) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const { rows } = await db.query(
+    `INSERT INTO invites (id, token, account_id, created_by_user_id, note, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [crypto.randomUUID(), token, accountId, createdByUserId || null, note || null, expiresAt]
+  );
+  return inviteRowToObject(rows[0]);
+}
+
+async function listInvites(accountId) {
+  const { rows } = await db.query(`SELECT * FROM invites WHERE account_id = $1 ORDER BY created_at DESC`, [accountId]);
+  return rows.map(inviteRowToObject);
+}
+
+async function getInviteByToken(token) {
+  const { rows } = await db.query(`SELECT * FROM invites WHERE token = $1`, [token]);
+  return rows[0] ? inviteRowToObject(rows[0]) : undefined;
+}
+
+const MAX_INVITE_FAILED_ATTEMPTS = 10;
+
+// Same generic check both the redemption route's pre-check and its final
+// atomic gate rely on -- kept in one place so "why is this invite dead"
+// can never drift between the two call sites.
+function isInviteValid(invite) {
+  return (
+    Boolean(invite) &&
+    !invite.revokedAt &&
+    !invite.redeemedAt &&
+    new Date(invite.expiresAt) > new Date() &&
+    invite.failedAttempts < MAX_INVITE_FAILED_ATTEMPTS
+  );
+}
+
+async function incrementInviteFailedAttempts(id) {
+  await db.query(`UPDATE invites SET failed_attempts = failed_attempts + 1 WHERE id = $1`, [id]);
+}
+
+/**
+ * The one atomic, race-safe single-use gate -- only flips `redeemed_at`.
+ * Deliberately does NOT set redeemed_by_user_id/redeemed_account_id here;
+ * neither is known yet at this point in routes/connect.js's sequencing
+ * (the Webflow token is validated and the invite is marked used BEFORE the
+ * user/account are resolved, so a bad token never burns the invite -- see
+ * that file). Returns undefined if the invite was invalid/already-redeemed/
+ * expired/revoked/over the failed-attempts cap at this exact instant --
+ * safe under concurrent redemption attempts against the same token, since
+ * Postgres row locking on the UPDATE serializes them and only one can ever
+ * see redeemed_at IS NULL and win.
+ */
+async function markInviteRedeemed(token) {
+  const { rows } = await db.query(
+    `UPDATE invites SET redeemed_at = now()
+     WHERE token = $1 AND redeemed_at IS NULL AND revoked_at IS NULL
+       AND expires_at > now() AND failed_attempts < $2
+     RETURNING *`,
+    [token, MAX_INVITE_FAILED_ATTEMPTS]
+  );
+  return rows[0] ? inviteRowToObject(rows[0]) : undefined;
+}
+
+// Bookkeeping only, called once the user/account are actually known --
+// never part of the security-critical single-use gate above.
+async function attributeInviteRedemption(id, { redeemedByUserId, redeemedAccountId }) {
+  await db.query(`UPDATE invites SET redeemed_by_user_id = $2, redeemed_account_id = $3 WHERE id = $1`, [
+    id,
+    redeemedByUserId,
+    redeemedAccountId,
+  ]);
+}
+
+// Scoped by accountId so one account's owner can never revoke another
+// account's invite given an arbitrary id (mirrors setAccountUserAccessLevel's
+// same defensive scoping). A no-op if it's already been redeemed.
+async function revokeInvite(accountId, id) {
+  await db.query(`UPDATE invites SET revoked_at = now() WHERE id = $1 AND account_id = $2 AND redeemed_at IS NULL`, [
+    id,
+    accountId,
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Webflow connections (Phase 2: consumed by services/webflow.js's
+// client()/siteId() for real per-account API access) -- either an OAuth
+// grant (routes/auth.js) or a manually-pasted Site API token
+// (routes/connect.js), stored identically; see upsertWebflowConnection.
 
 async function upsertWebflowConnection(accountId, { webflowSiteId, accessTokenCiphertext, accessTokenIv, refreshTokenCiphertext, refreshTokenIv, scope, authorizationId, connectedByUserId }) {
   await db.query(
@@ -1089,6 +1196,14 @@ module.exports = {
   getSessionWithUserAndAccount,
   touchSession,
   deleteSession,
+  createInvite,
+  listInvites,
+  getInviteByToken,
+  isInviteValid,
+  incrementInviteFailedAttempts,
+  markInviteRedeemed,
+  attributeInviteRedemption,
+  revokeInvite,
   upsertWebflowConnection,
   getWebflowConnection,
   upsertWxrksConnection,

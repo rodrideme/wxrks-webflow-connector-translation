@@ -139,10 +139,13 @@ async function migrate() {
     )
   `);
 
-  // Per-account Webflow OAuth grant. Populated at login time (Phase 1) even
-  // though nothing reads it for real API calls yet (that's Phase 2, once
-  // webflow.js's client() becomes per-account) -- storing it now avoids
-  // re-prompting existing users for a second OAuth consent later.
+  // Per-account Webflow connection -- either an OAuth grant (populated at
+  // login time by routes/auth.js) or a manually-pasted Site API token
+  // (populated by routes/connect.js's invite redemption, for a workspace
+  // OAuth can't reach -- see that file). webflow.js's client()/siteId()
+  // read this per-account via accountContext, regardless of which path
+  // populated it -- a static token satisfies them identically to an OAuth
+  // one, since neither does any OAuth-specific expiry/refresh check.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS webflow_connections (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
@@ -230,6 +233,33 @@ async function migrate() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS activity_log_account_created_idx ON activity_log (account_id, created_at DESC)`);
+
+  // Lets an existing account owner admit a brand-new workspace that "Sign
+  // in with Webflow" OAuth can never reach (an unapproved OAuth app only
+  // ever authorizes its own registration workspace -- see routes/connect.js).
+  // Single-use: token is the actual credential (crypto-random, same
+  // generation as sessions.id), so it's stored plaintext for the same
+  // reason session ids are -- DB compromise already means game over
+  // regardless of hashing. account_id is attribution only (which owner
+  // generated it), NOT a grant of access into whatever account the
+  // redemption resolves to.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS invites (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      note TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      failed_attempts INT NOT NULL DEFAULT 0,
+      redeemed_at TIMESTAMPTZ,
+      redeemed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      redeemed_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS invites_account_idx ON invites (account_id, created_at DESC)`);
 }
 
 module.exports = { query, migrate, pool };

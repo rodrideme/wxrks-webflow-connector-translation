@@ -111,6 +111,11 @@ const api = {
   setTeamMemberAccessLevel: (userId, accessLevel) =>
     request(`/team/${userId}/access-level`, { method: "PUT", body: JSON.stringify({ accessLevel }) }),
   getActivity: (offset = 0, limit = 50) => request(`/team/activity?offset=${offset}&limit=${limit}`),
+  listInvites: () => request("/team/invites"),
+  createInvite: (payload = {}) => request("/team/invites", { method: "POST", body: JSON.stringify(payload) }),
+  revokeInvite: (id) => request(`/team/invites/${id}/revoke`, { method: "POST" }),
+  checkInvite: (token) => request(`/connect/invite/${encodeURIComponent(token)}`),
+  redeemInvite: (payload) => request("/connect/redeem", { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export default api;

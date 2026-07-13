@@ -168,6 +168,29 @@
         same connection later (for example, running a marketing-tone prompt over a translation
         after it comes back from wxrks).
       </p>
+
+      <h2 id="webflow-manual-token">Connecting a second Webflow workspace</h2>
+      <p>
+        "Sign in with Webflow" only works for sites in the same Webflow workspace this app was
+        originally registered in — that's a Webflow platform restriction on unapproved OAuth apps,
+        not something configurable here. To bring in a site from a <strong>different</strong>
+        workspace instead, an existing account owner generates a one-time invite link from the
+        <strong>Teams</strong> page's <strong>Invites</strong> tab and shares it directly with
+        whoever manages that other site.
+      </p>
+      <p>
+        Opening that link asks for a Webflow <strong>Site API token</strong> instead of an OAuth
+        sign-in. To generate one: in Webflow, go to the target site's <strong>Site settings →
+        Apps &amp; Integrations → API access → Generate API token</strong>, and enable at least
+        these scopes: <code>sites:read</code>, <code>cms:read</code>, <code>cms:write</code>,
+        <code>pages:read</code>, <code>pages:write</code>, <code>components:read</code>,
+        <code>components:write</code>.
+      </p>
+      <div class="callout">
+        Each invite link works once. If a second person from that same workspace needs their own
+        access later, generate a fresh invite for them — it'll land them in the same connected
+        account rather than creating a duplicate.
+      </div>
     </div>
 
     <div class="content">

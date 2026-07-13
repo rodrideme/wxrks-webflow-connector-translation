@@ -15,6 +15,8 @@ function isProd() {
   return process.env.NODE_ENV === "production" || Boolean(process.env.RENDER_GIT_COMMIT);
 }
 
+// Exported for reuse by routes/connect.js -- both this OAuth callback and
+// that invite-redemption route create a session the exact same way.
 function setCookie(res, name, value, { maxAgeMs, httpOnly = true } = {}) {
   const parts = [`${name}=${encodeURIComponent(value)}`, "Path=/", "SameSite=Lax"];
   if (httpOnly) parts.push("HttpOnly");
@@ -173,3 +175,5 @@ router.get("/me", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.setCookie = setCookie;
+module.exports.SESSION_MAX_AGE_MS = SESSION_MAX_AGE_MS;

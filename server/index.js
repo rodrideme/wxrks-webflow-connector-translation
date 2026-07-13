@@ -17,6 +17,7 @@ const settingsRouter = require("./routes/settings");
 const teamRouter = require("./routes/team");
 const configRouter = require("./routes/config");
 const authRouter = require("./routes/auth");
+const connectRouter = require("./routes/connect");
 const { requireSession } = require("./middleware/auth");
 const autoSyncWebhook = require("./services/autoSyncWebhook");
 const autoSyncQueue = require("./services/autoSyncQueue");
@@ -25,6 +26,11 @@ const accountContext = require("./services/accountContext");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Render sits in front of this app behind a proxy -- without this, every
+// request's req.ip would resolve to the proxy's own address, collapsing
+// routes/connect.js's per-IP rate limiting onto one bucket for all traffic.
+app.set("trust proxy", 1);
 
 app.use(cors());
 // Captures the raw request body buffer alongside the parsed JSON -- needed
@@ -47,10 +53,13 @@ const deployedCommit = (() => {
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", commit: deployedCommit }));
 
-// Unauthenticated: the OAuth login/callback flow itself, and Webflow/wxrks's
-// own webhook deliveries (HMAC/signature-verified inside routes/webhooks.js,
+// Unauthenticated: the OAuth login/callback flow itself, the invite-gated
+// manual-token connect flow (routes/connect.js -- also creates a session,
+// so it can't sit behind requireSession either), and Webflow/wxrks's own
+// webhook deliveries (HMAC/signature-verified inside routes/webhooks.js,
 // not session-based -- a webhook has no browser session to present).
 app.use("/api/auth", authRouter);
+app.use("/api/connect", connectRouter);
 app.use("/api/webhooks", webhooksRouter);
 
 // Every other /api/* route requires a valid session (see middleware/auth.js)
