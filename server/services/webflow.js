@@ -130,6 +130,19 @@ async function getSiteLocales() {
 // shared cache would leak one account's locales into another's requests.
 const siteLocalesCacheByAccount = new Map();
 
+// wxrks echoes a work unit's locale back in its own lowercase/underscore
+// convention (confirmed live: a real delivery reported "fr_fr" for a site
+// whose actual registered Webflow tag is "fr-FR") -- this app itself sends
+// wxrks the real Webflow tag when creating the work unit, so wxrks is
+// reformatting it, not substituting a different locale. Every match against
+// Webflow's real tags goes through this normalizer on both sides so a
+// case/separator difference alone never produces a false "not registered"
+// error; the *real* Webflow tag (with its real casing/separator) is still
+// what gets returned and used in the actual API call.
+function normalizeLocaleTag(tag) {
+  return String(tag || "").toLowerCase().replace(/_/g, "-");
+}
+
 async function resolveCmsLocaleId(tag) {
   if (!tag) return undefined;
   const accountContext = require("./accountContext");
@@ -138,8 +151,9 @@ async function resolveCmsLocaleId(tag) {
     siteLocalesCacheByAccount.set(accountId, await getSiteLocales());
   }
   const cache = siteLocalesCacheByAccount.get(accountId);
-  if (cache.primary?.tag === tag) return cache.primary.cmsLocaleId;
-  const match = cache.secondary.find((l) => l.tag === tag);
+  const normalized = normalizeLocaleTag(tag);
+  if (normalizeLocaleTag(cache.primary?.tag) === normalized) return cache.primary.cmsLocaleId;
+  const match = cache.secondary.find((l) => normalizeLocaleTag(l.tag) === normalized);
   if (!match) {
     throw new Error(`"${tag}" is not a registered locale on this Webflow site`);
   }
@@ -179,8 +193,9 @@ async function getRawSiteLocales() {
 async function resolvePageLocaleId(tag) {
   if (!tag) return undefined;
   const locales = await getRawSiteLocales();
-  if (locales.primary?.tag === tag) return locales.primary.id;
-  const match = locales.secondary.find((l) => l.tag === tag);
+  const normalized = normalizeLocaleTag(tag);
+  if (normalizeLocaleTag(locales.primary?.tag) === normalized) return locales.primary.id;
+  const match = locales.secondary.find((l) => normalizeLocaleTag(l.tag) === normalized);
   if (!match) {
     throw new Error(`"${tag}" is not a registered locale on this Webflow site`);
   }
