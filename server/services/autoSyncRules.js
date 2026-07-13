@@ -22,6 +22,24 @@ const STANDARD_DATE_FIELD_KEYS = {
   _lastUpdated: "lastUpdated",
 };
 
+// Kept in sync with client/src/leafHelpers.js's identical function -- see
+// that file's comment for the real, live-confirmed field shapes this
+// handles across CMS items/pages/components.
+function computeWebflowStatus(entity) {
+  if (!entity) return null;
+  const hasAnySignal = "isDraft" in entity || "draft" in entity || "isArchived" in entity || "archived" in entity || "lastPublished" in entity;
+  if (!hasAnySignal) return null;
+  const archived = entity.isArchived ?? entity.archived ?? false;
+  const draft = entity.isDraft ?? entity.draft ?? false;
+  if (archived) return "archived";
+  if (draft) return "draft";
+  if ("lastPublished" in entity) {
+    if (!entity.lastPublished) return "draft";
+    if (entity.lastUpdated && new Date(entity.lastUpdated).getTime() > new Date(entity.lastPublished).getTime()) return "changed";
+  }
+  return "published";
+}
+
 function evaluateCondition(cond, entity) {
   const standardKey = STANDARD_DATE_FIELD_KEYS[cond.fieldSlug];
   const value = standardKey ? entity?.[standardKey] : entity?.fieldData?.[cond.fieldSlug];
@@ -47,6 +65,10 @@ function evaluateCondition(cond, entity) {
     case "MultiReference": {
       const itemIds = Array.isArray(value) ? value : [];
       const matches = Array.isArray(cond.value) && cond.value.some((id) => itemIds.includes(id));
+      return cond.operator === "notEquals" ? !matches : matches;
+    }
+    case "WebflowStatus": {
+      const matches = computeWebflowStatus(entity) === cond.value;
       return cond.operator === "notEquals" ? !matches : matches;
     }
     default:

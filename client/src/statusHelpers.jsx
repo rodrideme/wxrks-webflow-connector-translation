@@ -14,3 +14,19 @@ export function localeStatusPill(status) {
   if (status === "new") return <StatusPill variant="draft" label="New" />;
   return <StatusPill variant="draft" label="—" />;
 }
+
+/**
+ * Webflow's own real publish state (see leafHelpers.js's
+ * computeWebflowStatus) -- distinct from localeStatusPill above, which is
+ * this app's own translation-sync tracking. null means there's simply no
+ * signal to go on (e.g. a component, which carries no date/status field at
+ * all) -- shown as a plain dash rather than a pill, since it isn't really
+ * a "draft"/"unknown" state, just data Webflow doesn't expose here.
+ */
+export function webflowStatusPill(status) {
+  if (status === "published") return <StatusPill variant="success" label="Published" />;
+  if (status === "changed") return <StatusPill variant="progress" label="Changed" />;
+  if (status === "draft") return <StatusPill variant="draft" label="Draft" />;
+  if (status === "archived") return <StatusPill variant="draft" label="Archived" />;
+  return <span className="text-ink-faint">—</span>;
+}

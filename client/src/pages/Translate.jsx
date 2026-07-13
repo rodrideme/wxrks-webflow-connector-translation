@@ -2,20 +2,26 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api.js";
 import Card from "../components/Card.jsx";
-import StatusPill from "../components/StatusPill.jsx";
 import ContentBrowserRail from "../components/ContentBrowserRail.jsx";
 import ReferenceFilterValue from "../components/ReferenceFilterValue.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import TranslateActionBar from "../components/TranslateActionBar.jsx";
 import SendToWxrksModal from "../components/SendToWxrksModal.jsx";
-import { itemMatchesFilters } from "../leafHelpers.js";
+import { itemMatchesFilters, computeWebflowStatus } from "../leafHelpers.js";
 import { formatDateOnly } from "../formatDate.js";
-import { localeStatusPill } from "../statusHelpers.jsx";
+import { webflowStatusPill } from "../statusHelpers.jsx";
 
 const NO_FOLDER_ID = "__root__";
 const JOB_POLL_INTERVAL_MS = 1200;
 
-const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference"];
+const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference", "WebflowStatus"];
+
+// Field types whose value is picked from a fixed/external list rather than
+// typed freely -- grouped under their own heading in the field-picker
+// dropdown (Author/Tags pick from another collection's real items; Webflow
+// status picks from Webflow's own fixed set of states) so they read as a
+// distinct category from the collection's own plain custom fields.
+const LIST_BASED_FIELD_TYPES = ["Reference", "MultiReference", "WebflowStatus"];
 
 // Webflow's own standard CMS item metadata -- confirmed live on the raw
 // item shape (see routes/webhooks.js's item-published payload comment),
@@ -30,12 +36,22 @@ const STANDARD_DATE_FIELDS = [
   { slug: "_lastUpdated", displayName: "Updated On", type: "DateTime" },
 ];
 
+const WEBFLOW_STATUS_FIELD = { slug: "_webflowStatus", displayName: "Webflow status", type: "WebflowStatus" };
+
+const WEBFLOW_STATUS_OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "published", label: "Published" },
+  { value: "changed", label: "Changed" },
+  { value: "archived", label: "Archived" },
+];
+
 // Reference/MultiReference default to an empty picked-options array (matches
 // nothing until the user actually picks something), same "must actively
 // choose a value" behavior the other field types already default to.
 function defaultFilterValue(fieldType) {
   if (fieldType === "Switch") return true;
   if (fieldType === "Reference" || fieldType === "MultiReference") return [];
+  if (fieldType === "WebflowStatus") return "published";
   return "";
 }
 
@@ -445,7 +461,7 @@ export default function Translate() {
   // ---- Active leaf's item table ----
   const activeLeafKey = activeLeaf ? leafKeyOf(activeLeaf.kind, activeLeaf.id) : null;
   const activeFilters = activeLeaf?.kind === "collection" ? filtersByLeaf[activeLeafKey] || [] : [];
-  const activeFields = activeLeaf?.kind === "collection" ? [...(fieldsByCollection[activeLeaf.id] || []), ...STANDARD_DATE_FIELDS] : [];
+  const activeFields = activeLeaf?.kind === "collection" ? [...(fieldsByCollection[activeLeaf.id] || []), ...STANDARD_DATE_FIELDS, WEBFLOW_STATUS_FIELD] : [];
   const activeMatching = activeLeaf ? matchingItemsForLeaf(activeLeaf) : [];
   const visibleItems = activeMatching.filter((it) => {
     if (itemFilter === "needs") return it.state !== "synced";
@@ -717,12 +733,23 @@ export default function Translate() {
                           className="rounded-md border border-border-strong bg-surface px-2 py-1 text-xs"
                         >
                           {activeFields
-                            .filter((x) => FILTERABLE_FIELD_TYPES.includes(x.type))
+                            .filter((x) => FILTERABLE_FIELD_TYPES.includes(x.type) && !LIST_BASED_FIELD_TYPES.includes(x.type))
                             .map((x) => (
                               <option key={x.slug} value={x.slug}>
                                 {x.displayName}
                               </option>
                             ))}
+                          {activeFields.some((x) => LIST_BASED_FIELD_TYPES.includes(x.type)) && (
+                            <optgroup label="From a list">
+                              {activeFields
+                                .filter((x) => LIST_BASED_FIELD_TYPES.includes(x.type))
+                                .map((x) => (
+                                  <option key={x.slug} value={x.slug}>
+                                    {x.displayName}
+                                  </option>
+                                ))}
+                            </optgroup>
+                          )}
                         </select>
                         {f.fieldType === "DateTime" ? (
                           <>
@@ -770,6 +797,28 @@ export default function Translate() {
                               onChange={(ids) => updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { ...c, value: ids } : c)))}
                             />
                           </>
+                        ) : f.fieldType === "WebflowStatus" ? (
+                          <>
+                            <select
+                              value={f.operator}
+                              onChange={(e) => updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { ...c, operator: e.target.value } : c)))}
+                              className="rounded-md border border-border-strong bg-surface px-2 py-1 text-xs"
+                            >
+                              <option value="equals">is</option>
+                              <option value="notEquals">is not</option>
+                            </select>
+                            <select
+                              value={f.value}
+                              onChange={(e) => updateFilters(activeLeaf, (arr) => arr.map((c, j) => (j === i ? { ...c, value: e.target.value } : c)))}
+                              className="rounded-md border border-border-strong bg-surface px-2 py-1 text-xs"
+                            >
+                              {WEBFLOW_STATUS_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                          </>
                         ) : (
                           <input
                             type="text"
@@ -804,19 +853,11 @@ export default function Translate() {
                             {activeLeaf.kind === "collection" && <th className="px-3 py-2 text-right">Words</th>}
                             <th className="px-3 py-2">
                               <span className="group relative inline-flex cursor-help items-center gap-1">
-                                Status
+                                Webflow status
                                 <span className="text-[11px] normal-case text-ink-faint">ⓘ</span>
                                 <span className="invisible absolute left-0 top-full z-20 mt-1.5 w-64 rounded-md border border-border bg-surface p-2.5 text-[11px] font-normal normal-case leading-snug tracking-normal text-ink-soft opacity-0 shadow-card transition-opacity group-hover:visible group-hover:opacity-100">
-                                  <strong className="text-ink">New</strong> = never sent &middot; <strong className="text-ink">Synced</strong> = up to date &middot;{" "}
-                                  <strong className="text-ink">Stale</strong> = source changed since last send &middot; <strong className="text-ink">Failed</strong> = last attempt errored.{" "}
-                                  <a
-                                    href="/docs/translating-content.html#sync-status"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-medium text-accent-text hover:underline"
-                                  >
-                                    Learn more →
-                                  </a>
+                                  <strong className="text-ink">Draft</strong> = not yet published &middot; <strong className="text-ink">Published</strong> = live, no pending edits &middot;{" "}
+                                  <strong className="text-ink">Changed</strong> = edited since last publish &middot; <strong className="text-ink">Archived</strong> = archived in Webflow.
                                 </span>
                               </span>
                             </th>
@@ -840,7 +881,7 @@ export default function Translate() {
                               {activeLeaf.kind === "collection" && (
                                 <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-ink-soft">{item.wordCount?.toLocaleString() ?? "—"}</td>
                               )}
-                              <td className="px-3 py-2.5">{localeStatusPill(item.state)}</td>
+                              <td className="px-3 py-2.5">{webflowStatusPill(computeWebflowStatus(item))}</td>
                               <td className="px-3 py-2.5 text-right font-mono text-xs text-ink-faint">{formatDateOnly(item.lastPublished || item.lastUpdated, settings?.timezone)}</td>
                             </tr>
                           ))}

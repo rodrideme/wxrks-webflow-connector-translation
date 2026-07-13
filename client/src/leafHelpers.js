@@ -19,6 +19,30 @@ export const STANDARD_DATE_FIELD_KEYS = {
   _lastUpdated: "lastUpdated",
 };
 
+// Webflow's own real publish state -- "draft" | "published" | "changed"
+// (edited since last publish) | "archived" -- computed generically enough
+// to work across the 3 different raw shapes this app deals with: CMS items
+// (isDraft/isArchived/lastPublished, confirmed live), static pages
+// (draft/archived, no lastPublished field at all, confirmed live -- so
+// "changed" can never be detected for a page, only draft/archived/
+// published), and components (confirmed live: no date/status field of any
+// kind). Returns null when there's simply no signal to go on at all
+// (components), rather than guessing "published".
+export function computeWebflowStatus(entity) {
+  if (!entity) return null;
+  const hasAnySignal = "isDraft" in entity || "draft" in entity || "isArchived" in entity || "archived" in entity || "lastPublished" in entity;
+  if (!hasAnySignal) return null;
+  const archived = entity.isArchived ?? entity.archived ?? false;
+  const draft = entity.isDraft ?? entity.draft ?? false;
+  if (archived) return "archived";
+  if (draft) return "draft";
+  if ("lastPublished" in entity) {
+    if (!entity.lastPublished) return "draft";
+    if (entity.lastUpdated && new Date(entity.lastUpdated).getTime() > new Date(entity.lastPublished).getTime()) return "changed";
+  }
+  return "published";
+}
+
 export function evaluateCondition(cond, entity) {
   const standardKey = STANDARD_DATE_FIELD_KEYS[cond.fieldSlug];
   const value = standardKey ? entity?.[standardKey] : entity?.fieldData?.[cond.fieldSlug];
@@ -46,6 +70,10 @@ export function evaluateCondition(cond, entity) {
     case "MultiReference": {
       const itemIds = Array.isArray(value) ? value : [];
       const matches = Array.isArray(cond.value) && cond.value.some((id) => itemIds.includes(id));
+      return cond.operator === "notEquals" ? !matches : matches;
+    }
+    case "WebflowStatus": {
+      const matches = computeWebflowStatus(entity) === cond.value;
       return cond.operator === "notEquals" ? !matches : matches;
     }
     default:
