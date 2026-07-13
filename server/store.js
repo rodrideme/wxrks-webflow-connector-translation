@@ -947,7 +947,7 @@ function isAutomationContentQualified(automation, kind, entity) {
   if (kind === "collection") {
     if (entity.itemLike.isDraft || entity.itemLike.isArchived) return false;
     const conditions = leaf.filters || [];
-    return conditions.every((cond) => evaluateCondition(cond, entity.itemLike.fieldData));
+    return conditions.every((cond) => evaluateCondition(cond, entity.itemLike));
   }
 
   return true;

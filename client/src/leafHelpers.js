@@ -5,8 +5,23 @@
 // a filter's live preview here always agrees with how the same condition
 // would be evaluated server-side once saved into an automation.
 
-export function evaluateCondition(cond, fieldData) {
-  const value = fieldData?.[cond.fieldSlug];
+// Webflow's own standard CMS item metadata (Created On / Published On /
+// Updated On) -- confirmed live on the raw item shape (see
+// routes/webhooks.js's item-published payload comment) but never part of a
+// collection's own field schema, so these live at the top level of an item
+// (item.createdOn etc.), sibling to fieldData, not inside it. Translate.jsx
+// injects synthetic field descriptors using these exact slugs into a
+// collection's filterable fields list; evaluateCondition below resolves
+// them from the entity itself rather than fieldData.
+export const STANDARD_DATE_FIELD_KEYS = {
+  _createdOn: "createdOn",
+  _lastPublished: "lastPublished",
+  _lastUpdated: "lastUpdated",
+};
+
+export function evaluateCondition(cond, entity) {
+  const standardKey = STANDARD_DATE_FIELD_KEYS[cond.fieldSlug];
+  const value = standardKey ? entity?.[standardKey] : entity?.fieldData?.[cond.fieldSlug];
   switch (cond.fieldType) {
     case "DateTime": {
       if (value == null) return false;
@@ -40,7 +55,7 @@ export function evaluateCondition(cond, fieldData) {
 
 export function itemMatchesFilters(item, filters) {
   if (!filters || filters.length === 0) return true;
-  return filters.every((f) => evaluateCondition(f, item.fieldData));
+  return filters.every((f) => evaluateCondition(f, item));
 }
 
 export function leafKey(kind, id) {

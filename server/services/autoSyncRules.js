@@ -5,13 +5,26 @@
  * and store.js's isAutomationCmsItemQualified, all against the same
  * `itemLike` shape (a full item as returned by webflow.getItem()/
  * listAllItems(), i.e. { fieldData, lastPublished, isDraft, isArchived, ... }).
+ * evaluateCondition takes this whole entity (not just fieldData) so it can
+ * also resolve Webflow's standard Created On/Published On/Updated On dates,
+ * which live at the top level of the item, not inside fieldData.
  *
  * An empty conditions array for a qualifying collection means "no Level 3
  * restriction" -- every published item in that collection qualifies.
  */
 
-function evaluateCondition(cond, fieldData) {
-  const value = fieldData?.[cond.fieldSlug];
+// Kept in sync with client/src/leafHelpers.js's identical map -- see that
+// file's comment for why these live at the top level of an item, not
+// inside fieldData.
+const STANDARD_DATE_FIELD_KEYS = {
+  _createdOn: "createdOn",
+  _lastPublished: "lastPublished",
+  _lastUpdated: "lastUpdated",
+};
+
+function evaluateCondition(cond, entity) {
+  const standardKey = STANDARD_DATE_FIELD_KEYS[cond.fieldSlug];
+  const value = standardKey ? entity?.[standardKey] : entity?.fieldData?.[cond.fieldSlug];
   switch (cond.fieldType) {
     case "DateTime": {
       if (value == null) return false;

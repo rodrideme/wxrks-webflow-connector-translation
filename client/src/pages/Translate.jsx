@@ -15,14 +15,20 @@ import { localeStatusPill } from "../statusHelpers.jsx";
 const NO_FOLDER_ID = "__root__";
 const JOB_POLL_INTERVAL_MS = 1200;
 
-const DATE_FILTER_OPTS = [
-  { value: "", label: "Any time" },
-  { value: "2026-05-01", label: "After 1 May 2026" },
-  { value: "2026-06-01", label: "After 1 Jun 2026" },
-  { value: "2026-07-01", label: "After 1 Jul 2026" },
-];
-
 const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference"];
+
+// Webflow's own standard CMS item metadata -- confirmed live on the raw
+// item shape (see routes/webhooks.js's item-published payload comment),
+// but never part of a collection's own field schema, so these aren't
+// returned by GET /collections/:id/fields. Appended to a collection's own
+// fields below so they show up as regular DateTime filters, reusing that
+// UI/logic untouched -- see leafHelpers.js's evaluateCondition for how the
+// slug resolves back to the item's real createdOn/lastPublished/lastUpdated.
+const STANDARD_DATE_FIELDS = [
+  { slug: "_createdOn", displayName: "Created On", type: "DateTime" },
+  { slug: "_lastPublished", displayName: "Published On", type: "DateTime" },
+  { slug: "_lastUpdated", displayName: "Updated On", type: "DateTime" },
+];
 
 // Reference/MultiReference default to an empty picked-options array (matches
 // nothing until the user actually picks something), same "must actively
@@ -113,7 +119,7 @@ export default function Translate() {
       // status code 403".
       const labeled = [
         { label: "Collections", result: collectionsResult },
-        { label: "Pages", result: pagesResult },
+        { label: "Static Pages", result: pagesResult },
         { label: "Components", result: componentsResult },
       ];
       const failed = labeled.find((l) => l.result.status === "rejected");
@@ -392,7 +398,7 @@ export default function Translate() {
     },
     {
       id: "pages",
-      label: "Pages",
+      label: "Static Pages",
       count: pagesFolderLeaves.length,
       expanded: expandedGroups.pages,
       onToggle: () => setExpandedGroups((p) => ({ ...p, pages: !p.pages })),
@@ -439,7 +445,7 @@ export default function Translate() {
   // ---- Active leaf's item table ----
   const activeLeafKey = activeLeaf ? leafKeyOf(activeLeaf.kind, activeLeaf.id) : null;
   const activeFilters = activeLeaf?.kind === "collection" ? filtersByLeaf[activeLeafKey] || [] : [];
-  const activeFields = activeLeaf?.kind === "collection" ? fieldsByCollection[activeLeaf.id] || [] : [];
+  const activeFields = activeLeaf?.kind === "collection" ? [...(fieldsByCollection[activeLeaf.id] || []), ...STANDARD_DATE_FIELDS] : [];
   const activeMatching = activeLeaf ? matchingItemsForLeaf(activeLeaf) : [];
   const visibleItems = activeMatching.filter((it) => {
     if (itemFilter === "needs") return it.state !== "synced";
@@ -545,7 +551,7 @@ export default function Translate() {
   // ---- All-content summary ----
   const allGroups = [
     ...collections.map((c) => ({ kind: "collection", leafId: c.id, label: c.displayName || c.singularName, group: "Collections", ids: (collectionSummaries[c.id] || []).map((it) => it.id), words: (collectionSummaries[c.id] || []).reduce((s, it) => s + (it.wordCount || 0), 0) })),
-    ...pageFolders.map((f) => ({ kind: "pagesFolder", leafId: f.id, label: f.title, group: "Pages", ids: pages.filter((p) => (p.folderId || NO_FOLDER_ID) === f.id).map((p) => p.id), words: 0 })),
+    ...pageFolders.map((f) => ({ kind: "pagesFolder", leafId: f.id, label: f.title, group: "Static Pages", ids: pages.filter((p) => (p.folderId || NO_FOLDER_ID) === f.id).map((p) => p.id), words: 0 })),
     { kind: "components", leafId: "_", label: "Components", group: "Components", ids: components.map((c) => c.id), words: 0 },
   ];
   const allTotalItems = allGroups.reduce((s, g) => s + g.ids.length, 0);
@@ -666,7 +672,7 @@ export default function Translate() {
 
       {mode === "specific" && !allItemsLoading && (
         <div className="flex items-start gap-4">
-          <ContentBrowserRail groups={groups} dateFilter={{ value: dateAfter, onChange: setDateAfter, options: DATE_FILTER_OPTS }} />
+          <ContentBrowserRail groups={groups} dateFilter={{ value: dateAfter, onChange: setDateAfter }} />
 
           <div className="min-w-0 flex-1">
             {!activeLeaf ? (

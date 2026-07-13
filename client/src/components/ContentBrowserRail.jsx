@@ -13,17 +13,22 @@ export default function ContentBrowserRail({ groups, dateFilter }) {
       {dateFilter && (
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-[11.5px]">
           <span className="whitespace-nowrap text-ink-faint">Updated after</span>
-          <select
+          <input
+            type="date"
             value={dateFilter.value}
             onChange={(e) => dateFilter.onChange(e.target.value)}
             className="min-w-0 flex-1 rounded-md border border-border-strong bg-surface px-2 py-1 text-xs font-medium outline-none"
-          >
-            {dateFilter.options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          />
+          {dateFilter.value && (
+            <button
+              type="button"
+              onClick={() => dateFilter.onChange("")}
+              title="Clear date filter"
+              className="flex-none text-ink-faint hover:text-ink"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
       <div className="flex-1 overflow-auto p-1.5">
