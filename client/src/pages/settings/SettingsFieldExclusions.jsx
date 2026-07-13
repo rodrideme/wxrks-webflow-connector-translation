@@ -3,6 +3,7 @@ import api from "../../services/api.js";
 import Card from "../../components/Card.jsx";
 import Toggle from "../../components/Toggle.jsx";
 import { Disclosure, DisclosureRow } from "../../components/Disclosure.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const linkButtonClass = "text-xs font-medium text-accent-text hover:underline";
 
@@ -16,6 +17,7 @@ const linkButtonClass = "text-xs font-medium text-accent-text hover:underline";
  * home in the app, so it's back on its own.
  */
 export default function SettingsFieldExclusions() {
+  const { canEdit } = useAuth();
   const [collections, setCollections] = useState(null);
   const [fieldsByCollection, setFieldsByCollection] = useState({});
   const [error, setError] = useState(null);
@@ -84,7 +86,7 @@ export default function SettingsFieldExclusions() {
                     trailing={
                       <Toggle
                         checked={!field.excluded}
-                        disabled={!field.translatableByDefault}
+                        disabled={!field.translatableByDefault || !canEdit}
                         onChange={() => toggleFieldExcluded(collection.id, field.slug)}
                         label={`Translate ${field.displayName}`}
                       />

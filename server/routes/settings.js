@@ -3,6 +3,7 @@ const store = require("../store");
 const wxrks = require("../services/wxrks");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
 const transliterationLlm = require("../services/transliterationLlm");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -62,7 +63,7 @@ router.get("/", async (req, res) => {
  * accepted here as the frozen fallback default for pre-existing automations
  * and direct API use.
  */
-router.put("/", async (req, res) => {
+router.put("/", requireWriteAccess, async (req, res) => {
   const {
     sourceLocale,
     targetLocales,
@@ -98,6 +99,7 @@ router.put("/", async (req, res) => {
       };
     }
     await store.updateSettings(req.account.id, patch);
+    store.recordActivity(req.account.id, req.user.id, "settings.update", { fields: Object.keys(patch) }).catch(() => {});
     res.json(await store.getSettings(req.account.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -111,7 +113,7 @@ router.put("/", async (req, res) => {
  * ever storing them -- an invalid accessKey/secret pair should never be
  * silently saved, only to fail confusingly on the next real send.
  */
-router.put("/wxrks-connection", async (req, res) => {
+router.put("/wxrks-connection", requireWriteAccess, async (req, res) => {
   const { accessKey, secret } = req.body || {};
   if (!accessKey || !secret) {
     return res.status(400).json({ error: "accessKey and secret are required" });
@@ -123,6 +125,7 @@ router.put("/wxrks-connection", async (req, res) => {
   }
   try {
     await store.upsertWxrksConnection(req.account.id, { accessKey, secret, connectedByUserId: req.user.id });
+    store.recordActivity(req.account.id, req.user.id, "wxrks_connection.save", {}).catch(() => {});
     res.json({ connected: true, accessKeyMasked: mask(accessKey) });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -133,9 +136,10 @@ router.put("/wxrks-connection", async (req, res) => {
  * DELETE /api/settings/wxrks-connection
  * Disconnects this account's own wxrks credentials.
  */
-router.delete("/wxrks-connection", async (req, res) => {
+router.delete("/wxrks-connection", requireWriteAccess, async (req, res) => {
   try {
     await store.deleteWxrksConnection(req.account.id);
+    store.recordActivity(req.account.id, req.user.id, "wxrks_connection.delete", {}).catch(() => {});
     res.json({ connected: false });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -166,7 +170,7 @@ router.post("/wxrks-connection/test", async (req, res) => {
  * services/transliterationLlm.js). Validated against Anthropic's real API
  * before saving, same reasoning as the wxrks connection above.
  */
-router.put("/llm-connection", async (req, res) => {
+router.put("/llm-connection", requireWriteAccess, async (req, res) => {
   const { apiKey } = req.body || {};
   if (!apiKey) {
     return res.status(400).json({ error: "apiKey is required" });
@@ -178,6 +182,7 @@ router.put("/llm-connection", async (req, res) => {
   }
   try {
     await store.upsertLlmConnection(req.account.id, { apiKey, connectedByUserId: req.user.id });
+    store.recordActivity(req.account.id, req.user.id, "llm_connection.save", {}).catch(() => {});
     res.json({ connected: true, apiKeyMasked: mask(apiKey) });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -187,9 +192,10 @@ router.put("/llm-connection", async (req, res) => {
 /**
  * DELETE /api/settings/llm-connection
  */
-router.delete("/llm-connection", async (req, res) => {
+router.delete("/llm-connection", requireWriteAccess, async (req, res) => {
   try {
     await store.deleteLlmConnection(req.account.id);
+    store.recordActivity(req.account.id, req.user.id, "llm_connection.delete", {}).catch(() => {});
     res.json({ connected: false });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -205,9 +211,10 @@ router.delete("/llm-connection", async (req, res) => {
  * than surfacing the problem once and letting a human confirm the URL is
  * reachable before retrying.
  */
-router.post("/autosync/reregister-webhook", async (req, res) => {
+router.post("/autosync/reregister-webhook", requireWriteAccess, async (req, res) => {
   try {
     await autoSyncWebhook.ensureWebhookRegistered(req.account.id);
+    store.recordActivity(req.account.id, req.user.id, "webhook.reregister_cms", {}).catch(() => {});
     res.json(await store.getSettings(req.account.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -219,9 +226,10 @@ router.post("/autosync/reregister-webhook", async (req, res) => {
  * Same manual recovery action as above, for the Pages/Components
  * site_publish webhook.
  */
-router.post("/autosync/reregister-pages-webhook", async (req, res) => {
+router.post("/autosync/reregister-pages-webhook", requireWriteAccess, async (req, res) => {
   try {
     await autoSyncWebhook.ensurePagesWebhookRegistered(req.account.id);
+    store.recordActivity(req.account.id, req.user.id, "webhook.reregister_pages", {}).catch(() => {});
     res.json(await store.getSettings(req.account.id));
   } catch (err) {
     res.status(502).json({ error: err.message });

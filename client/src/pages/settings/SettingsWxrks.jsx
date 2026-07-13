@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import api from "../../services/api.js";
 import Card from "../../components/Card.jsx";
 import { formatDateTime } from "../../formatDate.js";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const labelClass = "flex flex-col gap-1 text-sm font-medium text-ink-soft";
 const inputClass =
@@ -24,6 +25,7 @@ const SUB_TABS = [
  * wizard, automations) will work.
  */
 export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, onChange, settings, markDirty, saveFields }) {
+  const { canEdit } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const subTab = SUB_TABS.some((t) => t.value === searchParams.get("subtab")) ? searchParams.get("subtab") : "keys";
 
@@ -210,7 +212,8 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
               <button
                 type="button"
                 onClick={save}
-                disabled={saving || !accessKey || !secret}
+                disabled={saving || !accessKey || !secret || !canEdit}
+                title={!canEdit ? "Your account has read-only access." : undefined}
                 className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? "Saving..." : "Save & test connection"}
@@ -219,7 +222,8 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
                 <button
                   type="button"
                   onClick={disconnect}
-                  disabled={saving}
+                  disabled={saving || !canEdit}
+                  title={!canEdit ? "Your account has read-only access." : undefined}
                   className="text-sm font-medium text-status-error-fg hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Disconnect
@@ -240,7 +244,7 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
               <select
                 value={settings?.orgUnitUUID || ""}
                 onChange={(e) => markDirty({ orgUnitUUID: e.target.value })}
-                disabled={orgUnitsLoading}
+                disabled={orgUnitsLoading || !canEdit}
                 className={inputClass}
               >
                 <option value="">— none —</option>
@@ -260,7 +264,8 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
             <button
               type="button"
               onClick={saveOrgUnit}
-              disabled={savingOrgUnit}
+              disabled={savingOrgUnit || !canEdit}
+              title={!canEdit ? "Your account has read-only access." : undefined}
               className="mt-3 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
               {savingOrgUnit ? "Saving..." : "Save"}

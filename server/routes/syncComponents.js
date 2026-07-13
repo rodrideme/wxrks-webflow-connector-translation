@@ -4,6 +4,7 @@ const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
 const { syncComponentIntoBatch, requestBatchApproval } = require("../services/syncCore");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ const router = express.Router();
  * Background job pattern -- see sync.js's POST /item for why. Polled via
  * the shared GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
-router.post("/item", async (req, res) => {
+router.post("/item", requireWriteAccess, async (req, res) => {
   const {
     componentId,
     componentIds,
@@ -64,6 +65,7 @@ router.post("/item", async (req, res) => {
 
     const jobId = crypto.randomUUID();
     store.createSyncJob({ id: jobId, mode: "components-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.recordActivity(accountId, req.user.id, "sync.components_item", { itemCount: ids.length }).catch(() => {});
 
     res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 

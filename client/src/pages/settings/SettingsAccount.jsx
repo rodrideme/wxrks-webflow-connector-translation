@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Card from "../../components/Card.jsx";
 import Toggle from "../../components/Toggle.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 function buildPreviewName(pattern, token) {
   const name = (pattern || "").replace(/{collection}/g, "blog").replace(/{entry}/g, "name-of-the-entry").replace(/{page}/g, token).replace(/{component}/g, token).replace(/{field}/g, "");
@@ -36,6 +37,7 @@ const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
  * from the connected Webflow site's real primary locale.
  */
 export default function SettingsAccount({ settings, markDirty, webflowLocales, saveFields }) {
+  const { canEdit } = useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
@@ -198,7 +200,8 @@ export default function SettingsAccount({ settings, markDirty, webflowLocales, s
 
       <button
         onClick={save}
-        disabled={saving}
+        disabled={saving || !canEdit}
+        title={!canEdit ? "Your account has read-only access." : undefined}
         className="self-start rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
       >
         {saving ? "Saving..." : "Save settings"}

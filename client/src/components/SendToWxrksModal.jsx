@@ -57,7 +57,7 @@ const WORKFLOW_ORDER = Object.keys(WORKFLOW_LABELS);
  * builds from the current selection.
  */
 export default function SendToWxrksModal({ open, onClose, scope, selection, allSummary, ruleBased, onJobsStarted, onRecurringCreated }) {
-  const { account } = useAuth();
+  const { account, canEdit } = useAuth();
   const wxrksConnected = account?.wxrksConnected;
   const [settings, setSettings] = useState(null);
   const [orgUnits, setOrgUnits] = useState([]);
@@ -310,6 +310,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           Select an org unit under Advanced settings
         </button>
       )}
+      {!canEdit && <span className="text-xs font-medium text-ink-faint">Your account has read-only access.</span>}
       {error && <span className="text-xs font-medium text-status-error-fg">Error: {error}</span>}
       <div className="ml-auto flex gap-2.5">
         {step > 0 && (
@@ -317,7 +318,13 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             Back
           </button>
         )}
-        <button type="button" onClick={handleNext} disabled={submitting || targetLocales.length === 0 || !orgUnitUUID} className={btnPrimary}>
+        <button
+          type="button"
+          onClick={handleNext}
+          disabled={submitting || targetLocales.length === 0 || !orgUnitUUID || !canEdit}
+          title={!canEdit ? "Your account has read-only access." : undefined}
+          className={btnPrimary}
+        >
           {submitting
             ? "Sending…"
             : step === 2

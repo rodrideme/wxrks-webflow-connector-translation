@@ -107,6 +107,10 @@ const api = {
   flushAutomationNow: (id) => request(`/automations/${id}/flush`, { method: "POST" }),
   flushAllAutomations: () => request("/automations/flush-all", { method: "POST" }),
   getAutomationStatus: (id) => request(`/automations/${id}/status`),
+  getTeam: () => request("/team"),
+  setTeamMemberAccessLevel: (userId, accessLevel) =>
+    request(`/team/${userId}/access-level`, { method: "PUT", body: JSON.stringify({ accessLevel }) }),
+  getActivity: (offset = 0, limit = 50) => request(`/team/activity?offset=${offset}&limit=${limit}`),
 };
 
 export default api;

@@ -12,6 +12,7 @@ const links = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
   { to: "/translate", label: "Translate", icon: "⇄" },
   { to: "/runs", label: "Runs", icon: "☰" },
+  { to: "/teams", label: "Teams", icon: "☺" },
   { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 

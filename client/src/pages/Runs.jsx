@@ -6,6 +6,7 @@ import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
 import { modeLabel, cadenceLabel } from "../runLabels.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
 
@@ -31,7 +32,7 @@ function scopeSummary(contentScope, collections, pageFolders) {
 // "not_registered" is a normal, expected state (no automation needs this
 // webhook yet) -- only "deactivated"/other unexpected statuses get an actual
 // Reregister action, since that's the only case something is really broken.
-function webhookPill(status, label, onReregister, busy) {
+function webhookPill(status, label, onReregister, busy, canEdit) {
   if (status === "active") return <StatusPill variant="success" label={`${label} healthy`} />;
   if (status === "not_registered") return <StatusPill variant="draft" label={`${label} not registered`} />;
   return (
@@ -40,7 +41,8 @@ function webhookPill(status, label, onReregister, busy) {
       <button
         type="button"
         onClick={onReregister}
-        disabled={busy}
+        disabled={busy || !canEdit}
+        title={!canEdit ? "Your account has read-only access." : undefined}
         className="text-[11px] font-semibold text-accent-text hover:underline disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? "Reregistering…" : "Reregister"}
@@ -64,6 +66,7 @@ function initialTabFromHash() {
 }
 
 export default function Runs() {
+  const { canEdit } = useAuth();
   const [automations, setAutomations] = useState(null);
   const [pendingItems, setPendingItems] = useState([]);
   const [webhook, setWebhook] = useState(null);
@@ -309,11 +312,21 @@ export default function Runs() {
                   </span>
                   <div className="flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                     {!a.archived && (
-                      <button onClick={() => togglePause(a)} className="rounded-md border border-border-strong bg-surface px-2.5 py-1 text-xs font-semibold hover:border-ink-faint">
+                      <button
+                        onClick={() => togglePause(a)}
+                        disabled={!canEdit}
+                        title={!canEdit ? "Your account has read-only access." : undefined}
+                        className="rounded-md border border-border-strong bg-surface px-2.5 py-1 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
+                      >
                         {a.enabled ? "Pause" : "Resume"}
                       </button>
                     )}
-                    <button onClick={() => toggleArchive(a)} className="rounded-md border border-border-strong bg-surface px-2.5 py-1 text-xs font-semibold hover:border-ink-faint">
+                    <button
+                      onClick={() => toggleArchive(a)}
+                      disabled={!canEdit}
+                      title={!canEdit ? "Your account has read-only access." : undefined}
+                      className="rounded-md border border-border-strong bg-surface px-2.5 py-1 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
+                    >
                       {a.archived ? "Unarchive" : "Archive"}
                     </button>
                   </div>
@@ -326,9 +339,9 @@ export default function Runs() {
 
       {(webhook || pagesWebhook) && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          {webhook && webhookPill(webhook.status, "CMS webhook", () => reregisterWebhook("cms"), reregistering === "cms")}
+          {webhook && webhookPill(webhook.status, "CMS webhook", () => reregisterWebhook("cms"), reregistering === "cms", canEdit)}
           {pagesWebhook && pagesWebhook.status !== "not_registered" &&
-            webhookPill(pagesWebhook.status, "Pages/Components publish webhook", () => reregisterWebhook("pages"), reregistering === "pages")}
+            webhookPill(pagesWebhook.status, "Pages/Components publish webhook", () => reregisterWebhook("pages"), reregistering === "pages", canEdit)}
         </div>
       )}
       </>
@@ -356,7 +369,8 @@ export default function Runs() {
             </span>
             <button
               onClick={flushAll}
-              disabled={flushing || pendingItems.length === 0}
+              disabled={flushing || pendingItems.length === 0 || !canEdit}
+              title={!canEdit ? "Your account has read-only access." : undefined}
               className="rounded-md border border-border-strong bg-surface px-3 py-1.5 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
             >
               {flushing ? "Sending…" : "Translate queue now"}

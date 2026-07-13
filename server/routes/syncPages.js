@@ -4,6 +4,7 @@ const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
 const { syncPageIntoBatch, requestBatchApproval } = require("../services/syncCore");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ const router = express.Router();
  * content" send can take minutes). Polled via the shared
  * GET/POST /api/sync/jobs/:jobId endpoints in sync.js.
  */
-router.post("/item", async (req, res) => {
+router.post("/item", requireWriteAccess, async (req, res) => {
   const {
     pageId,
     pageIds,
@@ -65,6 +66,7 @@ router.post("/item", async (req, res) => {
 
     const jobId = crypto.randomUUID();
     store.createSyncJob({ id: jobId, mode: "pages-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.recordActivity(accountId, req.user.id, "sync.pages_item", { itemCount: ids.length }).catch(() => {});
 
     res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 

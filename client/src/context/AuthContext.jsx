@@ -37,7 +37,14 @@ export function AuthProvider({ children }) {
     setState({ loading: false, user: null, account: null, accounts: [] });
   }
 
-  return <AuthContext.Provider value={{ ...state, refresh, logout }}>{children}</AuthContext.Provider>;
+  // Derived once here rather than in every consuming component -- account
+  // already carries role/accessLevel straight from GET /api/auth/me (see
+  // store.js's getSessionWithUserAndAccount). true whenever accessLevel
+  // isn't loaded yet too, so a still-loading page doesn't flash every
+  // control as disabled before the real value arrives.
+  const canEdit = state.account?.accessLevel !== "reviewer";
+
+  return <AuthContext.Provider value={{ ...state, canEdit, refresh, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

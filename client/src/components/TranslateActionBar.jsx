@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import StatusPill from "./StatusPill.jsx";
 import ProgressBar from "./ProgressBar.jsx";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const btnPrimary =
   "inline-flex items-center gap-1.5 rounded-md bg-accent px-5 py-2 text-[13.5px] font-semibold text-white transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50";
@@ -22,6 +23,7 @@ const btnGhost =
  */
 export default function TranslateActionBar({ mode, selCount, selWords, targetCount, ruleBased, allTotalItems, allTotalWords, allItemsLoading, phase, progress, result, onOpenSend, onReset, onCancel }) {
   const plural = (n) => `item${n === 1 ? "" : "s"}`;
+  const { canEdit } = useAuth();
 
   return (
     <div className="sticky bottom-0 z-10 -mx-8 mt-auto border-t border-border bg-surface px-8 py-3.5 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
@@ -31,7 +33,7 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
           <span className="flex-1 text-[13px] text-ink-faint">
             Checking pages, components, and collections for matching content — this can take a moment for a large site.
           </span>
-          <button onClick={onCancel} className={btnGhost}>
+          <button onClick={onCancel} disabled={!canEdit} title={!canEdit ? "Your account has read-only access." : undefined} className={btnGhost + " disabled:cursor-not-allowed disabled:opacity-50"}>
             Cancel
           </button>
         </div>
@@ -43,7 +45,7 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
           <span className="flex-1">
             <ProgressBar value={progress.processed} max={progress.total} label={`${progress.processed} / ${progress.total} processed`} />
           </span>
-          <button onClick={onCancel} className={btnGhost}>
+          <button onClick={onCancel} disabled={!canEdit} title={!canEdit ? "Your account has read-only access." : undefined} className={btnGhost + " disabled:cursor-not-allowed disabled:opacity-50"}>
             Cancel
           </button>
         </div>
@@ -90,7 +92,12 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
               <>· {allTotalItems} items · ~{allTotalWords?.toLocaleString()} words · {targetCount} locales</>
             )}
           </span>
-          <button onClick={onOpenSend} disabled={allItemsLoading} className={btnPrimary + " ml-auto"}>
+          <button
+            onClick={onOpenSend}
+            disabled={allItemsLoading || !canEdit}
+            title={!canEdit ? "Your account has read-only access." : undefined}
+            className={btnPrimary + " ml-auto"}
+          >
             {allItemsLoading ? "Counting items…" : `Translate all — ${allTotalItems} items`}
           </button>
         </div>
@@ -110,7 +117,12 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
               {ruleBased ? "Rule-based — can run on a schedule" : "Individual selection — one-time send only"}
             </span>
           )}
-          <button onClick={onOpenSend} disabled={selCount === 0} className={btnPrimary + " ml-auto"}>
+          <button
+            onClick={onOpenSend}
+            disabled={selCount === 0 || !canEdit}
+            title={!canEdit ? "Your account has read-only access." : undefined}
+            className={btnPrimary + " ml-auto"}
+          >
             Translate — {selCount} {plural(selCount)}
           </button>
         </div>

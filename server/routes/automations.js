@@ -3,6 +3,7 @@ const store = require("../store");
 const autoSyncQueue = require("../services/autoSyncQueue");
 const autoSyncWebhook = require("../services/autoSyncWebhook");
 const automationScheduler = require("../services/automationScheduler");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -88,7 +89,7 @@ router.get("/", async (req, res) => {
  * POST /api/automations
  * body: { name, contentScope, cadence, workflows?, projectName?, includeExisting?, orgUnitOverride?, targetLocalesOverride? }
  */
-router.post("/", async (req, res) => {
+router.post("/", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride, targetLocalesOverride } = req.body || {};
@@ -105,6 +106,7 @@ router.post("/", async (req, res) => {
       orgUnitOverride,
       targetLocalesOverride,
     });
+    store.recordActivity(accountId, req.user.id, "automation.create", { name }).catch(() => {});
 
     // Backfill currently-matching content right away rather than waiting for
     // this automation's own cadence tick (up to a day away) or the hourly
@@ -143,7 +145,7 @@ router.post("/", async (req, res) => {
  * PUT /api/automations/:id
  * body: { name?, contentScope?, cadence?, workflows?, projectName?, includeExisting?, orgUnitOverride?, targetLocalesOverride? }
  */
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const { name, contentScope, cadence, workflows, projectName, includeExisting, orgUnitOverride, targetLocalesOverride } = req.body || {};
@@ -159,6 +161,7 @@ router.put("/:id", async (req, res) => {
 
     const automation = await store.updateAutomation(accountId, req.params.id, patch);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
+    store.recordActivity(accountId, req.user.id, "automation.update", { name: automation.name }).catch(() => {});
     try {
       await syncWebhookRegistrationToAutomationsState(accountId);
     } catch (err) {
@@ -173,35 +176,39 @@ router.put("/:id", async (req, res) => {
 /**
  * DELETE /api/automations/:id
  */
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
+    const automation = await store.getAutomation(accountId, req.params.id);
     await store.deleteAutomation(accountId, req.params.id);
     await syncWebhookRegistrationToAutomationsState(accountId);
+    store.recordActivity(accountId, req.user.id, "automation.delete", { name: automation?.name }).catch(() => {});
     res.json({ deleted: true });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });
 
-router.post("/:id/pause", async (req, res) => {
+router.post("/:id/pause", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const automation = await store.updateAutomation(accountId, req.params.id, { enabled: false });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await syncWebhookRegistrationToAutomationsState(accountId);
+    store.recordActivity(accountId, req.user.id, "automation.pause", { name: automation.name }).catch(() => {});
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });
 
-router.post("/:id/resume", async (req, res) => {
+router.post("/:id/resume", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const automation = await store.updateAutomation(accountId, req.params.id, { enabled: true });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await syncWebhookRegistrationToAutomationsState(accountId);
+    store.recordActivity(accountId, req.user.id, "automation.resume", { name: automation.name }).catch(() => {});
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -215,24 +222,26 @@ router.post("/:id/resume", async (req, res) => {
  * meant to be temporary) but kept around for history/reference, matching
  * the design's 3-state model (Running/Paused/Archived).
  */
-router.post("/:id/archive", async (req, res) => {
+router.post("/:id/archive", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const automation = await store.updateAutomation(accountId, req.params.id, { archived: true });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await syncWebhookRegistrationToAutomationsState(accountId);
+    store.recordActivity(accountId, req.user.id, "automation.archive", { name: automation.name }).catch(() => {});
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });
 
-router.post("/:id/unarchive", async (req, res) => {
+router.post("/:id/unarchive", requireWriteAccess, async (req, res) => {
   try {
     const accountId = req.account.id;
     const automation = await store.updateAutomation(accountId, req.params.id, { archived: false });
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await syncWebhookRegistrationToAutomationsState(accountId);
+    store.recordActivity(accountId, req.user.id, "automation.unarchive", { name: automation.name }).catch(() => {});
     res.json(automation);
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -244,11 +253,12 @@ router.post("/:id/unarchive", async (req, res) => {
  * Manual "flush now" -- runs the same cycle the scheduled cadence triggers,
  * immediately, without waiting for the next scheduled time.
  */
-router.post("/:id/flush", async (req, res) => {
+router.post("/:id/flush", requireWriteAccess, async (req, res) => {
   try {
     const automation = await store.getAutomation(req.account.id, req.params.id);
     if (!automation) return res.status(404).json({ error: "Automation not found" });
     await automationScheduler.runAutomationCycle(automation);
+    store.recordActivity(req.account.id, req.user.id, "automation.flush", { name: automation.name }).catch(() => {});
     res.json({ flushed: true });
   } catch (err) {
     if (err.code === "WXRKS_NOT_CONNECTED") {
@@ -265,7 +275,7 @@ router.post("/:id/flush", async (req, res) => {
  * flushes each automation's own queue in turn rather than requiring the
  * user to flush them one at a time.
  */
-router.post("/flush-all", async (req, res) => {
+router.post("/flush-all", requireWriteAccess, async (req, res) => {
   try {
     const automations = await store.listAutomations(req.account.id);
     let itemsSynced = 0;
@@ -274,6 +284,7 @@ router.post("/flush-all", async (req, res) => {
       const result = await autoSyncQueue.flush(automation.id);
       itemsSynced += result.itemsSynced;
     }
+    store.recordActivity(req.account.id, req.user.id, "automation.flush_all", { itemsSynced }).catch(() => {});
     res.json({ flushed: true, itemsSynced });
   } catch (err) {
     if (err.code === "WXRKS_NOT_CONNECTED") {

@@ -534,6 +534,72 @@ async function listAccountsForUser(userId) {
   return rows.map((row) => ({ ...accountRowToObject(row), role: row.role }));
 }
 
+/**
+ * Everyone with access to this account, for the Teams page's member list.
+ * role/accessLevel come straight off account_users -- see
+ * getSessionWithUserAndAccount's doc comment for what each independently
+ * gates.
+ */
+async function listAccountMembers(accountId) {
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, u.first_name, u.last_name, au.role, au.access_level, au.created_at AS joined_at
+     FROM account_users au
+     JOIN users u ON u.id = au.user_id
+     WHERE au.account_id = $1
+     ORDER BY au.created_at ASC`,
+    [accountId]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    role: row.role,
+    accessLevel: row.access_level,
+    joinedAt: row.joined_at.toISOString(),
+  }));
+}
+
+// Owner-only (enforced by requireOwner in the route, not here). Scoped by
+// accountId in the WHERE clause so one account's owner can never reach
+// into another account's membership row even given an arbitrary userId.
+async function setAccountUserAccessLevel(accountId, userId, accessLevel) {
+  await db.query(`UPDATE account_users SET access_level = $1 WHERE account_id = $2 AND user_id = $3`, [accessLevel, accountId, userId]);
+}
+
+async function recordActivity(accountId, userId, action, detail) {
+  await db.query(`INSERT INTO activity_log (id, account_id, user_id, action, detail) VALUES ($1, $2, $3, $4, $5)`, [
+    crypto.randomUUID(),
+    accountId,
+    userId || null,
+    action,
+    detail ? JSON.stringify(detail) : null,
+  ]);
+}
+
+// No total-count query -- the client treats a full page (items.length ===
+// limit) as "there might be more" and offers a Load more button, which is
+// enough for an account-scoped activity log that's never going to be huge.
+async function listActivity(accountId, { limit = 50, offset = 0 } = {}) {
+  const { rows } = await db.query(
+    `SELECT al.id, al.user_id, al.action, al.detail, al.created_at,
+            u.email, u.first_name, u.last_name
+     FROM activity_log al
+     LEFT JOIN users u ON u.id = al.user_id
+     WHERE al.account_id = $1
+     ORDER BY al.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [accountId, limit, offset]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    detail: row.detail,
+    createdAt: row.created_at.toISOString(),
+    user: row.user_id ? { id: row.user_id, email: row.email, firstName: row.first_name, lastName: row.last_name } : null,
+  }));
+}
+
 async function createSession(userId, accountId, expiresAt) {
   const id = crypto.randomBytes(32).toString("hex");
   await db.query(`INSERT INTO sessions (id, user_id, account_id, expires_at) VALUES ($1, $2, $3, $4)`, [
@@ -555,10 +621,12 @@ async function getSessionWithUserAndAccount(sessionId) {
   const { rows } = await db.query(
     `SELECT s.*, u.webflow_user_id, u.email, u.first_name, u.last_name,
             a.name AS account_name, a.webflow_site_id, a.status AS account_status,
-            (wc.account_id IS NOT NULL) AS has_wxrks_connection
+            (wc.account_id IS NOT NULL) AS has_wxrks_connection,
+            au.role, au.access_level
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      JOIN accounts a ON a.id = s.account_id
+     JOIN account_users au ON au.account_id = s.account_id AND au.user_id = s.user_id
      LEFT JOIN wxrks_connections wc ON wc.account_id = a.id AND wc.status = 'active'
      WHERE s.id = $1`,
     [sessionId]
@@ -585,6 +653,13 @@ async function getSessionWithUserAndAccount(sessionId) {
       webflowSiteId: row.webflow_site_id,
       status: row.account_status,
       wxrksConnected: row.has_wxrks_connection || isOriginalAccount,
+      // Which account_users row THIS session's user holds -- role gates
+      // team management (Teams page), accessLevel gates read vs. write
+      // everywhere else (see middleware/auth.js's requireOwner/
+      // requireWriteAccess). Independent axes: an owner isn't automatically
+      // exempt from being set to reviewer for day-to-day actions.
+      role: row.role,
+      accessLevel: row.access_level,
     },
   };
 }
@@ -1006,6 +1081,10 @@ module.exports = {
   upsertUser,
   upsertAccountMembership,
   listAccountsForUser,
+  listAccountMembers,
+  setAccountUserAccessLevel,
+  recordActivity,
+  listActivity,
   createSession,
   getSessionWithUserAndAccount,
   touchSession,

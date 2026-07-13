@@ -4,6 +4,7 @@ const webflow = require("../services/webflow");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
 const { syncItemIntoBatch, syncPageIntoBatch, syncComponentIntoBatch, requestBatchApproval } = require("../services/syncCore");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ const router = express.Router();
  * request open for. Mirrors the old Bulk Sync job pattern, generalized to
  * any one-time send regardless of size.
  */
-router.post("/item", async (req, res) => {
+router.post("/item", requireWriteAccess, async (req, res) => {
   const {
     collectionId,
     itemId,
@@ -71,6 +72,7 @@ router.post("/item", async (req, res) => {
 
     const jobId = crypto.randomUUID();
     store.createSyncJob({ id: jobId, mode: "item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.recordActivity(accountId, req.user.id, "sync.item", { collectionName: collection.displayName, itemCount: ids.length }).catch(() => {});
 
     res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 
@@ -137,7 +139,7 @@ router.post("/item", async (req, res) => {
  * regardless of how many entity types it contains); this is the same
  * pattern for a one-time send instead of a scheduled batch.
  */
-router.post("/combined", async (req, res) => {
+router.post("/combined", requireWriteAccess, async (req, res) => {
   const { groups, workflows, projectName, orgUnitUUID: orgUnitUUIDOverride, targetLocales: targetLocalesOverride } = req.body || {};
   const accountId = req.account.id;
   try {
@@ -179,6 +181,7 @@ router.post("/combined", async (req, res) => {
 
     const jobId = crypto.randomUUID();
     store.createSyncJob({ id: jobId, mode: "combined", total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.recordActivity(accountId, req.user.id, "sync.combined", { groupCount: groups.length, itemCount: totalItems }).catch(() => {});
 
     res.json({ jobId, total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
 

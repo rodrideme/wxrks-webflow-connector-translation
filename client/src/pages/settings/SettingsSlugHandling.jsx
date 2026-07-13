@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Card from "../../components/Card.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const labelClass = "flex flex-col gap-1 text-sm font-medium text-ink-soft";
 const selectClass =
@@ -18,6 +19,7 @@ const hintClass = "text-xs text-ink-faint";
  * step, so this is the single, self-contained on/off + tuning control.
  */
 export default function SettingsSlugHandling({ settings, markDirty, saveFields }) {
+  const { canEdit } = useAuth();
   const slugHandling = settings.slugHandling;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -91,7 +93,8 @@ export default function SettingsSlugHandling({ settings, markDirty, saveFields }
 
       <button
         onClick={save}
-        disabled={saving}
+        disabled={saving || !canEdit}
+        title={!canEdit ? "Your account has read-only access." : undefined}
         className="mt-4 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
       >
         {saving ? "Saving..." : "Save settings"}

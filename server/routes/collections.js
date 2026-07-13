@@ -1,6 +1,7 @@
 const express = require("express");
 const webflow = require("../services/webflow");
 const store = require("../store");
+const { requireWriteAccess } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -82,10 +83,11 @@ router.get("/:id/fields", async (req, res) => {
  * Explicit field-slug overrides on top of the automatic type-based filter
  * (e.g. to exclude a PlainText field that shouldn't be translated).
  */
-router.put("/:id/field-exclusions", async (req, res) => {
+router.put("/:id/field-exclusions", requireWriteAccess, async (req, res) => {
   try {
     const { excludedFields } = req.body || {};
     const updated = await store.setFieldExclusions(req.account.id, req.params.id, excludedFields || []);
+    store.recordActivity(req.account.id, req.user.id, "field_exclusions.update", { collectionId: req.params.id, excludedCount: updated.length }).catch(() => {});
     res.json({ collectionId: req.params.id, excludedFields: updated });
   } catch (err) {
     res.status(502).json({ error: err.message });

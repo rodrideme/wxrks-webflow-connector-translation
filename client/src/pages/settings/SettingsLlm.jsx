@@ -1,6 +1,7 @@
 import { useState } from "react";
 import api from "../../services/api.js";
 import Card from "../../components/Card.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const labelClass = "flex flex-col gap-1 text-sm font-medium text-ink-soft";
 const inputClass =
@@ -18,6 +19,7 @@ const hintClass = "text-xs text-ink-faint";
  * feature that uses it is turned on elsewhere.
  */
 export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange }) {
+  const { canEdit } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -90,7 +92,8 @@ export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange })
         <button
           type="button"
           onClick={save}
-          disabled={saving || !apiKey}
+          disabled={saving || !apiKey || !canEdit}
+          title={!canEdit ? "Your account has read-only access." : undefined}
           className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? "Saving..." : "Save & test connection"}
@@ -99,7 +102,8 @@ export default function SettingsLlm({ llmConnected, llmApiKeyMasked, onChange })
           <button
             type="button"
             onClick={disconnect}
-            disabled={saving}
+            disabled={saving || !canEdit}
+            title={!canEdit ? "Your account has read-only access." : undefined}
             className="text-sm font-medium text-status-error-fg hover:underline disabled:cursor-not-allowed disabled:opacity-50"
           >
             Disconnect

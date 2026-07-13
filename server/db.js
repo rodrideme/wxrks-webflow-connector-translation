@@ -202,6 +202,34 @@ async function migrate() {
   await pool.query(`ALTER TABLE app_state ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
   await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
+
+  // Teams: per-member read/write gating, independent of `role` (which only
+  // governs who can manage the team itself, below). Webflow's own API has
+  // no way to tell this app a collaborator's site role (confirmed live
+  // against Webflow's real API docs -- neither token introspection nor
+  // /token/authorized_by return anything role-related, and the one place
+  // "Reviewer" exists as data, the Enterprise Workspace Audit Log, needs a
+  // manually-generated token this OAuth flow can never obtain), so access
+  // level is managed entirely in-app instead: an owner sets a teammate to
+  // 'reviewer' from the Teams page. Defaults everyone existing to 'full' --
+  // this migration must never retroactively lock anyone out.
+  await pool.query(`ALTER TABLE account_users ADD COLUMN IF NOT EXISTS access_level TEXT NOT NULL DEFAULT 'full'`);
+
+  // Who did what, for the Teams page's activity log. user_id is nullable
+  // (ON DELETE SET NULL) so a deleted user's history stays intact instead
+  // of vanishing; account_id is NOT NULL since activity without a workspace
+  // to scope it to is meaningless.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      detail JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS activity_log_account_created_idx ON activity_log (account_id, created_at DESC)`);
 }
 
 module.exports = { query, migrate, pool };
