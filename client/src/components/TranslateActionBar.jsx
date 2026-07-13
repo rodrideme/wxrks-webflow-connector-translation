@@ -55,11 +55,20 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
         <div className="flex items-center gap-4">
           <div>
             <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink">
-              <StatusPill variant={result.errors > 0 ? "error" : "success"} label={result.errors > 0 ? `${result.errors} error(s)` : "Sent"} />
-              {result.itemsSynced} {plural(result.itemsSynced)} sent
+              {result.automationCreated ? (
+                <>
+                  <StatusPill variant="success" label="Created" />
+                  Automation "{result.automationName}" created
+                </>
+              ) : (
+                <>
+                  <StatusPill variant={result.errors > 0 ? "error" : "success"} label={result.errors > 0 ? `${result.errors} error(s)` : "Sent"} />
+                  {result.itemsSynced} {plural(result.itemsSynced)} sent
+                </>
+              )}
             </div>
             <div className="mt-0.5 flex items-center gap-3 text-[11.5px] text-ink-faint">
-              {result.wxrksProjectUUID && (
+              {!result.automationCreated && result.wxrksProjectUUID && (
                 <a
                   href={wxrksProjectUrl(result.wxrksProjectUUID)}
                   target="_blank"
@@ -71,8 +80,11 @@ export default function TranslateActionBar({ mode, selCount, selWords, targetCou
                     : "View in wxrks ↗"}
                 </a>
               )}
-              <Link to={result.wxrksProjectUUID ? `/runs#${result.wxrksProjectUUID}` : "/runs"} className="font-medium text-accent-text hover:underline">
-                See all runs →
+              <Link
+                to={result.automationId ? `/runs#automation-${result.automationId}` : result.wxrksProjectUUID ? `/runs#${result.wxrksProjectUUID}` : "/runs"}
+                className="font-medium text-accent-text hover:underline"
+              >
+                {result.automationCreated ? "View automation →" : "See all runs →"}
               </Link>
             </div>
           </div>

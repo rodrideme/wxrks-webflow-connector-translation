@@ -951,8 +951,19 @@ export default function Translate() {
         allSummary={allSummary}
         ruleBased={ruleBased}
         onJobsStarted={handleJobsStarted}
-        onRecurringCreated={() => {
+        onRecurringCreated={(automation) => {
           setError(null);
+          // If "Include existing content on the first run" was checked,
+          // onJobsStarted (below) fires right after this with a real job to
+          // poll -- that already drives its own running -> done transition
+          // with a real item-sync result, so only show this lighter
+          // "automation created" confirmation when there's no such job,
+          // which otherwise left the bottom bar looking like nothing had
+          // happened at all.
+          if (!automation.firstSyncJob) {
+            setResult({ automationCreated: true, automationName: automation.name, automationId: automation.id });
+            setPhase("done");
+          }
         }}
       />
     </div>
