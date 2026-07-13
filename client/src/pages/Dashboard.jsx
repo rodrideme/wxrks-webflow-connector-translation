@@ -117,17 +117,12 @@ export default function Dashboard() {
   const recentRuns = history.slice(0, 3);
   const activeAutomations = automations.filter((a) => a.enabled && !a.archived);
   const runningAutomations = activeAutomations.slice(0, 3);
-  const webhookStatuses = [settings?.autoSyncWebhook?.status, settings?.sitePublishWebhook?.status].filter(Boolean);
-  const webhooksAllActive = webhookStatuses.length > 0 && webhookStatuses.every((s) => s === "active");
-  const webhooksFailed = webhookStatuses.some((s) => s !== "active" && s !== "not_registered");
 
   // Aggregate setup progress, for the collapsed checklist's summary count --
-  // only the genuinely required rows count (the two that are ALWAYS
-  // optional -- Timezone, LLM connector -- never gate this, or an account
-  // that simply never bothers with an optional nice-to-have would never
-  // see the checklist collapse). Webflow webhook health only counts while
-  // it's actually required (i.e. once an automation exists) -- otherwise
-  // it isn't in this array at all, same "optional = doesn't block" logic.
+  // only the genuinely required rows count (Timezone and LLM connector are
+  // ALWAYS optional and never gate this, or an account that simply never
+  // bothers with an optional nice-to-have would never see the checklist
+  // collapse).
   const requiredChecks = [
     true, // Webflow connected -- always true today, kept for clarity
     (locales?.secondary || []).length > 0, // Localization enabled
@@ -135,14 +130,12 @@ export default function Dashboard() {
     Boolean(settings?.wxrksConnected) && wxrksHealthy !== false, // wxrks connected
     Boolean(settings?.wxrksWebhook?.lastEventAt), // wxrks webhook registered
   ];
-  if (activeAutomations.length > 0) requiredChecks.push(webhooksAllActive); // Webflow webhook health
   const setupTotal = requiredChecks.length;
   const setupDoneCount = requiredChecks.filter(Boolean).length;
   // Something genuinely BROKEN (not just "not set up yet") always keeps
   // the checklist expanded, even if a user had previously collapsed it --
-  // matches the two existing `failed` conditions below.
-  const setupNeedsAttention =
-    (Boolean(settings?.wxrksConnected) && wxrksHealthy === false) || (activeAutomations.length > 0 && webhooksFailed);
+  // matches the `failed` condition below.
+  const setupNeedsAttention = Boolean(settings?.wxrksConnected) && wxrksHealthy === false;
   const totalWordsTranslated = history.reduce((sum, p) => sum + projectWordsDelivered(p), 0);
 
   return (
@@ -218,22 +211,6 @@ export default function Dashboard() {
             to="/settings/wxrks"
           />
           <ChecklistRow
-            label="Webflow webhook health"
-            detail={
-              activeAutomations.length === 0
-                ? "Optional — enables automations to catch new/changed content automatically."
-                : webhooksFailed
-                ? "One or more webhooks stopped responding — this retries automatically every hour, or reconnect now."
-                : webhooksAllActive
-                ? "Webflow webhooks are healthy."
-                : "Setting up…"
-            }
-            complete={activeAutomations.length > 0 && webhooksAllActive}
-            optional={activeAutomations.length === 0}
-            failed={activeAutomations.length > 0 && webhooksFailed}
-            to="/runs"
-          />
-          <ChecklistRow
             label="wxrks webhook registered"
             detail={
               settings?.wxrksWebhook?.lastEventAt
@@ -245,18 +222,11 @@ export default function Dashboard() {
             to="/settings/wxrks?subtab=webhooks"
           />
           <ChecklistRow
-            label="Timezone & work unit naming (optional)"
-            detail="Set the timezone used for schedules and timestamps."
-            complete
-            optional
-            to="/settings/account"
-          />
-          <ChecklistRow
             label="LLM connector (optional)"
             detail={
               settings?.llmConnected
                 ? settings.llmApiKeyMasked
-                : "Optional — enables transliteration fallback and future marketing features"
+                : "Optional — enables transliteration fallback"
             }
             complete={Boolean(settings?.llmConnected)}
             optional
