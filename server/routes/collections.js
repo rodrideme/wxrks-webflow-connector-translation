@@ -155,6 +155,7 @@ router.get("/:id/items", async (req, res) => {
       return {
         id: sourceItem.id,
         name: sourceItem.fieldData?.name || sourceItem.fieldData?.slug || sourceItem.id,
+        createdOn: sourceItem.createdOn,
         lastUpdated: sourceItem.lastUpdated,
         lastPublished: sourceItem.lastPublished,
         isArchived: sourceItem.isArchived,
