@@ -116,6 +116,10 @@ const api = {
   revokeEnvironment: (id) => request(`/environments/${id}/revoke`, { method: "POST" }),
   checkInvite: (token) => request(`/connect/invite/${encodeURIComponent(token)}`),
   redeemInvite: (payload) => request("/connect/redeem", { method: "POST", body: JSON.stringify(payload) }),
+  loginWithPassword: (email, password) => request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  forgotPassword: (email) => request("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token, newPassword) => request("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, newPassword }) }),
+  setPassword: (newPassword) => request("/auth/set-password", { method: "POST", body: JSON.stringify({ newPassword }) }),
 };
 
 export default api;

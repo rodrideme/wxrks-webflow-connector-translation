@@ -1,7 +1,11 @@
 import { useState } from "react";
+import api from "../../services/api.js";
 import Card from "../../components/Card.jsx";
 import Toggle from "../../components/Toggle.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
+
+// Keep in sync with server/services/passwordHash.js's MIN_PASSWORD_LENGTH.
+const MIN_PASSWORD_LENGTH = 12;
 
 function buildPreviewName(pattern, token) {
   const name = (pattern || "").replace(/{collection}/g, "blog").replace(/{entry}/g, "name-of-the-entry").replace(/{page}/g, token).replace(/{component}/g, token).replace(/{field}/g, "");
@@ -37,10 +41,43 @@ const codeClass = "rounded bg-surface-sunken px-1 py-0.5 font-mono";
  * from the connected Webflow site's real primary locale.
  */
 export default function SettingsAccount({ settings, markDirty, webflowLocales, saveFields }) {
-  const { canEdit } = useAuth();
+  const { canEdit, user, refresh } = useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+
+  // Only accounts connected via routes/connect.js's invite flow have a
+  // password at all -- routes/connect.js prefixes a synthetic `manual:` id
+  // onto webflowUserId for users with no OAuth identity, which is exactly
+  // the signal used here (and server-side, in routes/auth.js's
+  // /set-password) to know who this applies to. OAuth-connected accounts
+  // already have a working way back in and don't need this.
+  const isPasswordEligible = user?.webflowUserId?.startsWith("manual:");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState(null);
+  const [passwordSaved, setPasswordSaved] = useState(false);
+  const passwordTooShort = newPassword.length > 0 && newPassword.length < MIN_PASSWORD_LENGTH;
+  const passwordsMismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
+  const passwordValid = newPassword.length >= MIN_PASSWORD_LENGTH && newPassword === confirmPassword;
+
+  async function savePassword() {
+    setPasswordSaving(true);
+    setPasswordError(null);
+    setPasswordSaved(false);
+    try {
+      await api.setPassword(newPassword);
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordSaved(true);
+      refresh();
+    } catch (err) {
+      setPasswordError(err.message);
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -77,6 +114,55 @@ export default function SettingsAccount({ settings, markDirty, webflowLocales, s
           locales and org unit are chosen per send/automation in the "Send to wxrks" wizard instead.
         </p>
       </Card>
+
+      {isPasswordEligible && (
+        <Card className="p-5">
+          <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Password</h2>
+          <p className={hintClass}>
+            This account connected without "Sign in with Webflow", so a password is how you log
+            back in. Setting a new one signs you out everywhere else.
+          </p>
+          <div className="mt-3 flex flex-col gap-3">
+            <label className={labelClass}>
+              New password
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+                className={inputClass}
+              />
+            </label>
+            {passwordTooShort && (
+              <p className="-mt-2 text-xs text-status-error-fg">Must be at least {MIN_PASSWORD_LENGTH} characters.</p>
+            )}
+            <label className={labelClass}>
+              Confirm new password
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+            {passwordsMismatch && <p className="-mt-2 text-xs text-status-error-fg">Passwords don't match.</p>}
+          </div>
+
+          {passwordError && <p className="mt-2 text-sm font-medium text-status-error-fg">{passwordError}</p>}
+          {passwordSaved && <p className="mt-2 text-sm font-medium text-status-success-fg">Password updated.</p>}
+
+          <button
+            onClick={savePassword}
+            disabled={passwordSaving || !passwordValid || !canEdit}
+            title={!canEdit ? "Your account has read-only access." : undefined}
+            className="mt-3 rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {passwordSaving ? "Saving..." : "Save password"}
+          </button>
+        </Card>
+      )}
 
       <Card className="p-5">
         <h2 className="mb-3 text-[13.5px] font-semibold text-ink">Timezone</h2>

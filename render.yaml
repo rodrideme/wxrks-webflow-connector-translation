@@ -34,6 +34,16 @@ services:
         sync: false
       - key: APP_BASE_URL
         sync: false # set to the public Render URL (e.g. https://webflow-translation-sync.onrender.com) after first deploy
+      - key: SMTP_HOST
+        sync: false # Mailgun SMTP relay -- see services/email.js
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: SOURCE_LOCALE
         value: en
       - key: AUTO_PUBLISH

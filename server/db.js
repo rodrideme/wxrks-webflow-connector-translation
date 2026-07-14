@@ -112,6 +112,13 @@ async function migrate() {
     )
   `);
 
+  // Nullable: OAuth users have no independent password today (Webflow
+  // re-auth is their way back in) -- only set for users created via
+  // routes/connect.js's invite redemption, which has no OAuth fallback and
+  // therefore needs a real, Webflow-independent way to log back in. See
+  // services/passwordHash.js.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT`);
+
   // Membership: which users can access which account(s) -- this is what
   // makes "multiple users, same account" work (see store.js's
   // upsertAccountForWebflowSite). Flat role only, no fine-grained RBAC yet.
@@ -260,6 +267,21 @@ async function migrate() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS invites_account_idx ON invites (account_id, created_at DESC)`);
+
+  // Short-lived (created with a 1-hour expiry, see store.createPasswordResetToken)
+  // and single-use, unlike invites -- a stale password-reset link sitting in
+  // an inbox is a bigger risk than a stale invite link, since it grants
+  // direct account access rather than just an admission ticket.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      token TEXT UNIQUE NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
 }
 
 module.exports = { query, migrate, pool };

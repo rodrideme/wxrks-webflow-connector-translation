@@ -15,6 +15,7 @@ const express = require("express");
 const store = require("../store");
 const tokenCrypto = require("../services/tokenCrypto");
 const webflowManualToken = require("../services/webflowManualToken");
+const passwordHash = require("../services/passwordHash");
 const { createRateLimiter } = require("../middleware/rateLimit");
 const { SESSION_COOKIE_NAME } = require("../middleware/auth");
 const { setCookie, SESSION_MAX_AGE_MS } = require("./auth");
@@ -48,7 +49,12 @@ router.get("/invite/:token", checkLimiter, async (req, res) => {
 
 /**
  * POST /api/connect/redeem
- * body: { inviteToken, webflowApiToken, firstName, lastName?, email }
+ * body: { inviteToken, webflowApiToken, firstName, lastName?, email, password }
+ *
+ * password is required here (not optional, not set-later) -- this account
+ * has no OAuth fallback at all, so a real, Webflow-independent password is
+ * the only way back in once the session expires or the invite (already
+ * single-use) is gone. See services/passwordHash.js.
  *
  * Ordering is deliberate:
  *  1. Cheap shape validation.
@@ -64,10 +70,13 @@ router.get("/invite/:token", checkLimiter, async (req, res) => {
  *  6. Session + cookie, same shape as the OAuth callback.
  */
 router.post("/redeem", redeemLimiter, async (req, res) => {
-  const { inviteToken, webflowApiToken, firstName, lastName, email } = req.body || {};
+  const { inviteToken, webflowApiToken, firstName, lastName, email, password } = req.body || {};
 
   if (!inviteToken || !webflowApiToken || !firstName || !email || !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: "All fields are required, and email must look valid." });
+  }
+  if (!passwordHash.isPasswordValid(password)) {
+    return res.status(400).json({ error: `Password must be at least ${passwordHash.MIN_PASSWORD_LENGTH} characters.` });
   }
 
   const invite = await store.getInviteByToken(inviteToken);
@@ -106,6 +115,7 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
       firstName,
       lastName: lastName || null,
     });
+    await store.setUserPassword(user.id, await passwordHash.hashPassword(password));
 
     // Mirrors routes/auth.js's OAuth callback loop exactly: one account
     // per granted site, membership for all, land the session on the first.

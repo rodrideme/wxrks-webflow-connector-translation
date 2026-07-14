@@ -3,6 +3,8 @@ import NavBar from "./components/NavBar.jsx";
 import LoadingState from "./components/LoadingState.jsx";
 import Login from "./pages/Login.jsx";
 import Connect from "./pages/Connect.jsx";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Translate from "./pages/Translate.jsx";
 import Runs from "./pages/Runs.jsx";
@@ -28,6 +30,8 @@ export default function App() {
           a real route since it's shared as a link, not just "whatever
           renders when logged out" (see Connect.jsx's own docblock). */}
       <Route path="/connect" element={<Connect />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route
         path="*"
         element={

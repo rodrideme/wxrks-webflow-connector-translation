@@ -509,6 +509,24 @@ async function upsertUser({ webflowUserId, email, firstName, lastName }) {
 }
 
 /**
+ * Deliberately separate from getUserByWebflowUserId/upsertUser's plain
+ * userRowToObject shape -- this is the ONE place password_hash ever leaves
+ * the database, for routes/auth.js's login route to verify against. Never
+ * reuse this for anything that returns to the client; use
+ * getUserByWebflowUserId or the plain user object other functions already
+ * return instead.
+ */
+async function getUserForLogin(email) {
+  const { rows } = await db.query(`SELECT * FROM users WHERE email = $1 AND password_hash IS NOT NULL`, [email]);
+  if (!rows[0]) return undefined;
+  return { ...userRowToObject(rows[0]), passwordHash: rows[0].password_hash };
+}
+
+async function setUserPassword(userId, passwordHash) {
+  await db.query(`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`, [passwordHash, userId]);
+}
+
+/**
  * Adds (or confirms) a user's membership in an account -- this is the whole
  * mechanism behind "multiple users, same account": every login re-runs this
  * for whichever account(s) the Webflow OAuth grant's `siteIds` resolve to,
@@ -676,6 +694,55 @@ async function touchSession(sessionId) {
 
 async function deleteSession(sessionId) {
   await db.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+}
+
+// Used by routes/auth.js's reset-password: if a password needed resetting,
+// whatever session(s) were active before shouldn't survive it (e.g. a
+// compromised password implies a possibly-compromised existing session
+// too). The fresh session created right after a reset is a new row, so
+// this can never delete the one being logged into.
+async function deleteSessionsForUser(userId) {
+  await db.query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
+}
+
+// ---------------------------------------------------------------------------
+// Password reset (routes/auth.js): short-lived, single-use tokens for
+// users who set a password at invite redemption (routes/connect.js) --
+// mirrors the Invites section below's single-use-gate pattern, but with a
+// much shorter expiry (1 hour, set by the caller), since this grants
+// direct account access rather than just an admission ticket.
+
+async function createPasswordResetToken(userId, expiresAt) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await db.query(`INSERT INTO password_reset_tokens (id, token, user_id, expires_at) VALUES ($1, $2, $3, $4)`, [
+    crypto.randomUUID(),
+    token,
+    userId,
+    expiresAt,
+  ]);
+  return token;
+}
+
+async function getPasswordResetTokenByUserId(userId) {
+  // Not currently used outside this file -- kept for symmetry/debugging.
+  const { rows } = await db.query(`SELECT * FROM password_reset_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`, [userId]);
+  return rows[0];
+}
+
+/**
+ * The one atomic, race-safe single-use gate, exactly mirroring
+ * markInviteRedeemed's shape -- only flips `used_at`, and only succeeds if
+ * the token is real, unused, and unexpired at this exact instant. Returns
+ * the associated userId on success, undefined otherwise.
+ */
+async function markPasswordResetTokenUsed(token) {
+  const { rows } = await db.query(
+    `UPDATE password_reset_tokens SET used_at = now()
+     WHERE token = $1 AND used_at IS NULL AND expires_at > now()
+     RETURNING user_id`,
+    [token]
+  );
+  return rows[0]?.user_id;
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,6 +1259,8 @@ module.exports = {
   listAllAccounts,
   getUserByWebflowUserId,
   upsertUser,
+  getUserForLogin,
+  setUserPassword,
   upsertAccountMembership,
   listAccountsForUser,
   listAccountMembers,
@@ -1202,6 +1271,10 @@ module.exports = {
   getSessionWithUserAndAccount,
   touchSession,
   deleteSession,
+  deleteSessionsForUser,
+  createPasswordResetToken,
+  getPasswordResetTokenByUserId,
+  markPasswordResetTokenUsed,
   createInvite,
   listInvites,
   getInviteByToken,

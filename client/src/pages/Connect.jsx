@@ -9,6 +9,10 @@ const labelClass = "flex flex-col gap-1 text-left text-sm font-medium text-ink-s
 const inputClass =
   "w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
 
+// Keep in sync with server/services/passwordHash.js's MIN_PASSWORD_LENGTH
+// -- no shared package between client/server in this repo to import it from.
+const MIN_PASSWORD_LENGTH = 12;
+
 /**
  * Reachable regardless of session state (see App.jsx) -- the invite-gated
  * alternative to "Sign in with Webflow" OAuth, for a workspace OAuth can
@@ -29,8 +33,14 @@ export default function Connect() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
+  const passwordsMismatch = confirmPassword.length > 0 && password !== confirmPassword;
+  const passwordValid = password.length >= MIN_PASSWORD_LENGTH && password === confirmPassword;
 
   useEffect(() => {
     if (!inviteToken) {
@@ -50,7 +60,7 @@ export default function Connect() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.redeemInvite({ inviteToken, webflowApiToken, firstName, lastName, email });
+      await api.redeemInvite({ inviteToken, webflowApiToken, firstName, lastName, email, password });
       await refresh();
       navigate("/", { replace: true });
     } catch (err) {
@@ -131,6 +141,37 @@ export default function Connect() {
               className={inputClass}
             />
           </label>
+          <label className={labelClass}>
+            Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+              className={inputClass}
+            />
+          </label>
+          {passwordTooShort && (
+            <p className="-mt-2 text-xs text-status-error-fg">Must be at least {MIN_PASSWORD_LENGTH} characters.</p>
+          )}
+          <label className={labelClass}>
+            Confirm password
+            <input
+              type="password"
+              autoComplete="new-password"
+              required
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          {passwordsMismatch && <p className="-mt-2 text-xs text-status-error-fg">Passwords don't match.</p>}
+          <p className="text-xs text-ink-faint">
+            This is separate from your Webflow token -- it's how you'll log back in here later,
+            since there's no "Sign in with Webflow" for this connection.
+          </p>
 
           <p className="text-xs text-ink-faint">
             Validated against Webflow before your account is created.{" "}
@@ -148,7 +189,7 @@ export default function Connect() {
 
           <button
             type="submit"
-            disabled={submitting || !webflowApiToken || !firstName || !email}
+            disabled={submitting || !webflowApiToken || !firstName || !email || !passwordValid}
             className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-white transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? "Connecting…" : "Connect"}

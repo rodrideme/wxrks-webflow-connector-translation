@@ -3,12 +3,26 @@ const express = require("express");
 const store = require("../store");
 const webflowOAuth = require("../services/webflowOAuth");
 const tokenCrypto = require("../services/tokenCrypto");
-const { SESSION_COOKIE_NAME, parseCookies } = require("../middleware/auth");
+const passwordHash = require("../services/passwordHash");
+const email = require("../services/email");
+const { createRateLimiter } = require("../middleware/rateLimit");
+const { SESSION_COOKIE_NAME, parseCookies, requireSession } = require("../middleware/auth");
 
 const router = express.Router();
 
+// Defense-in-depth on top of password/token entropy -- see
+// middleware/rateLimit.js's docblock for why this is process-local/best-effort.
+const loginLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+const forgotPasswordLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
+const resetPasswordLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+const PASSWORD_RESET_TOKEN_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour -- see store.createPasswordResetToken
+
 const OAUTH_STATE_COOKIE = "oauth_state";
-const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days, sliding (see middleware/auth.js's touchSession)
+// 30 days, hard expiry from creation -- NOT sliding despite middleware/auth.js's
+// touchSession firing on every request; that only bumps last_seen_at for
+// display, never expires_at. A real fix, if wanted later, is separate from
+// today's change (see routes/auth.js's login/reset-password routes below).
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const OAUTH_STATE_MAX_AGE_MS = 5 * 60 * 1000;
 
 function isProd() {
@@ -153,6 +167,146 @@ router.post("/logout", async (req, res) => {
   if (sessionId) await store.deleteSession(sessionId);
   clearCookie(res, SESSION_COOKIE_NAME);
   res.json({ loggedOut: true });
+});
+
+/**
+ * POST /api/auth/login
+ * body: { email, password }
+ * The password counterpart to OAuth login -- only ever succeeds for users
+ * created via routes/connect.js's invite redemption, since only they have
+ * a password_hash set (see store.getUserForLogin). Always the same
+ * generic error on any failure (unknown email, no password set, or wrong
+ * password) so this can never be used to enumerate registered emails.
+ */
+router.post("/login", loginLimiter, async (req, res) => {
+  const { email: loginEmail, password } = req.body || {};
+  const genericError = { error: "Incorrect email or password." };
+  if (!loginEmail || !password) return res.status(400).json(genericError);
+
+  try {
+    const user = await store.getUserForLogin(loginEmail);
+    const valid = user ? await passwordHash.verifyPassword(password, user.passwordHash) : false;
+    if (!valid) return res.status(401).json(genericError);
+
+    const accounts = await store.listAccountsForUser(user.id);
+    if (accounts.length === 0) return res.status(401).json(genericError);
+
+    const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
+    const sessionId = await store.createSession(user.id, accounts[0].id, expiresAt);
+    setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Password login failed:", err.message);
+    res.status(502).json({ error: "Something went wrong. Please try again." });
+  }
+});
+
+/**
+ * POST /api/auth/forgot-password
+ * body: { email }
+ * Always responds the same way whether or not the email matches a real,
+ * password-enabled account -- never reveals which emails are registered.
+ * Only users with a password_hash are eligible (OAuth-only users have
+ * nothing to reset here; Webflow re-auth is their way back in).
+ */
+router.post("/forgot-password", forgotPasswordLimiter, async (req, res) => {
+  const { email: targetEmail } = req.body || {};
+  const genericResponse = { ok: true, message: "If that email has password access enabled, we've sent a reset link." };
+  if (!targetEmail) return res.json(genericResponse);
+
+  try {
+    const user = await store.getUserForLogin(targetEmail);
+    if (user) {
+      const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_MAX_AGE_MS);
+      const token = await store.createPasswordResetToken(user.id, expiresAt);
+      const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get("host")}`;
+      const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+      // Logged, not surfaced to the caller -- a broken email integration is
+      // an operational problem for whoever runs this app, not something a
+      // requester should learn about (that alone would confirm the email
+      // was found, defeating the point of this generic response).
+      await email.sendPasswordResetEmail(user.email, resetUrl).catch((err) => {
+        console.error("Failed to send password reset email:", err.response?.data || err.message);
+      });
+    }
+    res.json(genericResponse);
+  } catch (err) {
+    console.error("Forgot-password request failed:", err.message);
+    res.json(genericResponse);
+  }
+});
+
+/**
+ * POST /api/auth/reset-password
+ * body: { token, newPassword }
+ * Also invalidates every other active session for this user (see
+ * store.deleteSessionsForUser) -- if a password needed resetting, prior
+ * sessions shouldn't be trusted to survive it. Auto-logs in with a fresh
+ * session afterward, same as a successful invite redemption does.
+ */
+router.post("/reset-password", resetPasswordLimiter, async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !passwordHash.isPasswordValid(newPassword)) {
+    return res.status(400).json({ error: `Password must be at least ${passwordHash.MIN_PASSWORD_LENGTH} characters.` });
+  }
+
+  try {
+    const userId = await store.markPasswordResetTokenUsed(token);
+    if (!userId) {
+      return res.status(400).json({ error: "This reset link is invalid or has expired." });
+    }
+
+    await store.setUserPassword(userId, await passwordHash.hashPassword(newPassword));
+    await store.deleteSessionsForUser(userId);
+
+    const accounts = await store.listAccountsForUser(userId);
+    if (accounts.length === 0) {
+      return res.status(502).json({ error: "Password reset, but no connected account was found. Please contact whoever manages your connection." });
+    }
+    const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
+    const sessionId = await store.createSession(userId, accounts[0].id, expiresAt);
+    setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Password reset failed:", err.message);
+    res.status(502).json({ error: "Something went wrong. Please try again." });
+  }
+});
+
+/**
+ * POST /api/auth/set-password
+ * body: { newPassword }
+ * Requires an existing session (unlike login/forgot/reset-password, which
+ * all create one) -- lets an already-logged-in, token-connected user set
+ * or change their password from Settings. Restricted to accounts with no
+ * OAuth identity: routes/connect.js prefixes a synthetic `manual:` id onto
+ * webflowUserId for exactly this reason -- an OAuth-connected user always
+ * already has a working way back in (Webflow re-auth) and was deliberately
+ * excluded from this feature (see the plan this was built from).
+ */
+router.post("/set-password", requireSession, async (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!req.user.webflowUserId.startsWith("manual:")) {
+    return res.status(403).json({ error: "This account signs in with Webflow directly and doesn't use a password." });
+  }
+  if (!passwordHash.isPasswordValid(newPassword)) {
+    return res.status(400).json({ error: `Password must be at least ${passwordHash.MIN_PASSWORD_LENGTH} characters.` });
+  }
+
+  try {
+    await store.setUserPassword(req.user.id, await passwordHash.hashPassword(newPassword));
+    // Same reasoning as reset-password: don't leave other sessions trusted
+    // after a password change, but keep THIS browser logged in with a
+    // fresh session rather than logging the requester out mid-action.
+    await store.deleteSessionsForUser(req.user.id);
+    const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
+    const sessionId = await store.createSession(req.user.id, req.account.id, expiresAt);
+    setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Set-password failed:", err.message);
+    res.status(502).json({ error: "Something went wrong. Please try again." });
+  }
 });
 
 /**
