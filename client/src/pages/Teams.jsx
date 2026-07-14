@@ -109,9 +109,10 @@ export default function Teams() {
   const visibleTabs = TABS.filter(([value]) => value !== "invites" || isOwner);
 
   const [invites, setInvites] = useState(null);
-  const [inviteNote, setInviteNote] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
   const [generatingInvite, setGeneratingInvite] = useState(false);
   const [newInviteLink, setNewInviteLink] = useState(null);
+  const [newInviteEmailSent, setNewInviteEmailSent] = useState(false);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState(null);
 
@@ -172,10 +173,11 @@ export default function Teams() {
     setGeneratingInvite(true);
     setError(null);
     try {
-      const invite = await api.createTeamInvite({ note: inviteNote || undefined });
+      const invite = await api.createTeamInvite({ email: inviteEmail });
       setNewInviteLink(`${window.location.origin}/connect?invite=${invite.token}`);
+      setNewInviteEmailSent(Boolean(invite.emailSent));
       setInviteLinkCopied(false);
-      setInviteNote("");
+      setInviteEmail("");
       const res = await api.listTeamInvites();
       setInvites(res.invites);
     } catch (err) {
@@ -281,35 +283,40 @@ export default function Teams() {
           <Card className="mb-5 p-5">
             <h2 className="mb-1 text-[13.5px] font-semibold text-ink">Invite a teammate</h2>
             <p className="text-xs text-ink-faint">
-              Generate a one-time link for someone to join this account directly -- no Webflow
-              access needed on their end, just a name, email, and password. Treat this link like a
-              temporary password to your whole workspace: send it privately, not in a public
-              channel.
+              Enter their email and we'll send them a one-time link to join this account directly --
+              no Webflow access needed on their end, just a name and password.
             </p>
 
             <div className="mt-3 flex items-center gap-2">
               <input
-                type="text"
-                value={inviteNote}
-                onChange={(e) => setInviteNote(e.target.value)}
-                placeholder="Optional note (e.g. their name)"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="person@example.com"
                 className="w-full max-w-sm rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
               <button
                 type="button"
                 onClick={generateTeamInvite}
-                disabled={generatingInvite}
+                disabled={generatingInvite || !inviteEmail}
                 className="flex-none rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {generatingInvite ? "Generating…" : "Generate link"}
+                {generatingInvite ? "Sending…" : "Send invite"}
               </button>
             </div>
 
             {newInviteLink && (
               <div className="mt-3 rounded-md border border-border bg-surface-sunken p-3">
-                <p className="mb-2 text-xs font-medium text-status-error-fg">
-                  Copy this now -- you won't be able to see the full link again.
-                </p>
+                {newInviteEmailSent ? (
+                  <p className="mb-2 text-xs font-medium text-status-success-fg">
+                    Invite sent. You can also copy the link directly, e.g. as a backup:
+                  </p>
+                ) : (
+                  <p className="mb-2 text-xs font-medium text-status-error-fg">
+                    Couldn't send the email -- copy this link and share it directly instead. You
+                    won't be able to see it again.
+                  </p>
+                )}
                 <div className="flex items-center gap-2">
                   <input type="text" readOnly value={newInviteLink} className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 font-mono text-xs text-ink" />
                   <button
@@ -333,7 +340,7 @@ export default function Teams() {
               invites.map((inv) => (
                 <div key={inv.id} className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-medium text-ink">{inv.note || "Untitled"}</div>
+                    <div className="truncate text-[13.5px] font-medium text-ink">{inv.note || "No email on file"}</div>
                     <div className="truncate font-mono text-xs text-ink-faint">{inv.tokenMasked}</div>
                   </div>
                   <Chip>{teamInviteStatusLabel(inv.status)}</Chip>
