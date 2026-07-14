@@ -171,21 +171,24 @@
 
       <h2 id="webflow-manual-token">Connecting a second Webflow workspace</h2>
       <p>
-        "Sign in with Webflow" only works for sites in the same Webflow workspace this app was
-        originally registered in — that's a Webflow platform restriction on unapproved OAuth apps,
-        not something configurable here. To bring in a site from a <strong>different</strong>
-        workspace instead, generate a one-time link from the <strong>Environments</strong> page
-        and share it directly with whoever manages that other site. Each link provisions a
-        completely independent environment, not a teammate added to yours.
+        To connect a site that lives in a <strong>different</strong> Webflow workspace, generate a
+        one-time link from the <strong>Environments</strong> page and share it directly with
+        whoever manages that site. Each link provisions a completely independent environment, not
+        a teammate added to yours.
       </p>
       <p>
         Opening that link asks for a Webflow <strong>Site API token</strong> instead of an OAuth
-        sign-in. To generate one: in Webflow, go to the target site's <strong>Site settings →
-        Apps &amp; Integrations → API access → Generate API token</strong>, and enable at least
-        these scopes: <code>sites:read</code>, <code>cms:read</code>, <code>cms:write</code>,
-        <code>pages:read</code>, <code>pages:write</code>, <code>components:read</code>,
-        <code>components:write</code>.
+        sign-in. Here's exactly what to do:
       </p>
+      <ol>
+        <li>In Webflow, open the target site's <strong>Site settings → Apps &amp; Integrations →
+        API access</strong>.</li>
+        <li>Click <strong>Generate API token</strong>.</li>
+        <li>Enable these scopes: <code>sites:read</code>, <code>cms:read</code>,
+        <code>cms:write</code>, <code>pages:read</code>, <code>pages:write</code>,
+        <code>components:read</code>, <code>components:write</code>.</li>
+        <li>Copy the generated token and paste it into the connect link.</li>
+      </ol>
       <div class="callout">
         Each invite link works once. If a second person from that same workspace needs their own
         access later, generate a fresh invite for them — it'll land them in the same connected
