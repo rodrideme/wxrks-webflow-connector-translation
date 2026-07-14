@@ -653,6 +653,12 @@ async function getSessionWithUserAndAccount(sessionId) {
       webflowSiteId: row.webflow_site_id,
       status: row.account_status,
       wxrksConnected: row.has_wxrks_connection || isOriginalAccount,
+      // The one account that predates multi-tenancy entirely -- the only
+      // account allowed to provision new environments for other, unrelated
+      // companies (see middleware/auth.js's requireOriginalAccount and
+      // routes/environments.js). Surfaced here so the client can hide that
+      // nav item/page for every other account without a round trip.
+      isOriginalAccount: Boolean(isOriginalAccount),
       // Which account_users row THIS session's user holds -- role gates
       // team management (Teams page), accessLevel gates read vs. write
       // everywhere else (see middleware/auth.js's requireOwner/

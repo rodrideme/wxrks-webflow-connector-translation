@@ -79,4 +79,17 @@ function requireOwner(req, res, next) {
   next();
 }
 
-module.exports = { requireSession, requireWriteAccess, requireOwner, SESSION_COOKIE_NAME, parseCookies };
+// Gates routes/environments.js -- provisioning a brand-new, unrelated
+// company's environment is an operator action, not something any
+// customer's own account owner should be able to do to other, unrelated
+// companies. Only the one account that predates multi-tenancy entirely
+// (see store.js's getSessionWithUserAndAccount) passes. Must run after
+// requireSession (reads req.account, set there).
+function requireOriginalAccount(req, res, next) {
+  if (!req.account.isOriginalAccount) {
+    return res.status(403).json({ error: "not_original_account", message: "Only the connector's own account can provision a new environment." });
+  }
+  next();
+}
+
+module.exports = { requireSession, requireWriteAccess, requireOwner, requireOriginalAccount, SESSION_COOKIE_NAME, parseCookies };

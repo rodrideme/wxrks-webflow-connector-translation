@@ -8,7 +8,6 @@ import { formatDateTime } from "../formatDate.js";
 
 const TABS = [
   ["members", "Members"],
-  ["invites", "Invites"],
   ["activity", "Activity Log"],
 ];
 
@@ -38,17 +37,13 @@ const ACTION_LABELS = {
   "webhook.reregister_pages": "Reregistered the Pages/Components webhook",
   "field_exclusions.update": "Updated field exclusions",
   "team.access_level_update": "Changed a teammate's access level",
-  "invite.create": "Generated an invite",
-  "invite.revoke": "Revoked an invite",
-  "invite.redeemed": "An invite was redeemed",
+  // Recorded by routes/environments.js -- shown here since that action
+  // still belongs to THIS account's own activity log even though the
+  // Generate/Revoke UI itself lives on the separate Environments page.
+  "invite.create": "Generated an environment link",
+  "invite.revoke": "Revoked an environment link",
+  "invite.redeemed": "An environment link was redeemed",
 };
-
-function inviteStatusLabel(status) {
-  if (status === "redeemed") return "Redeemed";
-  if (status === "expired") return "Expired";
-  if (status === "revoked") return "Revoked";
-  return "Pending";
-}
 
 function actionLabel(action) {
   return ACTION_LABELS[action] || action;
@@ -98,14 +93,6 @@ export default function Teams() {
   const [error, setError] = useState(null);
   const { account } = useAuth();
   const isOwner = account?.role === "owner";
-  const visibleTabs = TABS.filter(([value]) => value !== "invites" || isOwner);
-
-  const [invites, setInvites] = useState(null);
-  const [inviteNote, setInviteNote] = useState("");
-  const [generatingInvite, setGeneratingInvite] = useState(false);
-  const [newInviteLink, setNewInviteLink] = useState(null);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const [revokingId, setRevokingId] = useState(null);
 
   function loadMembers() {
     api
@@ -150,52 +137,6 @@ export default function Teams() {
       .finally(() => setLoadingMore(false));
   }
 
-  // Lazy-loaded like Activity above -- and owner-only, so a non-owner never
-  // even triggers the request.
-  useEffect(() => {
-    if (activeTab !== "invites" || invites !== null || !isOwner) return;
-    api
-      .listInvites()
-      .then((res) => setInvites(res.invites))
-      .catch((err) => setError(err.message));
-  }, [activeTab, invites, isOwner]);
-
-  async function generateInvite() {
-    setGeneratingInvite(true);
-    setError(null);
-    try {
-      const invite = await api.createInvite({ note: inviteNote || undefined });
-      setNewInviteLink(`${window.location.origin}/connect?invite=${invite.token}`);
-      setLinkCopied(false);
-      setInviteNote("");
-      const res = await api.listInvites();
-      setInvites(res.invites);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setGeneratingInvite(false);
-    }
-  }
-
-  function copyInviteLink() {
-    navigator.clipboard.writeText(newInviteLink).then(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    });
-  }
-
-  async function revokeInvite(id) {
-    setRevokingId(id);
-    try {
-      const res = await api.revokeInvite(id);
-      setInvites(res.invites);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setRevokingId(null);
-    }
-  }
-
   async function changeAccessLevel(targetUserId, accessLevel) {
     setSavingUserId(targetUserId);
     try {
@@ -218,7 +159,7 @@ export default function Teams() {
       {error && <p className="mb-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
 
       <div className="mb-5 flex gap-1 border-b border-border">
-        {visibleTabs.map(([value, label]) => (
+        {TABS.map(([value, label]) => (
           <button
             key={value}
             onClick={() => setActiveTab(value)}
@@ -266,93 +207,6 @@ export default function Teams() {
             ))
           )}
         </Card>
-      )}
-
-      {activeTab === "invites" && isOwner && (
-        <>
-          <Card className="mb-5 p-5">
-            <h2 className="mb-1 text-[13.5px] font-semibold text-ink">Invite a workspace</h2>
-            <p className="text-xs text-ink-faint">
-              "Sign in with Webflow" only reaches sites in this app's own workspace. Generate a
-              one-time link for a different workspace to connect via API token instead --{" "}
-              <a
-                href="/docs/connecting-accounts.html#webflow-manual-token"
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-accent-text hover:underline"
-              >
-                how this works →
-              </a>
-            </p>
-
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                type="text"
-                value={inviteNote}
-                onChange={(e) => setInviteNote(e.target.value)}
-                placeholder="Optional note (e.g. a client or teammate's name)"
-                className="w-full max-w-sm rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-              <button
-                type="button"
-                onClick={generateInvite}
-                disabled={generatingInvite}
-                className="flex-none rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {generatingInvite ? "Generating…" : "Generate invite"}
-              </button>
-            </div>
-
-            {newInviteLink && (
-              <div className="mt-3 rounded-md border border-border bg-surface-sunken p-3">
-                <p className="mb-2 text-xs font-medium text-status-error-fg">
-                  Copy this now -- you won't be able to see the full link again.
-                </p>
-                <div className="flex items-center gap-2">
-                  <input type="text" readOnly value={newInviteLink} className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 font-mono text-xs text-ink" />
-                  <button
-                    type="button"
-                    onClick={copyInviteLink}
-                    className="flex-none rounded-md border border-border-strong bg-surface px-3 py-1.5 text-xs font-semibold hover:border-ink-faint"
-                  >
-                    {linkCopied ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            {invites === null ? (
-              <p className="p-4 text-sm text-ink-faint">Loading…</p>
-            ) : invites.length === 0 ? (
-              <p className="p-4 text-sm text-ink-faint">No invites yet.</p>
-            ) : (
-              invites.map((inv) => (
-                <div key={inv.id} className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-medium text-ink">{inv.note || "Untitled invite"}</div>
-                    <div className="truncate font-mono text-xs text-ink-faint">{inv.tokenMasked}</div>
-                  </div>
-                  <Chip>{inviteStatusLabel(inv.status)}</Chip>
-                  <span className="w-36 flex-none text-right text-xs text-ink-faint">
-                    {inv.status === "pending" ? `Expires ${formatDateTime(inv.expiresAt, timezone)}` : formatDateTime(inv.createdAt, timezone)}
-                  </span>
-                  {inv.status === "pending" && (
-                    <button
-                      type="button"
-                      onClick={() => revokeInvite(inv.id)}
-                      disabled={revokingId === inv.id}
-                      className="flex-none text-xs font-medium text-status-error-fg hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Revoke
-                    </button>
-                  )}
-                </div>
-              ))
-            )}
-          </Card>
-        </>
       )}
 
       {activeTab === "activity" && (

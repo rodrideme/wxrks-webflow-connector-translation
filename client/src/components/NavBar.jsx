@@ -8,7 +8,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 // instead of keeping a second copy of the logo.
 const logo = "/wxrks-logo.svg";
 
-const links = [
+const BASE_LINKS = [
   { to: "/", label: "Dashboard", end: true, icon: "▦" },
   { to: "/translate", label: "Translate", icon: "⇄" },
   { to: "/runs", label: "Runs", icon: "☰" },
@@ -16,9 +16,16 @@ const links = [
   { to: "/settings", label: "Settings", icon: "⚙" },
 ];
 
+// Only the one account that predates multi-tenancy entirely can provision
+// a new environment for another, unrelated company (see middleware/auth.js's
+// requireOriginalAccount) -- hidden from every other account's nav rather
+// than shown and then just 403ing.
+const ENVIRONMENTS_LINK = { to: "/environments", label: "Environments", icon: "🧩" };
+
 export default function NavBar() {
   const { user, account, logout } = useAuth();
   const [site, setSite] = useState(null);
+  const links = account?.isOriginalAccount ? [...BASE_LINKS, ENVIRONMENTS_LINK] : BASE_LINKS;
 
   // Fetched once -- NavBar sits outside <Routes> in App.jsx and never
   // remounts on navigation, so this doesn't refire per page.

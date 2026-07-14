@@ -15,6 +15,7 @@ const automationsRouter = require("./routes/automations");
 const webhooksRouter = require("./routes/webhooks");
 const settingsRouter = require("./routes/settings");
 const teamRouter = require("./routes/team");
+const environmentsRouter = require("./routes/environments");
 const configRouter = require("./routes/config");
 const authRouter = require("./routes/auth");
 const connectRouter = require("./routes/connect");
@@ -75,6 +76,7 @@ app.use("/api/sync/components", syncComponentsRouter);
 app.use("/api/automations", automationsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/team", teamRouter);
+app.use("/api/environments", environmentsRouter);
 app.use("/api/config", configRouter);
 
 // Serve the built React app in production.
