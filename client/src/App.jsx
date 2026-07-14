@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar.jsx";
 import LoadingState from "./components/LoadingState.jsx";
 import Login from "./pages/Login.jsx";
+import FastLogin from "./pages/FastLogin.jsx";
 import Connect from "./pages/Connect.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
@@ -29,6 +30,7 @@ export default function App() {
       {/* Reachable regardless of session state -- unlike Login, this needs
           a real route since it's shared as a link, not just "whatever
           renders when logged out" (see Connect.jsx's own docblock). */}
+      <Route path="/fast" element={<FastLogin />} />
       <Route path="/connect" element={<Connect />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
