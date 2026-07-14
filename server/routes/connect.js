@@ -38,19 +38,29 @@ const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 /**
  * GET /api/connect/invite/:token
- * Returns { valid: boolean, kind?: "environment" | "team_member" } -- kind
- * is present only when valid is true, so the client can adapt its form
- * (Connect.jsx hides the Webflow-token field for "team_member"). Every
- * INVALID token still gets the identical { valid: false } shape no matter
- * WHY it's dead (never existed / expired / redeemed / revoked / over the
- * failed-attempts cap) -- kind only ever differentiates among ALREADY-
- * valid tokens, never discloses anything about invalid ones.
+ * Returns { valid: boolean, kind?: "environment" | "team_member", email?: string }
+ * -- kind/email are present only when valid is true, so the client can
+ * adapt its form (Connect.jsx hides the Webflow-token field for
+ * "team_member", and also hides the email field for that kind, since it's
+ * already known -- see the POST /redeem docblock below). email is only
+ * ever included for "team_member" invites (that's who the invite was
+ * actually sent to); "environment" invites carry no email at creation
+ * time at all, only a free-text note. Every INVALID token still gets the
+ * identical { valid: false } shape no matter WHY it's dead (never existed
+ * / expired / redeemed / revoked / over the failed-attempts cap) -- these
+ * fields only ever differentiate among ALREADY-valid tokens, never
+ * disclose anything about invalid ones.
  */
 router.get("/invite/:token", checkLimiter, async (req, res) => {
   try {
     const invite = await store.getInviteByToken(req.params.token);
     const valid = store.isInviteValid(invite);
-    res.json(valid ? { valid: true, kind: invite.kind } : { valid: false });
+    if (!valid) return res.json({ valid: false });
+    res.json({
+      valid: true,
+      kind: invite.kind,
+      email: invite.kind === "team_member" ? invite.note : undefined,
+    });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -58,11 +68,19 @@ router.get("/invite/:token", checkLimiter, async (req, res) => {
 
 /**
  * POST /api/connect/redeem
- * body: { inviteToken, webflowApiToken?, firstName, lastName?, email, password }
+ * body: { inviteToken, webflowApiToken?, firstName, lastName?, email?, password }
  *
  * webflowApiToken is required for "environment" invites, ignored/not
  * needed for "team_member" invites (that account already has its own
  * Webflow connection -- a new teammate just needs membership in it).
+ * email is required from the client for "environment" invites (nothing
+ * else knows it), but for "team_member" invites it's IGNORED -- the
+ * invite itself already carries the exact email it was generated (and
+ * emailed) for (see routes/team.js), so that's what's used regardless of
+ * what the client sends. This closes off any possibility of the redeemer
+ * claiming a different email than the invite was actually issued to, and
+ * is also why Connect.jsx doesn't even show an editable email field for
+ * this kind -- there's nothing for the person to fill in.
  * password is always required -- this account has no OAuth fallback at
  * all, so a real, Webflow-independent password is the only way back in
  * once the session expires or the invite (already single-use) is gone.
@@ -70,9 +88,11 @@ router.get("/invite/:token", checkLimiter, async (req, res) => {
  *
  * Ordering is deliberate:
  *  1. Cheap shape validation (kind-agnostic part only -- we don't know
- *     the invite's kind, and therefore whether webflowApiToken is
- *     required, until it's fetched in step 2).
- *  2. Read-only invite check (no mutation yet) -- kind is known from here on.
+ *     the invite's kind, and therefore whether webflowApiToken/email are
+ *     required from the client, until it's fetched in step 2).
+ *  2. Read-only invite check (no mutation yet) -- kind is known from here
+ *     on, and email is resolved to the invite's own stored one for
+ *     "team_member" before any further validation runs.
  *  3. For "environment" only: live-validate the Webflow token BEFORE
  *     marking the invite used, so a typo never burns the one-time invite.
  *  4. The one atomic single-use gate (race-safe under concurrent attempts
@@ -87,10 +107,11 @@ router.get("/invite/:token", checkLimiter, async (req, res) => {
  *  6. Session + cookie, same shape as the OAuth callback.
  */
 router.post("/redeem", redeemLimiter, async (req, res) => {
-  const { inviteToken, webflowApiToken, firstName, lastName, email, password } = req.body || {};
+  const { inviteToken, webflowApiToken, firstName, lastName, password } = req.body || {};
+  let { email } = req.body || {};
 
-  if (!inviteToken || !firstName || !email || !EMAIL_RE.test(email)) {
-    return res.status(400).json({ error: "All fields are required, and email must look valid." });
+  if (!inviteToken || !firstName) {
+    return res.status(400).json({ error: "All fields are required." });
   }
   if (!passwordHash.isPasswordValid(password)) {
     return res.status(400).json({ error: `Password must be at least ${passwordHash.MIN_PASSWORD_LENGTH} characters.` });
@@ -102,6 +123,12 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
   }
 
   const isTeamMemberInvite = invite.kind === "team_member";
+  if (isTeamMemberInvite) {
+    email = invite.note; // authoritative regardless of what the client sent
+  }
+  if (!email || !EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: "All fields are required, and email must look valid." });
+  }
   if (!isTeamMemberInvite && !webflowApiToken) {
     return res.status(400).json({ error: "All fields are required, and email must look valid." });
   }

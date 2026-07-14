@@ -58,6 +58,12 @@ export default function Connect() {
       .then((res) => {
         setValid(Boolean(res.valid));
         setInviteKind(res.kind || "environment");
+        // Team-member invites already know who they're for -- the server
+        // ignores whatever email the client sends for this kind anyway
+        // (see routes/connect.js), so this is just for display, but
+        // keeping it in the same `email` state means the rest of the
+        // form/validation below doesn't need a separate code path.
+        if (res.email) setEmail(res.email);
       })
       .catch(() => setValid(false))
       .finally(() => setChecking(false));
@@ -144,16 +150,23 @@ export default function Connect() {
             Last name
             <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />
           </label>
-          <label className={labelClass}>
-            Email
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={inputClass}
-            />
-          </label>
+          {isTeamMemberInvite ? (
+            <div className={labelClass}>
+              Email
+              <p className="rounded-md border border-border bg-surface-sunken px-3 py-1.5 text-sm text-ink-soft">{email}</p>
+            </div>
+          ) : (
+            <label className={labelClass}>
+              Email
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+          )}
           <label className={labelClass}>
             Password
             <input
