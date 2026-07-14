@@ -746,16 +746,18 @@ async function markPasswordResetTokenUsed(token) {
 }
 
 // ---------------------------------------------------------------------------
-// Invites (routes/connect.js): lets an existing owner admit a workspace
-// "Sign in with Webflow" OAuth can never reach on its own. account_id is
-// attribution only (which owner generated it) -- it grants no access into
-// whatever account the redemption later resolves to; see routes/connect.js.
+// Invites (routes/connect.js): lets an existing owner admit someone new --
+// either a workspace "Sign in with Webflow" OAuth can never reach on its
+// own (kind "environment", routes/environments.js) or a plain teammate
+// directly into THIS SAME account (kind "team_member", routes/team.js).
+// account_id's meaning depends on kind -- see db.js's table comment.
 
 function inviteRowToObject(row) {
   return {
     id: row.id,
     token: row.token,
     accountId: row.account_id,
+    kind: row.kind,
     createdByUserId: row.created_by_user_id,
     note: row.note,
     expiresAt: row.expires_at,
@@ -768,18 +770,27 @@ function inviteRowToObject(row) {
   };
 }
 
-async function createInvite(accountId, { createdByUserId, note, expiresAt }) {
+// kind has no default -- every call site (routes/environments.js,
+// routes/team.js) states explicitly which it means, rather than one
+// silently inheriting the other's meaning.
+async function createInvite(accountId, { kind, createdByUserId, note, expiresAt }) {
   const token = crypto.randomBytes(32).toString("hex");
   const { rows } = await db.query(
-    `INSERT INTO invites (id, token, account_id, created_by_user_id, note, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [crypto.randomUUID(), token, accountId, createdByUserId || null, note || null, expiresAt]
+    `INSERT INTO invites (id, token, account_id, kind, created_by_user_id, note, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [crypto.randomUUID(), token, accountId, kind, createdByUserId || null, note || null, expiresAt]
   );
   return inviteRowToObject(rows[0]);
 }
 
-async function listInvites(accountId) {
-  const { rows } = await db.query(`SELECT * FROM invites WHERE account_id = $1 ORDER BY created_at DESC`, [accountId]);
+// kind is required, not optional -- without it, one account's "environment"
+// and "team_member" invites (both entirely legitimate on the SAME account,
+// e.g. the operator's own) would list together undifferentiated.
+async function listInvites(accountId, kind) {
+  const { rows } = await db.query(`SELECT * FROM invites WHERE account_id = $1 AND kind = $2 ORDER BY created_at DESC`, [
+    accountId,
+    kind,
+  ]);
   return rows.map(inviteRowToObject);
 }
 
@@ -842,12 +853,13 @@ async function attributeInviteRedemption(id, { redeemedByUserId, redeemedAccount
 
 // Scoped by accountId so one account's owner can never revoke another
 // account's invite given an arbitrary id (mirrors setAccountUserAccessLevel's
-// same defensive scoping). A no-op if it's already been redeemed.
-async function revokeInvite(accountId, id) {
-  await db.query(`UPDATE invites SET revoked_at = now() WHERE id = $1 AND account_id = $2 AND redeemed_at IS NULL`, [
-    id,
-    accountId,
-  ]);
+// same defensive scoping); scoped by kind too, for the same reason
+// listInvites is. A no-op if it's already been redeemed.
+async function revokeInvite(accountId, id, kind) {
+  await db.query(
+    `UPDATE invites SET revoked_at = now() WHERE id = $1 AND account_id = $2 AND kind = $3 AND redeemed_at IS NULL`,
+    [id, accountId, kind]
+  );
 }
 
 // ---------------------------------------------------------------------------

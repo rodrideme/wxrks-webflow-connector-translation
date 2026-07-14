@@ -8,8 +8,16 @@ import { formatDateTime } from "../formatDate.js";
 
 const TABS = [
   ["members", "Members"],
+  ["invites", "Invites"],
   ["activity", "Activity Log"],
 ];
+
+function teamInviteStatusLabel(status) {
+  if (status === "redeemed") return "Redeemed";
+  if (status === "expired") return "Expired";
+  if (status === "revoked") return "Revoked";
+  return "Pending";
+}
 
 // One label per `action` string recorded by store.recordActivity (see the
 // server route handlers that call it) -- kept as a flat lookup rather than
@@ -43,6 +51,11 @@ const ACTION_LABELS = {
   "invite.create": "Generated an environment link",
   "invite.revoke": "Revoked an environment link",
   "invite.redeemed": "An environment link was redeemed",
+  // Recorded by routes/team.js -- distinct from the invite.* labels above:
+  // these admit a teammate into THIS account, not a new environment.
+  "team_invite.create": "Invited a teammate",
+  "team_invite.revoke": "Revoked a teammate invite",
+  "team_invite.redeemed": "A teammate invite was redeemed",
 };
 
 function actionLabel(action) {
@@ -93,6 +106,14 @@ export default function Teams() {
   const [error, setError] = useState(null);
   const { account } = useAuth();
   const isOwner = account?.role === "owner";
+  const visibleTabs = TABS.filter(([value]) => value !== "invites" || isOwner);
+
+  const [invites, setInvites] = useState(null);
+  const [inviteNote, setInviteNote] = useState("");
+  const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [newInviteLink, setNewInviteLink] = useState(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+  const [revokingInviteId, setRevokingInviteId] = useState(null);
 
   function loadMembers() {
     api
@@ -137,6 +158,52 @@ export default function Teams() {
       .finally(() => setLoadingMore(false));
   }
 
+  // Lazy-loaded like Activity above -- and owner-only, so a non-owner never
+  // even triggers the request.
+  useEffect(() => {
+    if (activeTab !== "invites" || invites !== null || !isOwner) return;
+    api
+      .listTeamInvites()
+      .then((res) => setInvites(res.invites))
+      .catch((err) => setError(err.message));
+  }, [activeTab, invites, isOwner]);
+
+  async function generateTeamInvite() {
+    setGeneratingInvite(true);
+    setError(null);
+    try {
+      const invite = await api.createTeamInvite({ note: inviteNote || undefined });
+      setNewInviteLink(`${window.location.origin}/connect?invite=${invite.token}`);
+      setInviteLinkCopied(false);
+      setInviteNote("");
+      const res = await api.listTeamInvites();
+      setInvites(res.invites);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGeneratingInvite(false);
+    }
+  }
+
+  function copyTeamInviteLink() {
+    navigator.clipboard.writeText(newInviteLink).then(() => {
+      setInviteLinkCopied(true);
+      setTimeout(() => setInviteLinkCopied(false), 2000);
+    });
+  }
+
+  async function revokeTeamInvite(id) {
+    setRevokingInviteId(id);
+    try {
+      const res = await api.revokeTeamInvite(id);
+      setInvites(res.invites);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRevokingInviteId(null);
+    }
+  }
+
   async function changeAccessLevel(targetUserId, accessLevel) {
     setSavingUserId(targetUserId);
     try {
@@ -159,7 +226,7 @@ export default function Teams() {
       {error && <p className="mb-4 text-sm font-medium text-status-error-fg">Error: {error}</p>}
 
       <div className="mb-5 flex gap-1 border-b border-border">
-        {TABS.map(([value, label]) => (
+        {visibleTabs.map(([value, label]) => (
           <button
             key={value}
             onClick={() => setActiveTab(value)}
@@ -207,6 +274,87 @@ export default function Teams() {
             ))
           )}
         </Card>
+      )}
+
+      {activeTab === "invites" && isOwner && (
+        <>
+          <Card className="mb-5 p-5">
+            <h2 className="mb-1 text-[13.5px] font-semibold text-ink">Invite a teammate</h2>
+            <p className="text-xs text-ink-faint">
+              Generate a one-time link for someone to join this account directly -- no Webflow
+              access needed on their end, just a name, email, and password. Treat this link like a
+              temporary password to your whole workspace: send it privately, not in a public
+              channel.
+            </p>
+
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                type="text"
+                value={inviteNote}
+                onChange={(e) => setInviteNote(e.target.value)}
+                placeholder="Optional note (e.g. their name)"
+                className="w-full max-w-sm rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <button
+                type="button"
+                onClick={generateTeamInvite}
+                disabled={generatingInvite}
+                className="flex-none rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generatingInvite ? "Generating…" : "Generate link"}
+              </button>
+            </div>
+
+            {newInviteLink && (
+              <div className="mt-3 rounded-md border border-border bg-surface-sunken p-3">
+                <p className="mb-2 text-xs font-medium text-status-error-fg">
+                  Copy this now -- you won't be able to see the full link again.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input type="text" readOnly value={newInviteLink} className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 font-mono text-xs text-ink" />
+                  <button
+                    type="button"
+                    onClick={copyTeamInviteLink}
+                    className="flex-none rounded-md border border-border-strong bg-surface px-3 py-1.5 text-xs font-semibold hover:border-ink-faint"
+                  >
+                    {inviteLinkCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            {invites === null ? (
+              <p className="p-4 text-sm text-ink-faint">Loading…</p>
+            ) : invites.length === 0 ? (
+              <p className="p-4 text-sm text-ink-faint">No invites yet.</p>
+            ) : (
+              invites.map((inv) => (
+                <div key={inv.id} className="flex items-center gap-4 border-t border-border px-4 py-3 first:border-t-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13.5px] font-medium text-ink">{inv.note || "Untitled"}</div>
+                    <div className="truncate font-mono text-xs text-ink-faint">{inv.tokenMasked}</div>
+                  </div>
+                  <Chip>{teamInviteStatusLabel(inv.status)}</Chip>
+                  <span className="w-36 flex-none text-right text-xs text-ink-faint">
+                    {inv.status === "pending" ? `Expires ${formatDateTime(inv.expiresAt, timezone)}` : formatDateTime(inv.createdAt, timezone)}
+                  </span>
+                  {inv.status === "pending" && (
+                    <button
+                      type="button"
+                      onClick={() => revokeTeamInvite(inv.id)}
+                      disabled={revokingInviteId === inv.id}
+                      className="flex-none text-xs font-medium text-status-error-fg hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </Card>
+        </>
       )}
 
       {activeTab === "activity" && (

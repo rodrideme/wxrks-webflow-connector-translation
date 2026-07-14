@@ -4,6 +4,33 @@ const { requireOwner } = require("../middleware/auth");
 
 const router = express.Router();
 
+function mask(value) {
+  if (!value) return "";
+  return value.length <= 4 ? "****" : `${value.slice(0, 2)}${"*".repeat(value.length - 4)}${value.slice(-2)}`;
+}
+
+const DEFAULT_TEAM_INVITE_EXPIRY_DAYS = 7;
+
+function teamInviteStatus(invite) {
+  if (invite.revokedAt) return "revoked";
+  if (invite.redeemedAt) return "redeemed";
+  if (new Date(invite.expiresAt) <= new Date()) return "expired";
+  return "pending";
+}
+
+function toInviteSummary(invite) {
+  return {
+    id: invite.id,
+    tokenMasked: mask(invite.token),
+    note: invite.note,
+    status: teamInviteStatus(invite),
+    expiresAt: invite.expiresAt,
+    redeemedAt: invite.redeemedAt,
+    revokedAt: invite.revokedAt,
+    createdAt: invite.createdAt,
+  };
+}
+
 /**
  * GET /api/team
  * Everyone with access to this account, for the Teams page's member list.
@@ -60,6 +87,59 @@ router.get("/activity", async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const items = await store.listActivity(req.account.id, { limit, offset });
     res.json({ items, hasMore: items.length === limit });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/team/invites
+ * body: { note?, expiresInDays? }
+ * Lets this account's owner invite a plain teammate directly into THIS
+ * account -- no Webflow API access required from them at all (see
+ * routes/connect.js's "team_member" redeem branch). Unlike
+ * routes/environments.js's invites, this never creates a new account; it
+ * always resolves back to this same account at redemption. The full
+ * token/link is only ever returned by THIS response -- every other read
+ * (GET below) only ever sees a masked token, so it must be copied now.
+ */
+router.post("/invites", requireOwner, async (req, res) => {
+  const { note } = req.body || {};
+  const expiresInDays = Math.min(30, Math.max(1, parseInt(req.body?.expiresInDays, 10) || DEFAULT_TEAM_INVITE_EXPIRY_DAYS));
+  try {
+    const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+    const invite = await store.createInvite(req.account.id, { kind: "team_member", createdByUserId: req.user.id, note, expiresAt });
+    store.recordActivity(req.account.id, req.user.id, "team_invite.create", {}).catch(() => {});
+    res.json({ id: invite.id, token: invite.token, note: invite.note, expiresAt: invite.expiresAt, createdAt: invite.createdAt });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/team/invites
+ * Owner-only. Never returns a full token -- see the POST route above.
+ */
+router.get("/invites", requireOwner, async (req, res) => {
+  try {
+    const invites = await store.listInvites(req.account.id, "team_member");
+    res.json({ invites: invites.map(toInviteSummary) });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/team/invites/:id/revoke
+ * Owner-only. A no-op (per store.revokeInvite's own WHERE clause) if the
+ * invite was already redeemed.
+ */
+router.post("/invites/:id/revoke", requireOwner, async (req, res) => {
+  try {
+    await store.revokeInvite(req.account.id, req.params.id, "team_member");
+    store.recordActivity(req.account.id, req.user.id, "team_invite.revoke", {}).catch(() => {});
+    const invites = await store.listInvites(req.account.id, "team_member");
+    res.json({ invites: invites.map(toInviteSummary) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

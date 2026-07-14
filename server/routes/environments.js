@@ -59,7 +59,7 @@ router.post("/", requireOwner, async (req, res) => {
   const expiresInDays = Math.min(30, Math.max(1, parseInt(req.body?.expiresInDays, 10) || DEFAULT_INVITE_EXPIRY_DAYS));
   try {
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
-    const invite = await store.createInvite(req.account.id, { createdByUserId: req.user.id, note, expiresAt });
+    const invite = await store.createInvite(req.account.id, { kind: "environment", createdByUserId: req.user.id, note, expiresAt });
     store.recordActivity(req.account.id, req.user.id, "invite.create", {}).catch(() => {});
     res.json({ id: invite.id, token: invite.token, note: invite.note, expiresAt: invite.expiresAt, createdAt: invite.createdAt });
   } catch (err) {
@@ -73,7 +73,7 @@ router.post("/", requireOwner, async (req, res) => {
  */
 router.get("/", requireOwner, async (req, res) => {
   try {
-    const invites = await store.listInvites(req.account.id);
+    const invites = await store.listInvites(req.account.id, "environment");
     res.json({ environments: invites.map(toSummary) });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -88,9 +88,9 @@ router.get("/", requireOwner, async (req, res) => {
  */
 router.post("/:id/revoke", requireOwner, async (req, res) => {
   try {
-    await store.revokeInvite(req.account.id, req.params.id);
+    await store.revokeInvite(req.account.id, req.params.id, "environment");
     store.recordActivity(req.account.id, req.user.id, "invite.revoke", {}).catch(() => {});
-    const invites = await store.listInvites(req.account.id);
+    const invites = await store.listInvites(req.account.id, "environment");
     res.json({ environments: invites.map(toSummary) });
   } catch (err) {
     res.status(502).json({ error: err.message });

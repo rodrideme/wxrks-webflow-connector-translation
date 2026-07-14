@@ -14,11 +14,14 @@ const inputClass =
 const MIN_PASSWORD_LENGTH = 12;
 
 /**
- * Reachable regardless of session state (see App.jsx) -- the invite-gated
- * alternative to "Sign in with Webflow" OAuth, for a workspace OAuth can
- * never reach on its own (see routes/connect.js's docblock). An existing
- * account owner shares this page's URL directly (Teams page's Invites
- * tab); there's no link to it from the plain Login page on purpose.
+ * Reachable regardless of session state (see App.jsx) -- redemption for
+ * two different invite kinds (see routes/connect.js's docblock):
+ * "environment" (generated from the Environments page -- connects a
+ * brand-new, independent Webflow site via a Site API token) and
+ * "team_member" (generated from the Teams page's Invites tab -- joins an
+ * EXISTING account directly, no Webflow token needed at all). There's no
+ * link to this page from the plain Login page on purpose; an existing
+ * account owner shares the URL directly either way.
  */
 export default function Connect() {
   const [searchParams] = useSearchParams();
@@ -28,6 +31,8 @@ export default function Connect() {
 
   const [checking, setChecking] = useState(true);
   const [valid, setValid] = useState(false);
+  const [inviteKind, setInviteKind] = useState("environment");
+  const isTeamMemberInvite = inviteKind === "team_member";
 
   const [webflowApiToken, setWebflowApiToken] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -50,7 +55,10 @@ export default function Connect() {
     }
     api
       .checkInvite(inviteToken)
-      .then((res) => setValid(Boolean(res.valid)))
+      .then((res) => {
+        setValid(Boolean(res.valid));
+        setInviteKind(res.kind || "environment");
+      })
       .catch(() => setValid(false))
       .finally(() => setChecking(false));
   }, [inviteToken]);
@@ -97,26 +105,31 @@ export default function Connect() {
       <Card className="w-full max-w-sm p-8">
         <div className="text-center">
           <img src="/wxrks-logo.svg" alt="wxrks" className="mx-auto mb-4 h-12 w-12" />
-          <h1 className="text-[17px] font-semibold text-ink">Connect your Webflow site</h1>
+          <h1 className="text-[17px] font-semibold text-ink">
+            {isTeamMemberInvite ? "Join your team" : "Connect your Webflow site"}
+          </h1>
           <p className="mt-1.5 text-[13px] text-ink-faint">
-            Paste a Webflow Site API token to connect this workspace directly, without "Sign in with
-            Webflow".
+            {isTeamMemberInvite
+              ? "Set up your login to join the account that invited you."
+              : 'Paste a Webflow Site API token to connect this workspace directly, without "Sign in with Webflow".'}
           </p>
         </div>
 
         <form onSubmit={submit} className="mt-6 flex flex-col gap-3">
-          <label className={labelClass}>
-            Webflow Site API token
-            <input
-              type="password"
-              autoComplete="off"
-              required
-              value={webflowApiToken}
-              onChange={(e) => setWebflowApiToken(e.target.value)}
-              placeholder="Paste your token"
-              className={inputClass}
-            />
-          </label>
+          {!isTeamMemberInvite && (
+            <label className={labelClass}>
+              Webflow Site API token
+              <input
+                type="password"
+                autoComplete="off"
+                required
+                value={webflowApiToken}
+                onChange={(e) => setWebflowApiToken(e.target.value)}
+                placeholder="Paste your token"
+                className={inputClass}
+              />
+            </label>
+          )}
           <label className={labelClass}>
             First name
             <input
@@ -169,30 +182,33 @@ export default function Connect() {
           </label>
           {passwordsMismatch && <p className="-mt-2 text-xs text-status-error-fg">Passwords don't match.</p>}
           <p className="text-xs text-ink-faint">
-            This is separate from your Webflow token -- it's how you'll log back in here later,
-            since there's no "Sign in with Webflow" for this connection.
+            {isTeamMemberInvite
+              ? "This is how you'll log back in here later."
+              : 'This is separate from your Webflow token -- it\'s how you\'ll log back in here later, since there\'s no "Sign in with Webflow" for this connection.'}
           </p>
 
-          <p className="text-xs text-ink-faint">
-            Validated against Webflow before your account is created.{" "}
-            <a
-              href="/docs/connecting-accounts.html#webflow-manual-token"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-accent-text hover:underline"
-            >
-              How to generate a Site API token →
-            </a>
-          </p>
+          {!isTeamMemberInvite && (
+            <p className="text-xs text-ink-faint">
+              Validated against Webflow before your account is created.{" "}
+              <a
+                href="/docs/connecting-accounts.html#webflow-manual-token"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-accent-text hover:underline"
+              >
+                How to generate a Site API token →
+              </a>
+            </p>
+          )}
 
           {error && <p className="text-sm font-medium text-status-error-fg">{error}</p>}
 
           <button
             type="submit"
-            disabled={submitting || !webflowApiToken || !firstName || !email || !passwordValid}
+            disabled={submitting || (!isTeamMemberInvite && !webflowApiToken) || !firstName || !email || !passwordValid}
             className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-white transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Connecting…" : "Connect"}
+            {submitting ? "Connecting…" : isTeamMemberInvite ? "Join" : "Connect"}
           </button>
         </form>
       </Card>

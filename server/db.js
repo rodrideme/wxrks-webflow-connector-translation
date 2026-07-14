@@ -241,15 +241,20 @@ async function migrate() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS activity_log_account_created_idx ON activity_log (account_id, created_at DESC)`);
 
-  // Lets an existing account owner admit a brand-new workspace that "Sign
-  // in with Webflow" OAuth can never reach (an unapproved OAuth app only
-  // ever authorizes its own registration workspace -- see routes/connect.js).
-  // Single-use: token is the actual credential (crypto-random, same
-  // generation as sessions.id), so it's stored plaintext for the same
-  // reason session ids are -- DB compromise already means game over
-  // regardless of hashing. account_id is attribution only (which owner
-  // generated it), NOT a grant of access into whatever account the
-  // redemption resolves to.
+  // Lets an existing account owner admit someone new -- either a brand-new
+  // workspace "Sign in with Webflow" OAuth can never reach (kind
+  // "environment", an unapproved OAuth app only ever authorizes its own
+  // registration workspace -- see routes/connect.js/routes/environments.js),
+  // or a plain teammate directly into THIS SAME account (kind "team_member"
+  // -- see routes/team.js). Single-use: token is the actual credential
+  // (crypto-random, same generation as sessions.id), so it's stored
+  // plaintext for the same reason session ids are -- DB compromise already
+  // means game over regardless of hashing. account_id's meaning depends on
+  // kind: for "environment" it's attribution only (which owner generated
+  // it) and grants no access into whatever new account the redemption
+  // resolves to; for "team_member" it's BOTH attribution AND the actual
+  // account being joined (there's only ever one account in play, since
+  // you're inviting someone into your own).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS invites (
       id TEXT PRIMARY KEY,
@@ -267,6 +272,16 @@ async function migrate() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS invites_account_idx ON invites (account_id, created_at DESC)`);
+  // Forward migration: distinguishes an "environment" invite (admits a
+  // brand-new, independent account) from a "team_member" invite (admits a
+  // second person directly into the SAME account that generated it). Both
+  // share this one table/redemption mechanism (routes/connect.js); only
+  // what happens at redemption differs. Defaults every existing row to
+  // 'environment' since that's the only kind that existed before this
+  // column did. No CHECK constraint -- matches this file's convention of
+  // validating enum-like TEXT columns (role, access_level, status) at the
+  // route layer, not here.
+  await pool.query(`ALTER TABLE invites ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'environment'`);
 
   // Short-lived (created with a 1-hour expiry, see store.createPasswordResetToken)
   // and single-use, unlike invites -- a stale password-reset link sitting in
