@@ -116,9 +116,16 @@ async function getSiteLocales() {
     // locale by cmsLocaleId, not by tag, so Auto Sync's loop-prevention
     // filter needs this to compare against.
     primary: primary && { tag: primary.tag, displayName: primary.displayName, cmsLocaleId: primary.cmsLocaleId },
-    secondary: secondary
-      .filter((l) => l.enabled)
-      .map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId })),
+    // Not filtered to `enabled` locales -- a locale can exist and hold real
+    // CMS/Pages/Components content well before its own "publish to
+    // subdirectory" toggle is on (confirmed independent per Webflow's own
+    // docs), and translating ahead of that toggle is exactly the point:
+    // it avoids exposing thousands of untranslated items the moment a
+    // client makes a new locale public. `enabled` is passed through
+    // instead of used to hide anything, so callers (the Send to wxrks
+    // wizard in particular) can choose not to pre-select a locale that
+    // isn't public yet, without hiding it as an option entirely.
+    secondary: secondary.map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId, enabled: l.enabled })),
   };
 }
 
@@ -175,7 +182,12 @@ async function getRawSiteLocales() {
     const { data } = await (await client()).get(`/sites/${await siteId()}`);
     rawSiteLocalesCacheByAccount.set(accountId, {
       primary: data?.locales?.primary,
-      secondary: (data?.locales?.secondary || []).filter((l) => l.enabled),
+      // Not filtered to `enabled` -- see getSiteLocales()'s identical
+      // reasoning above. Kept in sync deliberately: without this, Pages/
+      // Components would keep silently rejecting a not-yet-public locale
+      // ("not a registered locale") even after CMS items correctly
+      // gained support for it via getSiteLocales() alone.
+      secondary: data?.locales?.secondary || [],
     });
   }
   return rawSiteLocalesCacheByAccount.get(accountId);

@@ -112,9 +112,20 @@ router.get("/:id/items", async (req, res) => {
     ]);
     const sourceItems = await webflow.listAllItems(id, { locale: sourceLocale });
 
-    const localeItemLists = await Promise.all(
+    // Promise.allSettled, not Promise.all -- a target locale can now
+    // include ones that exist in Webflow but aren't enabled/published yet
+    // (see webflow.js's getSiteLocales()), and it's still unconfirmed
+    // whether reads succeed for those in every case. One rejected locale
+    // degrades to "no data for it" (every item shows as missing there)
+    // instead of 502ing this entire collection's item list.
+    const localeItemListResults = await Promise.allSettled(
       targetLocales.map((locale) => webflow.listAllItems(id, { locale }))
     );
+    const localeItemLists = localeItemListResults.map((result, idx) => {
+      if (result.status === "fulfilled") return result.value;
+      console.error(`Failed to list items for locale "${targetLocales[idx]}" in collection ${id}:`, result.reason?.message);
+      return [];
+    });
 
     // fieldData is already in memory from listAllItems above -- computing
     // word count here is free (no extra Webflow calls), unlike Pages/
@@ -236,7 +247,19 @@ async function backlogHandler(req, res) {
       const sourceItems = await webflow.listAllItems(collection.id, { locale: sourceLocale });
 
       for (const locale of targetLocales) {
-        const localeItems = await webflow.listAllItems(collection.id, { locale });
+        // Try/catch, not left to throw -- a target locale can now include
+        // ones that exist in Webflow but aren't enabled/published yet (see
+        // webflow.js's getSiteLocales()), and it's still unconfirmed
+        // whether reads succeed for those in every case. Skip just this
+        // locale/collection combination on failure rather than 502ing the
+        // whole backlog.
+        let localeItems;
+        try {
+          localeItems = await webflow.listAllItems(collection.id, { locale });
+        } catch (err) {
+          console.error(`Failed to list items for locale "${locale}" in collection ${collection.id} (backlog scan):`, err.message);
+          continue;
+        }
 
         for (const sourceItem of sourceItems) {
           const localeItem = localeItems.find((it) => it.id === sourceItem.id);

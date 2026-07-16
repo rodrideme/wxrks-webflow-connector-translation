@@ -99,14 +99,17 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       if (s.orgUnitUUID) loadOrgUnitResources(s.orgUnitUUID);
     });
     api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
-    // Default to every locale enabled in Webflow -- most sends target
-    // everything the site actually has localized, so pre-checking all of
-    // them (rather than starting empty) matches the common case.
+    // Default to every locale already published in Webflow -- most sends
+    // target everything the site actually has live, so pre-checking those
+    // (rather than starting empty) matches the common case. A locale that
+    // exists in Webflow but isn't enabled/published yet (e.g. added ahead of
+    // a client turning it on) is still listed as an option below, just never
+    // pre-selected -- sending to one is only ever an explicit choice.
     api
       .getWebflowLocales()
       .then((locales) => {
         setWebflowLocales(locales);
-        setTargetLocales((locales?.secondary || []).map((l) => l.tag));
+        setTargetLocales((locales?.secondary || []).filter((l) => l.enabled).map((l) => l.tag));
       })
       .catch(() => setWebflowLocales(null));
     setOrgUnitResources(null);
@@ -147,7 +150,11 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     const org = orgUnits.find((o) => o.uuid === uuid);
     if (org && webflowLocales) {
       const orgBaseLangs = new Set(org.targetLanguages.map(baseLang));
-      setTargetLocales(webflowLocales.secondary.filter((l) => orgBaseLangs.has(baseLang(l.tag))).map((l) => l.tag));
+      // enabled-only here too -- matching an org unit's languages shouldn't
+      // silently opt a not-yet-published locale into a real send either.
+      setTargetLocales(
+        webflowLocales.secondary.filter((l) => l.enabled && orgBaseLangs.has(baseLang(l.tag))).map((l) => l.tag)
+      );
     }
     setOrgUnitResources(null);
     if (uuid) loadOrgUnitResources(uuid);
@@ -163,6 +170,9 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   const contentLabel = scope === "all" ? "All site content" : selection?.groups?.map((g) => g.label).join(", ") || "Content";
   const contentCount = scope === "all" ? allSummary?.totalItems ?? 0 : selection?.count ?? 0;
   const contentWords = scope === "all" ? allSummary?.totalWords ?? 0 : selection?.words ?? 0;
+  // Surfaced at the Review step so opting into a not-yet-public locale is
+  // visible right before confirming, not just at the picker.
+  const notEnabledSelected = (webflowLocales?.secondary || []).filter((l) => targetLocales.includes(l.tag) && !l.enabled);
 
   async function handleNext() {
     if (step < 2) {
@@ -351,16 +361,27 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                   key={l.tag}
                   type="button"
                   onClick={() => toggleLocale(l.tag)}
-                  title={l.displayName}
+                  title={l.enabled ? l.displayName : `${l.displayName} — not published in Webflow yet`}
                   className={
                     "rounded border px-2 py-1 font-mono text-[10.5px] font-semibold " +
                     (targetLocales.includes(l.tag) ? "border-accent bg-accent-subtle text-accent-text" : "border-dashed border-border-strong text-ink-faint")
                   }
                 >
                   {l.tag.toUpperCase()}
+                  {!l.enabled && (
+                    <span className="ml-1 text-status-progress-fg" aria-hidden="true">
+                      ●
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
+            {(webflowLocales?.secondary || []).some((l) => !l.enabled) && (
+              <p className="mt-1.5 text-[11px] text-ink-faint">
+                <span className="text-status-progress-fg" aria-hidden="true">●</span> not published in Webflow yet —
+                safe to translate ahead of time, but won't be publicly visible until enabled there.
+              </p>
+            )}
           </div>
 
           <div>
@@ -617,6 +638,12 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
             </div>
             <div className="mt-0.5 text-xs text-ink-soft">Workflow: {workflowSteps.map((s) => WORKFLOW_LABELS[s]).join(" → ")}</div>
             <div className="mt-0.5 text-xs text-ink-soft">Project name: {projectName || `${contentLabel} · ${new Date().toLocaleDateString()}`}</div>
+            {notEnabledSelected.length > 0 && (
+              <div className="mt-2 rounded-md bg-status-progress-bg px-2.5 py-1.5 text-xs text-status-progress-fg">
+                {notEnabledSelected.length === 1 ? "1 selected language isn't" : `${notEnabledSelected.length} selected languages aren't`}{" "}
+                published in Webflow yet ({notEnabledSelected.map((l) => l.tag.toUpperCase()).join(", ")}).
+              </div>
+            )}
           </div>
         </div>
       )}
