@@ -11,12 +11,12 @@ const store = require("../store");
  * dict and building the mapping fields (entityType + whichever id(s)
  * apply) before calling this.
  */
-async function syncTranslatableContentIntoBatch({ projectUuid, translatableContent, filename, targetLocales, mappingFields, workflows }) {
+async function syncTranslatableContentIntoBatch({ projectUuid, translatableContent, filename, targetLocales, mappingFields, workflows, previewUrl }) {
   if (Object.keys(translatableContent).length === 0) {
     return { skipped: true, reason: "no translatable content" };
   }
 
-  const resource = await wxrks.createResource(projectUuid, { name: filename });
+  const resource = await wxrks.createResource(projectUuid, { name: filename, previewUrl });
   const fileContent = Buffer.from(JSON.stringify(translatableContent), "utf-8");
   await wxrks.uploadResourceContent(projectUuid, resource.resourceId, fileContent, filename);
 
@@ -31,6 +31,7 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
     resourceFileName: filename,
     fieldKeys,
     wordCount,
+    previewUrl,
   });
 
   return { skipped: false, fieldsCount: fieldKeys.length, wordCount };
@@ -44,11 +45,12 @@ async function syncTranslatableContentIntoBatch({ projectUuid, translatableConte
  * rather than creating one project per item, and each item gets exactly
  * one work unit rather than one per field.
  */
-async function syncItemIntoBatch({ accountId, projectUuid, collection, item, targetLocales, namePattern, workflows }) {
+async function syncItemIntoBatch({ accountId, projectUuid, collection, item, targetLocales, namePattern, workflows, site }) {
   const fieldTypeBySlug = webflow.getFieldTypeMap(collection);
   const exclusions = await store.getFieldExclusions(accountId, collection.id);
   const translatableFields = webflow.filterTranslatableFields(item.fieldData, fieldTypeBySlug, exclusions);
   const filename = webflow.buildResourceFileName(namePattern, { collection, item });
+  const previewUrl = webflow.buildCmsItemPreviewUrl({ site, collection, item });
 
   return syncTranslatableContentIntoBatch({
     projectUuid,
@@ -56,6 +58,7 @@ async function syncItemIntoBatch({ accountId, projectUuid, collection, item, tar
     filename,
     targetLocales,
     workflows,
+    previewUrl,
     mappingFields: {
       entityType: "cmsItem",
       webflowCollectionId: collection.id,
@@ -75,9 +78,10 @@ async function syncItemIntoBatch({ accountId, projectUuid, collection, item, tar
  * pattern as syncItemIntoBatch receiving a pre-fetched `item`). v1 scope:
  * only `type: "text"` nodes are extracted (see webflowDom.js).
  */
-async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern, workflows }) {
+async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern, workflows, site, folder }) {
   const translatableNodes = webflowDom.extractTextNodes(nodes);
   const filename = webflow.buildPageResourceFileName(namePattern, { page });
+  const previewUrl = webflow.buildPagePreviewUrl({ site, page, folder });
 
   return syncTranslatableContentIntoBatch({
     projectUuid,
@@ -85,6 +89,7 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
     filename,
     targetLocales,
     workflows,
+    previewUrl,
     mappingFields: { entityType: "page", webflowPageId: page.id },
   });
 }

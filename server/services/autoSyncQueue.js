@@ -267,6 +267,14 @@ async function flush(automationId, { jobId } = {}) {
   const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };
   let checkpointChanged = false;
 
+  // Fetched once for the whole batch (not per item) -- feeds syncItemIntoBatch/
+  // syncPageIntoBatch's previewUrl computation below. Skipped entirely for an
+  // all-components batch, same guard idiom as routes/sync.js's combined endpoint.
+  const needsSite = batch.some(([, entry]) => entry.entityType === "cms" || entry.entityType === "page");
+  const { site } = needsSite ? await webflow.getSiteLocales() : { site: null };
+  const pageParentIds = batch.filter(([, entry]) => entry.entityType === "page").map(([, entry]) => entry.page.parentId);
+  const foldersById = await webflow.getPageFoldersByIds(pageParentIds);
+
   let itemsSynced = 0;
   for (const [, entry] of batch) {
     if (jobId && store.getSyncJob(jobId)?.cancelled) break;
@@ -281,6 +289,7 @@ async function flush(automationId, { jobId } = {}) {
           targetLocales,
           namePattern: workUnitNamePattern,
           workflows: automation.workflows,
+          site,
         });
         if (!result.skipped) {
           itemsSynced += 1;
@@ -307,6 +316,8 @@ async function flush(automationId, { jobId } = {}) {
           targetLocales,
           namePattern: settings.pagesWorkUnitNamePattern,
           workflows: automation.workflows,
+          site,
+          folder: foldersById.get(entry.page.parentId),
         });
         if (!result.skipped) itemsSynced += 1;
         // Recorded even when skipped (no translatable text) -- otherwise a

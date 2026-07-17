@@ -349,6 +349,20 @@ async function listPageFolders() {
 }
 
 /**
+ * Batch sibling of getPageFolder -- resolves every distinct folder id in
+ * one Promise.all (same dedup-and-fetch shape as listPageFolders() above),
+ * keyed by id for O(1) lookup per page. Returns the RAW getPageFolder()
+ * object for each (not the {id,title,slug} projection listPageFolders()
+ * builds) so callers can also see that folder's own `parentId` -- needed
+ * by buildPagePreviewUrl below to detect a page nested 2+ folders deep.
+ */
+async function getPageFoldersByIds(folderIds) {
+  const uniqueIds = [...new Set((folderIds || []).filter(Boolean))];
+  const folders = await Promise.all(uniqueIds.map(getPageFolder));
+  return new Map(folders.map((f) => [f.id, f]));
+}
+
+/**
  * Filters a page list down to those inside one of the given folder ids
  * (NO_FOLDER_ID matches pages with a null parentId). Shared by the
  * Automation wizard's live scope preview and automationScheduler's polling
@@ -783,6 +797,35 @@ function buildComponentResourceFileName(pattern, { component }) {
   return `${name}.json`;
 }
 
+/**
+ * The live URL a CMS item renders at, per Webflow's default Collection
+ * Page convention (a collection page template's own URL slug defaults to
+ * matching the collection's slug unless customized in the Designer).
+ * Returns undefined -- never a guess -- if any ingredient is missing.
+ */
+function buildCmsItemPreviewUrl({ site, collection, item }) {
+  const collectionSlug = collection?.slug;
+  const itemSlug = item?.fieldData?.slug;
+  if (!site?.url || !collectionSlug || !itemSlug) return undefined;
+  return `${site.url}/${collectionSlug}/${itemSlug}`;
+}
+
+/**
+ * The live URL a static page renders at. Only knowable for a top-level
+ * page or one exactly one folder deep -- getPageFolder() only ever
+ * resolves one level, so a page nested 2+ folders deep can't be
+ * determined from data this app fetches today. `folder` (if passed) must
+ * be the RAW getPageFolder() object (see getPageFoldersByIds above), so
+ * its own `parentId` is available to detect that deeper-nesting case and
+ * return undefined instead of a guaranteed-wrong partial path.
+ */
+function buildPagePreviewUrl({ site, page, folder }) {
+  if (!site?.url || !page?.slug) return undefined;
+  if (!page.parentId) return `${site.url}/${page.slug}`;
+  if (folder && !folder.parentId && folder.slug) return `${site.url}/${folder.slug}/${page.slug}`;
+  return undefined;
+}
+
 module.exports = {
   listCollections,
   getCollection,
@@ -810,6 +853,7 @@ module.exports = {
   DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
   NO_FOLDER_ID,
   getPageFolder,
+  getPageFoldersByIds,
   listPageFolders,
   filterPagesByFolderScope,
   listComponents,
@@ -817,6 +861,8 @@ module.exports = {
   updateComponentDom,
   buildComponentResourceFileName,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
+  buildCmsItemPreviewUrl,
+  buildPagePreviewUrl,
   sanitizeSlug,
   transliterateToLatin,
   WEBFLOW_SLUG_REGEX,

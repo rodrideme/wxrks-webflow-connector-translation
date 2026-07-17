@@ -54,6 +54,9 @@ router.post("/item", requireWriteAccess, async (req, res) => {
 
     const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const collection = await webflow.getCollection(collectionId);
+    // Fetched once for the whole request (not per item) -- feeds
+    // syncItemIntoBatch's previewUrl computation below.
+    const { site } = await webflow.getSiteLocales();
 
     const project = await wxrks.createProject({
       reference: projectName || `Item Sync / ${collection.displayName || collectionId} / ${new Date().toISOString()}`,
@@ -91,6 +94,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
             targetLocales,
             namePattern: workUnitNamePattern,
             workflows,
+            site,
           });
           store.appendSyncJobResult(jobId, { itemId: id, ...result });
         } catch (err) {
@@ -163,6 +167,12 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
 
     const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const totalItems = groups.reduce((sum, g) => sum + (g.ids?.length || 0), 0);
+    // Fetched once for the whole request (not per group/item) -- feeds
+    // syncItemIntoBatch/syncPageIntoBatch's previewUrl computation below.
+    // Skipped entirely for an all-components batch, since neither group
+    // kind that needs it is present -- same guard idiom as orgUnitUUID above.
+    const needsSite = groups.some((g) => g.kind === "collection" || g.kind === "pagesFolder");
+    const { site } = needsSite ? await webflow.getSiteLocales() : { site: null };
 
     const project = await wxrks.createProject({
       reference: projectName || `Combined Sync / ${new Date().toISOString()}`,
@@ -205,6 +215,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
                 targetLocales,
                 namePattern: workUnitNamePattern,
                 workflows,
+                site,
               });
               store.appendSyncJobResult(jobId, { itemId: id, ...result });
             } catch (err) {
@@ -214,6 +225,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
         } else if (g.kind === "pagesFolder") {
           const allPages = await webflow.listStaticPages();
           const pagesById = new Map(allPages.map((p) => [p.id, p]));
+          const foldersById = await webflow.getPageFoldersByIds(g.ids.map((id) => pagesById.get(id)?.parentId));
           for (const id of g.ids) {
             if (store.getSyncJob(jobId).cancelled) break;
             try {
@@ -227,6 +239,8 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
                 targetLocales,
                 namePattern: pagesWorkUnitNamePattern,
                 workflows,
+                site,
+                folder: foldersById.get(page.parentId),
               });
               store.appendSyncJobResult(jobId, { webflowPageId: id, ...result });
             } catch (err) {

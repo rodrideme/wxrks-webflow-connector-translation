@@ -191,6 +191,7 @@ async function addItemToProjectMapping(
     wordCount,
     sourceName,
     sourceSlug,
+    previewUrl,
   }
 ) {
   const existing = await getProjectMapping(wxrksProjectUUID);
@@ -220,6 +221,7 @@ async function addItemToProjectMapping(
         wordCount,
         sourceName,
         sourceSlug,
+        previewUrl,
       },
     ],
   });

@@ -48,6 +48,10 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     const orgUnitUUID = orgUnitUUIDOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
     const allPages = await webflow.listStaticPages();
     const pagesById = new Map(allPages.map((p) => [p.id, p]));
+    // Fetched once for the whole request (not per page) -- feeds
+    // syncPageIntoBatch's previewUrl computation below.
+    const { site } = await webflow.getSiteLocales();
+    const foldersById = await webflow.getPageFoldersByIds(ids.map((id) => pagesById.get(id)?.parentId));
 
     const project = await wxrks.createProject({
       reference: projectName || `Pages Item Sync / ${new Date().toISOString()}`,
@@ -85,6 +89,8 @@ router.post("/item", requireWriteAccess, async (req, res) => {
             targetLocales,
             namePattern: pagesWorkUnitNamePattern,
             workflows,
+            site,
+            folder: foldersById.get(page.parentId),
           });
           store.appendSyncJobResult(jobId, { webflowPageId: id, ...result });
         } catch (err) {

@@ -327,12 +327,18 @@ async function createProject({ reference, sourceLocale, orgUnitUUID, contactUUID
 /**
  * Creates a project resource entry. `name` must include a file extension
  * (e.g. "item123__heroTitle.json") — wxrks uses it to select a parser.
+ * `previewUrl`, when known, is the resource's real live Webflow URL --
+ * wxrks renders its own preview from it, so we only need to send the
+ * right address (see webflow.js's buildCmsItemPreviewUrl/
+ * buildPagePreviewUrl). Omitted (not just empty-string) whenever it can't
+ * be reliably determined -- JSON.stringify drops the undefined key, so
+ * the request body is byte-identical to before this param existed.
  */
-async function createResource(projectUuid, { name, path, notes }) {
+async function createResource(projectUuid, { name, path, notes, previewUrl }) {
   const { data } = await request({
     method: "POST",
     url: `/project/${projectUuid}/resource`,
-    data: { name, path: path || name, notes },
+    data: { name, path: path || name, notes, previewUrl },
   });
   const resourceId = data?.uuid;
   if (!resourceId) {
