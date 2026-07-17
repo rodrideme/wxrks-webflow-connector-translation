@@ -818,9 +818,16 @@ function buildCmsItemPreviewUrl({ site, collection, item }) {
  * be the RAW getPageFolder() object (see getPageFoldersByIds above), so
  * its own `parentId` is available to detect that deeper-nesting case and
  * return undefined instead of a guaranteed-wrong partial path.
+ *
+ * The site's homepage is a special case (confirmed live): Webflow gives
+ * it `slug: null` rather than an empty path segment, since it IS the site
+ * root -- not a missing/unknowable slug the way it would be for any other
+ * page. Only valid at the top level; a null slug on a page with a parent
+ * isn't a shape Webflow actually produces.
  */
 function buildPagePreviewUrl({ site, page, folder }) {
-  if (!site?.url || !page?.slug) return undefined;
+  if (!site?.url) return undefined;
+  if (!page?.slug) return !page?.parentId ? site.url : undefined;
   if (!page.parentId) return `${site.url}/${page.slug}`;
   if (folder && !folder.parentId && folder.slug) return `${site.url}/${folder.slug}/${page.slug}`;
   return undefined;
