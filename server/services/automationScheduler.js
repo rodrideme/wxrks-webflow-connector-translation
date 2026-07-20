@@ -111,7 +111,8 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
 
   const scanned = await mapWithConcurrency(components, SCAN_CONCURRENCY, async (component) => {
     const nodes = await webflow.getComponentDom(component.id, { locale: sourceLocale });
-    return { component, contentHash: hashNodes(nodes) };
+    const properties = await webflow.getComponentProperties(component.id, { locale: sourceLocale });
+    return { component, contentHash: hashNodes(nodes, properties) };
   });
 
   const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };

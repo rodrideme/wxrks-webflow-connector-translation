@@ -330,11 +330,13 @@ async function flush(automationId, { jobId } = {}) {
         if (jobId) store.appendSyncJobResult(jobId, { itemId: entry.page.id, ...result });
       } else if (entry.entityType === "component") {
         const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
-        const contentHash = hashNodes(nodes);
+        const properties = await webflow.getComponentProperties(entry.component.id, { locale: sourceLocale });
+        const contentHash = hashNodes(nodes, properties);
         const result = await syncComponentIntoBatch({
           projectUuid: project.uuid,
           component: entry.component,
           nodes,
+          properties,
           targetLocales,
           namePattern: settings.componentsWorkUnitNamePattern,
           workflows: automation.workflows,

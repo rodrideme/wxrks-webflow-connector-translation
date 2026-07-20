@@ -99,14 +99,31 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
     resultsByLocale = [{ locale, error: "Downloaded translation had no matching fields" }];
   } else if (isComponent) {
     try {
-      await webflow.updateComponentDom(webflowComponentId, locale, webflowDom.buildNodeUpdates(fieldData));
+      // Splits the translated fieldData dict back into a component's own
+      // DOM-node writes + placement overrides (one POST .../dom call,
+      // same as before) and its definition-level Component Properties (a
+      // wholly separate endpoint) -- see webflowDom.js's docstring. Either
+      // half can be empty (e.g. a properties-only component now correctly
+      // skips the pointless DOM call entirely, where before it silently
+      // translated nothing at all).
+      const { nodeUpdates, propertyUpdates } = webflowDom.splitTranslatedContent(fieldData);
+      if (nodeUpdates.length > 0) {
+        await webflow.updateComponentDom(webflowComponentId, locale, nodeUpdates);
+      }
+      if (propertyUpdates.length > 0) {
+        await webflow.updateComponentProperties(webflowComponentId, locale, propertyUpdates);
+      }
       resultsByLocale = [{ locale, fieldsUpdated: Object.keys(fieldData).length }];
     } catch (err) {
       resultsByLocale = [{ locale, error: err.response?.data?.message || err.message }];
     }
   } else if (isPage) {
     try {
-      await webflow.updatePageDom(webflowPageId, locale, webflowDom.buildNodeUpdates(fieldData));
+      // propertyUpdates is always empty for a page (no definition-properties
+      // channel there) -- nodeUpdates alone covers plain text nodes and any
+      // component-instance overrides placed on this page.
+      const { nodeUpdates } = webflowDom.splitTranslatedContent(fieldData);
+      await webflow.updatePageDom(webflowPageId, locale, nodeUpdates);
       resultsByLocale = [{ locale, fieldsUpdated: Object.keys(fieldData).length }];
     } catch (err) {
       resultsByLocale = [{ locale, error: err.response?.data?.message || err.message }];

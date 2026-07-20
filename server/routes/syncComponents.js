@@ -77,10 +77,12 @@ router.post("/item", requireWriteAccess, async (req, res) => {
           const component = componentsById.get(id);
           if (!component) throw new Error(`Component ${id} not found`);
           const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
+          const properties = await webflow.getComponentProperties(id, { locale: sourceLocale });
           const result = await syncComponentIntoBatch({
             projectUuid: project.uuid,
             component,
             nodes,
+            properties,
             targetLocales,
             namePattern: componentsWorkUnitNamePattern,
             workflows,

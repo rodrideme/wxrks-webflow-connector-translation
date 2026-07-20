@@ -498,6 +498,51 @@ async function updateComponentDom(componentId, locale, nodeUpdates) {
 }
 
 /**
+ * Fetches a component definition's own Component Properties (Plain Text,
+ * Rich Text, Alt Text, etc.) -- a channel entirely separate from the
+ * component's own DOM nodes (confirmed live: zero overlap between
+ * getComponentDom's node list and this endpoint's properties for the same
+ * component -- some components are pure DOM text, some are pure
+ * properties, some mix both). Same pagination/locale contract as
+ * getComponentDom: always read the PRIMARY locale for the full set of
+ * default values -- a secondary locale here would only return whatever's
+ * already been translated.
+ */
+async function getComponentProperties(componentId, { locale } = {}) {
+  const localeId = await resolvePageLocaleId(locale);
+  const limit = 100;
+  let offset = 0;
+  let properties = [];
+
+  while (true) {
+    const { data } = await (await client()).get(`/sites/${await siteId()}/components/${componentId}/properties`, { params: { localeId, limit, offset } });
+    const page = data?.properties || [];
+    properties = properties.concat(page);
+
+    const total = data?.pagination?.total ?? properties.length;
+    offset += limit;
+    if (properties.length >= total || page.length === 0) break;
+  }
+
+  return properties;
+}
+
+/**
+ * Writes translated values back to a component definition's own default
+ * property values, for one secondary locale -- propagates to every
+ * placement of that component that doesn't itself override that property.
+ * Same primary-locale-write guard as updateComponentDom.
+ */
+async function updateComponentProperties(componentId, locale, propertyUpdates) {
+  const localeId = await resolvePageLocaleId(locale);
+  if (await isPrimaryPageLocaleId(localeId)) {
+    throw new Error(`Refusing to write component properties to the primary locale ("${locale}") -- only secondary locales are writable via the API.`);
+  }
+  const { data } = await (await client()).post(`/sites/${await siteId()}/components/${componentId}/properties`, { properties: propertyUpdates }, { params: { localeId } });
+  return data;
+}
+
+/**
  * Fetches exactly one page of a collection's items (Webflow caps each page
  * at 100). Exposed as its own function -- not just an implementation
  * detail of listAllItems below -- so a caller that wants to show real,
@@ -866,6 +911,8 @@ module.exports = {
   listComponents,
   getComponentDom,
   updateComponentDom,
+  getComponentProperties,
+  updateComponentProperties,
   buildComponentResourceFileName,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
   buildCmsItemPreviewUrl,

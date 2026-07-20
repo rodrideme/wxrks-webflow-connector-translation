@@ -97,17 +97,28 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
 /**
  * Adds one Webflow Component *definition* to an already-created wxrks
  * project -- translating it once so the translation propagates everywhere
- * that component is used across the site. Same shape as syncPageIntoBatch;
- * `nodes` is the component's full primary-locale DOM node list (pre-fetched
- * via webflow.getComponentDom(component.id, {locale: sourceLocale})).
+ * that component is used across the site (except wherever a specific
+ * placement overrides a property -- those overrides travel with whatever
+ * page/component contains that placement instead, via syncPageIntoBatch's
+ * extractTextNodes call). `nodes` is the component's full primary-locale
+ * DOM node list (pre-fetched via webflow.getComponentDom(component.id,
+ * {locale: sourceLocale})); `properties` is its definition-level Component
+ * Properties (pre-fetched via webflow.getComponentProperties(component.id,
+ * {locale: sourceLocale})) -- a channel entirely separate from the DOM
+ * nodes (confirmed live: zero overlap), merged into the same translatable
+ * dict so a properties-only component (previously zero translatable
+ * content) is no longer silently skipped.
  */
-async function syncComponentIntoBatch({ projectUuid, component, nodes, targetLocales, namePattern, workflows }) {
-  const translatableNodes = webflowDom.extractTextNodes(nodes);
+async function syncComponentIntoBatch({ projectUuid, component, nodes, properties, targetLocales, namePattern, workflows }) {
+  const translatableContent = {
+    ...webflowDom.extractTextNodes(nodes),
+    ...webflowDom.extractComponentProperties(properties),
+  };
   const filename = webflow.buildComponentResourceFileName(namePattern, { component });
 
   return syncTranslatableContentIntoBatch({
     projectUuid,
-    translatableContent: translatableNodes,
+    translatableContent,
     filename,
     targetLocales,
     workflows,
