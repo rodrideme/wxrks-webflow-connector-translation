@@ -89,9 +89,24 @@ export default function Translate() {
   // searchIndex below. highlightItemId briefly flashes/scrolls to a
   // clicked result's row once it appears in the opened leaf's table;
   // itemRowRefs holds each visible row's DOM node so that scroll can happen.
+  // searchOpen is separate from searchTerm -- clicking outside the search
+  // box/dropdown hides the results without clearing what was typed, so the
+  // dropdown doesn't stay open (and cover the page) once focus moves away.
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [highlightItemId, setHighlightItemId] = useState(null);
   const itemRowRefs = useRef({});
+  const searchContainerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Starts true (rather than false + flip-on-effect) so the very first
   // render -- before the mount effect below has even resolved once -- shows
@@ -299,6 +314,7 @@ export default function Translate() {
     setMode("specific");
     setItemFilter("all");
     setSearchTerm("");
+    setSearchOpen(false);
     openLeaf(result.leafKind, result.leafId, result.leafLabel);
     setHighlightItemId(result.id);
   }
@@ -427,12 +443,24 @@ export default function Translate() {
     return entries;
   }, [collections, collectionSummaries, pages, pageFolders, components]);
 
+  // Capped PER KIND (not one combined slice) -- searchIndex is built
+  // collections-first, then pages, then components, so a flat
+  // .slice(0, N) let CMS items with many matches crowd out every page/
+  // component match entirely (confirmed live: searching "pricing" against
+  // a site with a large "Pricing Items" collection showed zero pages,
+  // even though a page named "Pricing" existed).
+  const SEARCH_RESULTS_PER_KIND_CAP = 10;
   const searchResults = (() => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return [];
-    return searchIndex
-      .filter((e) => e.label?.toLowerCase().includes(term) || e.slug?.toLowerCase().includes(term))
-      .slice(0, 25);
+    const matches = searchIndex.filter((e) => e.label?.toLowerCase().includes(term) || e.slug?.toLowerCase().includes(term));
+    const byKind = { cmsItem: [], page: [], component: [] };
+    for (const m of matches) byKind[m.kind].push(m);
+    return [
+      ...byKind.cmsItem.slice(0, SEARCH_RESULTS_PER_KIND_CAP),
+      ...byKind.page.slice(0, SEARCH_RESULTS_PER_KIND_CAP),
+      ...byKind.component.slice(0, SEARCH_RESULTS_PER_KIND_CAP),
+    ];
   })();
 
   // ---- Groups render data for the rail ----
@@ -817,15 +845,19 @@ export default function Translate() {
       </div>
 
       {mode === "specific" && initialDataLoaded && (
-        <div className="relative mb-4 w-full max-w-md">
+        <div ref={searchContainerRef} className="relative mb-4 w-full max-w-md">
           <input
             type="text"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
             placeholder="Search collections, pages, and components by name…"
             className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
           />
-          {searchTerm.trim() && (
+          {searchOpen && searchTerm.trim() && (
             <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-full overflow-auto rounded-md border border-border bg-surface shadow-card">
               {searchResults.length === 0 ? (
                 <p className="p-3 text-sm text-ink-faint">
