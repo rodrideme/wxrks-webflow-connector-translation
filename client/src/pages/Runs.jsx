@@ -4,8 +4,25 @@ import { wxrksProjectUrl } from "../wxrksLinks.js";
 import { formatDateTime, formatCompactDateTime } from "../formatDate.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
+import LoadingState from "../components/LoadingState.jsx";
 import { cadenceLabel } from "../runLabels.js";
 import { useAuth } from "../context/AuthContext.jsx";
+
+// Ticks its own elapsed-seconds display independent of the parent's
+// re-renders -- startedAt is a real dispatch timestamp (see
+// loadStartedAtRef below), so this counts up honestly against how long
+// the fetch has actually been in flight, not a fake/simulated progress bar.
+function DocumentsLoadingState({ startedAt, docCount }) {
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const label = docCount
+    ? `Loading ${docCount} document${docCount === 1 ? "" : "s"}… ${elapsed}s`
+    : `Loading documents… ${elapsed}s`;
+  return <LoadingState label={label} />;
+}
 
 function scopeSummary(contentScope, collections, pageFolders) {
   if (contentScope.scope === "all") return "every collection, page & component";
@@ -321,10 +338,15 @@ export default function Runs() {
   // fire duplicate fetches for every run, doubling load on an already
   // expensive endpoint and starving some requests past any reasonable wait.
   const dispatchedRunsRef = useRef(new Set());
+  // Real dispatch timestamps, keyed by run -- feeds DocumentsLoadingState's
+  // elapsed-seconds counter so it reflects how long the fetch has actually
+  // been running, including time spent waiting for an eager-load worker.
+  const loadStartedAtRef = useRef({});
 
   function loadRunWorkUnits(wxrksProjectUUID) {
     if (dispatchedRunsRef.current.has(wxrksProjectUUID)) return Promise.resolve(); // already fetched/fetching
     dispatchedRunsRef.current.add(wxrksProjectUUID);
+    loadStartedAtRef.current[wxrksProjectUUID] = Date.now();
     setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "loading" }));
     return api
       .getRunWorkUnits(wxrksProjectUUID)
@@ -342,10 +364,11 @@ export default function Runs() {
   // loadMoreHistory, and the search effect below) at a bounded concurrency
   // -- GET /work-units does real, non-trivial live Webflow work per run
   // (per-locale item reads, a pages/folders fetch), so firing all 10 at
-  // once risked hitting Webflow's own rate limiting and leaving later rows
-  // stuck "loading" or erroring out. Mirrors this app's existing
-  // SCAN_CONCURRENCY pattern (automationScheduler.js) for the same reason.
-  const EAGER_LOAD_CONCURRENCY = 3;
+  // once risked hitting Webflow's own rate limiting. Matches
+  // automationScheduler.js's SCAN_CONCURRENCY, the established safe limit
+  // this codebase already uses for the same class of Webflow-heavy fan-out
+  // -- HISTORY_PAGE_SIZE is 10, so this nearly parallelizes a full page.
+  const EAGER_LOAD_CONCURRENCY = 8;
   async function loadWorkUnitsForBatches(batches) {
     let index = 0;
     async function worker() {
@@ -915,9 +938,10 @@ export default function Runs() {
                     )}
 
                     {workUnits === "loading" || workUnits === undefined ? (
-                      <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
-                        Loading documents...
-                      </p>
+                      <DocumentsLoadingState
+                        startedAt={loadStartedAtRef.current[batch.wxrksProjectUUID] || Date.now()}
+                        docCount={batch.items.length}
+                      />
                     ) : workUnits === "error" ? (
                       <p className="text-sm" style={{ color: "var(--runs-error-fg)" }}>
                         Couldn't load documents for this run.
