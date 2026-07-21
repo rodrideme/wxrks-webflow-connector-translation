@@ -50,9 +50,9 @@ async function client() {
   // real (even occasional) 403 across that whole burst got retried up to
   // 5x with backoff instead of failing fast, which could inflate total
   // load time enough to look like a permanently stuck loading state.
-  // listStaticPages()'s dedup (below) already fixes the specific
-  // redundant-concurrent-request 403 this was originally added for,
-  // without this broader latency risk.
+  // listPages()'s TTL cache (below, via makeTtlCache) already fixes the
+  // specific redundant-concurrent-request 403 this was originally added
+  // for, without this broader latency risk.
   instance.interceptors.response.use(undefined, async (error) => {
     const { config, response } = error;
     if (response?.status !== 429 || !config || config.__retryCount >= 5) {
@@ -76,10 +76,48 @@ async function siteId() {
   return webflowSiteId;
 }
 
-async function listCollections() {
+// Structural Webflow content (collection/page/component *lists*, not item
+// content) changes only when someone edits it in Webflow's own Designer --
+// this app never creates/deletes/renames a collection, page, or component
+// itself, so there's no self-consistency risk in serving a slightly stale
+// list back to this app's own writes. This TTL only trades off "how long
+// until an external Designer edit becomes visible here" against "how many
+// redundant Webflow round trips a burst of navigation/polling causes" -- a
+// few minutes is far shorter than any realistic edit-then-immediately-
+// need-it workflow, and far shorter than automationScheduler.js's own
+// hourly/daily/weekly scan cadence.
+const STRUCTURAL_CACHE_TTL_MS = 3 * 60 * 1000;
+
+/**
+ * Wraps a zero-arg fetch function in a per-account TTL cache, mirroring
+ * siteLocalesCacheByAccount's Map-keyed-by-accountId idiom below but with
+ * an expiry (that cache is intentionally process-lifetime-only; this one
+ * is not). Caches the in-flight PROMISE, not its resolved value, so
+ * concurrent callers within the same tick also dedupe onto one real
+ * Webflow request -- this subsumes the old inFlightStaticPagesByAccount
+ * concurrent-caller dedup for every wrapped function, not just one. A
+ * rejected promise is evicted immediately so a transient failure doesn't
+ * poison the cache for the rest of the TTL window.
+ */
+function makeTtlCache(fetchFn, ttlMs = STRUCTURAL_CACHE_TTL_MS) {
+  const byAccount = new Map();
+  return async function cached() {
+    const accountContext = require("./accountContext");
+    const accountId = accountContext.getAccountId();
+    const entry = byAccount.get(accountId);
+    if (entry && entry.expiresAt > Date.now()) return entry.value;
+    const promise = fetchFn();
+    promise.catch(() => byAccount.delete(accountId));
+    byAccount.set(accountId, { value: promise, expiresAt: Date.now() + ttlMs });
+    return promise;
+  };
+}
+
+async function fetchCollections() {
   const { data } = await (await client()).get(`/sites/${await siteId()}/collections`);
   return data?.collections || [];
 }
+const listCollections = makeTtlCache(fetchCollections);
 
 /**
  * IMPORTANT (confirmed live + against Webflow's own docs): the CMS item
@@ -255,7 +293,7 @@ async function getCollection(collectionId) {
  * the CMS item sync -- callers should filter them out; see
  * `listStaticPages` below). Paginated the same way as `listAllItems`.
  */
-async function listPages() {
+async function fetchPages() {
   const limit = 100;
   let offset = 0;
   let pages = [];
@@ -272,35 +310,23 @@ async function listPages() {
 
   return pages;
 }
-
-// Dedupes truly-concurrent callers of listStaticPages() onto a single real
-// Webflow request instead of each firing their own -- confirmed live: the
-// Translate page's mount effect calls getPages() and getPageFolders() in
-// the same Promise.all, and getPageFolders() independently re-fetches the
-// same static-pages list internally, so on every page load Webflow sees
-// two near-simultaneous requests for identical data. That burst was
-// tripping Webflow's abuse protection into a transient 403 for one of the
-// two (this app's own 429-retry interceptor already documents Webflow
-// throttling under rapid concurrent requests -- this is the same class of
-// problem, just returned as 403 instead of 429).
-const inFlightStaticPagesByAccount = new Map();
+const listPages = makeTtlCache(fetchPages);
 
 /**
  * `listPages()` filtered to real static pages -- excludes CMS collection
  * template pages (identified by a non-null `collectionId`), which aren't
  * standalone translatable content and are already covered by CMS item sync.
+ * listPages() is already TTL-cached (and dedupes concurrent callers onto
+ * one in-flight request -- confirmed live this mattered: the Translate
+ * page's mount effect calls getPages() and getPageFolders() in the same
+ * Promise.all, and getPageFolders() independently re-fetches this same
+ * list internally, so every page load used to fire two near-simultaneous
+ * requests for identical data), so this is just a filter, no fetch of its
+ * own.
  */
 async function listStaticPages() {
-  const accountContext = require("./accountContext");
-  const accountId = accountContext.getAccountId();
-  if (inFlightStaticPagesByAccount.has(accountId)) {
-    return inFlightStaticPagesByAccount.get(accountId);
-  }
-  const promise = listPages()
-    .then((pages) => pages.filter((p) => !p.collectionId))
-    .finally(() => inFlightStaticPagesByAccount.delete(accountId));
-  inFlightStaticPagesByAccount.set(accountId, promise);
-  return promise;
+  const pages = await listPages();
+  return pages.filter((p) => !p.collectionId);
 }
 
 // Sentinel for pages with a null `parentId` (not nested in any folder) --
@@ -327,7 +353,7 @@ async function getPageFolder(folderId) {
  * top level, under NO_FOLDER_ID). Used by the Automation wizard's Pages
  * scope picker.
  */
-async function listPageFolders() {
+async function fetchPageFolders() {
   const pages = await listStaticPages();
   const folderIds = [...new Set(pages.map((p) => p.parentId).filter(Boolean))];
   const folders = await Promise.all(folderIds.map(getPageFolder));
@@ -351,6 +377,7 @@ async function listPageFolders() {
 
   return result;
 }
+const listPageFolders = makeTtlCache(fetchPageFolders);
 
 /**
  * Batch sibling of getPageFolder -- resolves every distinct folder id in
@@ -438,7 +465,7 @@ async function updatePageDom(pageId, locale, nodeUpdates) {
  * the real site, one call). Each entry is identity-only (`{id, name,
  * description, group}`) -- no content, unlike CMS items' `fieldData`.
  */
-async function listComponents() {
+async function fetchComponents() {
   const limit = 100;
   let offset = 0;
   let components = [];
@@ -455,6 +482,7 @@ async function listComponents() {
 
   return components;
 }
+const listComponents = makeTtlCache(fetchComponents);
 
 /**
  * Fetches a component's DOM content -- IMPORTANT (confirmed live): unlike

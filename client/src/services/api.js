@@ -1,3 +1,13 @@
+import dataCache from "./dataCache.js";
+
+// Structural Webflow content (which collections/pages/components/org units
+// exist) only changes when someone edits it in Webflow's/wxrks's own UI,
+// not through this app -- safe to serve slightly stale within one browser
+// tab's session. `settings` has real in-app mutators (see below), so it
+// gets a shorter TTL as a safety net on top of explicit invalidation.
+const STRUCTURAL_TTL_MS = 60 * 1000;
+const SETTINGS_TTL_MS = 20 * 1000;
+
 // Render's free tier spins the app down when idle -- the first request after
 // a spin-down can take 10-15s to wake it back up, and requests made while
 // it's still coming up can fail with a transient 5xx or a network-level
@@ -54,7 +64,7 @@ const api = {
   onUnauthorized: null,
   getMe: () => request("/auth/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
-  getCollections: () => request("/collections"),
+  getCollections: () => dataCache.getOrFetch("collections", STRUCTURAL_TTL_MS, () => request("/collections")),
   getCollectionItems: (collectionId) => request(`/collections/${collectionId}/items`),
   getCollectionItemsSummary: (collectionId, offset = 0) => request(`/collections/${collectionId}/items-summary?offset=${offset}`),
   getBacklog: () => request("/backlog"),
@@ -65,12 +75,15 @@ const api = {
     request("/sync/combined", { method: "POST", body: JSON.stringify({ groups, ...options }) }),
   getSyncJob: (jobId) => request(`/sync/jobs/${jobId}`),
   cancelSyncJob: (jobId) => request(`/sync/jobs/${jobId}/cancel`, { method: "POST" }),
-  getSettings: () => request("/settings"),
+  getSettings: () => dataCache.getOrFetch("settings", SETTINGS_TTL_MS, () => request("/settings")),
   updateSettings: (settings) =>
-    request("/settings", { method: "PUT", body: JSON.stringify(settings) }),
-  getOrgUnits: () => request("/config/org-units"),
+    request("/settings", { method: "PUT", body: JSON.stringify(settings) }).then((updated) => {
+      dataCache.invalidate("settings");
+      return updated;
+    }),
+  getOrgUnits: () => dataCache.getOrFetch("orgUnits", STRUCTURAL_TTL_MS, () => request("/config/org-units")),
   getOrgUnitResources: (orgUnitUUID) => request(`/config/org-units/${orgUnitUUID}/resources`),
-  getWebflowLocales: () => request("/config/webflow-locales"),
+  getWebflowLocales: () => dataCache.getOrFetch("webflowLocales", STRUCTURAL_TTL_MS, () => request("/config/webflow-locales")),
   getSyncHistory: () => request("/sync/history"),
   getRunWorkUnits: (wxrksProjectUUID) => request(`/sync/history/${wxrksProjectUUID}/work-units`),
   getCollectionFields: (collectionId) => request(`/collections/${collectionId}/fields`),
@@ -83,17 +96,31 @@ const api = {
   reregisterAutoSyncWebhook: () => request("/settings/autosync/reregister-webhook", { method: "POST" }),
   reregisterPagesWebhook: () => request("/settings/autosync/reregister-pages-webhook", { method: "POST" }),
   saveWxrksConnection: (accessKey, secret) =>
-    request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }),
-  deleteWxrksConnection: () => request("/settings/wxrks-connection", { method: "DELETE" }),
+    request("/settings/wxrks-connection", { method: "PUT", body: JSON.stringify({ accessKey, secret }) }).then((res) => {
+      dataCache.invalidate("settings"); // response embeds wxrksConnected/wxrksAccessKeyMasked
+      return res;
+    }),
+  deleteWxrksConnection: () =>
+    request("/settings/wxrks-connection", { method: "DELETE" }).then((res) => {
+      dataCache.invalidate("settings");
+      return res;
+    }),
   testWxrksConnection: () => request("/settings/wxrks-connection/test", { method: "POST" }),
   saveLlmConnection: (apiKey) =>
-    request("/settings/llm-connection", { method: "PUT", body: JSON.stringify({ apiKey }) }),
-  deleteLlmConnection: () => request("/settings/llm-connection", { method: "DELETE" }),
-  getPages: () => request("/sync/pages/list"),
-  getPageFolders: () => request("/sync/pages/folders"),
+    request("/settings/llm-connection", { method: "PUT", body: JSON.stringify({ apiKey }) }).then((res) => {
+      dataCache.invalidate("settings"); // response embeds llmConnected/llmApiKeyMasked
+      return res;
+    }),
+  deleteLlmConnection: () =>
+    request("/settings/llm-connection", { method: "DELETE" }).then((res) => {
+      dataCache.invalidate("settings");
+      return res;
+    }),
+  getPages: () => dataCache.getOrFetch("pages", STRUCTURAL_TTL_MS, () => request("/sync/pages/list")),
+  getPageFolders: () => dataCache.getOrFetch("pageFolders", STRUCTURAL_TTL_MS, () => request("/sync/pages/folders")),
   syncPagesItem: (pageIds, options = {}) =>
     request("/sync/pages/item", { method: "POST", body: JSON.stringify({ pageIds, ...options }) }),
-  getComponents: () => request("/sync/components/list"),
+  getComponents: () => dataCache.getOrFetch("components", STRUCTURAL_TTL_MS, () => request("/sync/components/list")),
   syncComponentsItem: (componentIds, options = {}) =>
     request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds, ...options }) }),
   listAutomations: () => request("/automations"),

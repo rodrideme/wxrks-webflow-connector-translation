@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api.js";
+import dataCache from "../services/dataCache.js";
 import Card from "../components/Card.jsx";
 import ContentBrowserRail from "../components/ContentBrowserRail.jsx";
 import ReferenceFilterValue from "../components/ReferenceFilterValue.jsx";
@@ -13,6 +14,10 @@ import { webflowStatusPill } from "../statusHelpers.jsx";
 
 const NO_FOLDER_ID = "__root__";
 const JOB_POLL_INTERVAL_MS = 1200;
+// Shorter than dataCache's structural-list TTL (60s) since this reflects
+// item word counts, not pure identity/structure -- a translation sync this
+// app itself just ran could plausibly change these within a minute.
+const COLLECTION_SUMMARY_TTL_MS = 30 * 1000;
 
 const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference", "WebflowStatus"];
 
@@ -195,17 +200,31 @@ export default function Translate() {
   async function loadCollectionSummary(collectionId, attempt = 1) {
     if (collectionSummaries[collectionId]) return collectionSummaries[collectionId];
     try {
-      let offset = 0;
-      let accumulated = [];
-      let total = Infinity;
-      while (accumulated.length < total) {
-        const res = await api.getCollectionItemsSummary(collectionId, offset);
-        accumulated = accumulated.concat(res.items);
-        total = res.total;
-        offset += res.items.length;
-        setItemsLoadedByCollection((prev) => ({ ...prev, [collectionId]: accumulated.length }));
-        if (res.items.length === 0) break; // safety against an infinite loop on a malformed response
-      }
+      // Cache hit (warm return visit -- e.g. navigated away and back):
+      // resolves with the fully-assembled array from a prior mount's
+      // completed pagination loop, near-instantly, and the fetchFn body
+      // below never runs. Cache miss (cold mount, or expired): fetchFn IS
+      // the exact original pagination loop, unchanged, so every
+      // intermediate setItemsLoadedByCollection call still fires and the
+      // progressive "X items counted" counter climbs exactly as before.
+      const accumulated = await dataCache.getOrFetch(`collectionSummary:${collectionId}`, COLLECTION_SUMMARY_TTL_MS, async () => {
+        let offset = 0;
+        let acc = [];
+        let total = Infinity;
+        while (acc.length < total) {
+          const res = await api.getCollectionItemsSummary(collectionId, offset);
+          acc = acc.concat(res.items);
+          total = res.total;
+          offset += res.items.length;
+          setItemsLoadedByCollection((prev) => ({ ...prev, [collectionId]: acc.length }));
+          if (res.items.length === 0) break; // safety against an infinite loop on a malformed response
+        }
+        return acc;
+      });
+      // On a cache hit, the incremental updates above never ran -- set the
+      // final count directly so itemsCountedSoFar's sum is correct on this
+      // render, not just once collectionSummaries updates on the next tick.
+      setItemsLoadedByCollection((prev) => ({ ...prev, [collectionId]: accumulated.length }));
       setCollectionSummaries((prev) => ({ ...prev, [collectionId]: accumulated }));
       setCollectionSummaryErrors((prev) => {
         if (!(collectionId in prev)) return prev;
