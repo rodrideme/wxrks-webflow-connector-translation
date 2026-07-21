@@ -33,6 +33,45 @@
   --auto-dot: #22b4c2;
 
   --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+
+  /* Runs page History tab -- exact hex values from the approved mockup,
+     scoped to that page only (see Runs.jsx), not the app's shared design-
+     system tokens above. Dark-mode values below are sensible reuses of the
+     app's existing dark palette (the mockup itself is light-only). */
+  --runs-page-bg: #f4f4f6;
+  --runs-card-bg: #ffffff;
+  --runs-card-border: #e6e6ea;
+  --runs-card-border-error: #f0cccc;
+  --runs-text-primary: #17171c;
+  --runs-text-secondary: #45454e;
+  --runs-text-muted: #6d6d78;
+  --runs-text-faint: #9a9aa4;
+  --runs-link: #4b47d6;
+  --runs-link-hover: #322fae;
+  --runs-expanded-bg: #fafafc;
+  --runs-expanded-border: #ececf0;
+  --runs-row-divider: #f2f2f5;
+  --runs-lang-chip-bg: #f0f0f4;
+  --runs-lang-chip-text: #55555e;
+  --runs-search-border: #dcdce2;
+  --runs-filter-active-bg: #17171c;
+  --runs-filter-active-text: #ffffff;
+  --runs-filter-inactive-text: #55555e;
+  --runs-synced-bg: #e8f6ee;
+  --runs-synced-fg: #1c7a45;
+  --runs-synced-dot: #2ca35e;
+  --runs-error-bg: #fdecec;
+  --runs-error-fg: #b03030;
+  --runs-error-dot: #d64545;
+  --runs-partial-bg: #fdf4e3;
+  --runs-partial-fg: #96690f;
+  --runs-partial-dot: #d9a222;
+  --runs-pending-bg: #eef0fb;
+  --runs-pending-fg: #4b47d6;
+  --runs-pending-dot: #4b47d6;
+  --runs-error-banner-bg: #fdf1f1;
+  --runs-error-banner-border: #f3d2d2;
+  --runs-error-banner-fg: #a13232;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -65,6 +104,41 @@
     --auto-fg: #4fd6e2;
     --auto-bg: #103338;
     --auto-dot: #2fbfcc;
+
+    --runs-page-bg: var(--canvas);
+    --runs-card-bg: var(--surface);
+    --runs-card-border: var(--border);
+    --runs-card-border-error: #4a2a2c;
+    --runs-text-primary: var(--text);
+    --runs-text-secondary: var(--text-soft);
+    --runs-text-muted: #7d8298;
+    --runs-text-faint: var(--text-faint);
+    --runs-link: var(--accent-text);
+    --runs-link-hover: #c3c9ff;
+    --runs-expanded-bg: #20222d;
+    --runs-expanded-border: var(--border);
+    --runs-row-divider: #282a38;
+    --runs-lang-chip-bg: #262838;
+    --runs-lang-chip-text: #aeb3cc;
+    --runs-search-border: var(--border-strong);
+    --runs-filter-active-bg: #e7e8f2;
+    --runs-filter-active-text: #14151d;
+    --runs-filter-inactive-text: var(--text-soft);
+    --runs-synced-bg: var(--success-bg);
+    --runs-synced-fg: var(--success-fg);
+    --runs-synced-dot: var(--success-dot);
+    --runs-error-bg: var(--error-bg);
+    --runs-error-fg: var(--error-fg);
+    --runs-error-dot: var(--error-dot);
+    --runs-partial-bg: var(--prog-bg);
+    --runs-partial-fg: var(--prog-fg);
+    --runs-partial-dot: var(--prog-dot);
+    --runs-pending-bg: var(--accent-subtle);
+    --runs-pending-fg: var(--accent-text);
+    --runs-pending-dot: var(--accent-text);
+    --runs-error-banner-bg: #3a1b1d;
+    --runs-error-banner-border: #4a2a2c;
+    --runs-error-banner-fg: #f5787c;
   }
 }
 
@@ -76,6 +150,15 @@ body {
 .font-mono,
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* Runs page History tab links (see index.css's --runs-* tokens above). */
+.runs-link {
+  color: var(--runs-link);
+}
+.runs-link:hover {
+  color: var(--runs-link-hover);
+  text-decoration: underline;
 }
 
 @keyframes status-pulse {

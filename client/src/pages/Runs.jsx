@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
-import { formatDateTime } from "../formatDate.js";
+import { formatDateTime, formatCompactDateTime } from "../formatDate.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
-import Chip from "../components/Chip.jsx";
 import { cadenceLabel } from "../runLabels.js";
 import { useAuth } from "../context/AuthContext.jsx";
-
-const linkClass = "font-medium text-accent-text hover:underline";
 
 function scopeSummary(contentScope, collections, pageFolders) {
   if (contentScope.scope === "all") return "every collection, page & component";
@@ -110,6 +107,103 @@ function langChips(targetLocales) {
   return targetLocales.length > 2 ? [targetLocales[0], `+${targetLocales.length - 1}`] : targetLocales;
 }
 
+// Exact stroke-icon paths from the approved Runs page mockup (24x24
+// viewBox, stroke="currentColor", no icon library used anywhere else in
+// this app -- see Card/StatusPill/Chip, which are all plain markup).
+const RUN_ICON_PATHS = {
+  search: "M11 4a7 7 0 105.2 11.7L21 21l-4.8-5.3A7 7 0 0011 4z",
+  alert: "M12 3l10 18H2L12 3zm0 7v4m0 3v.5",
+  ext: "M14 4h6v6M20 4L10 14M9 5H5v14h14v-4",
+  clock: "M12 3a9 9 0 100 18 9 9 0 000-18zm0 4v5l3 3",
+  funnel: "M3 5h18l-7 8v6l-4-2v-4L3 5z",
+  calendar: "M8 2v4M16 2v4M3 8h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
+  file: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6",
+};
+
+function RunIcon({ path, size = 14, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={"flex-none " + className}
+    >
+      <path d={RUN_ICON_PATHS[path]} />
+    </svg>
+  );
+}
+
+// "Open in wxrks"/"Open in Webflow"/"View live" links -- 12.5px/600, the
+// mockup's link color (--runs-link), external-link icon instead of an
+// arrow glyph.
+function RunExternalLink({ href, onClick, children }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      onClick={onClick}
+      className="runs-link inline-flex items-center gap-1 whitespace-nowrap text-[12.5px] font-semibold"
+    >
+      {children}
+      <RunIcon path="ext" size={12} />
+    </a>
+  );
+}
+
+// One of the mockup's 4 status variants -- distinct from the shared
+// StatusPill component (used elsewhere in this app), since these are
+// exact mockup hex values via the --runs-* tokens, not this app's usual
+// design-system palette.
+function RunStatusPill({ variant, label }) {
+  const vars = {
+    synced: ["--runs-synced-bg", "--runs-synced-fg", "--runs-synced-dot"],
+    error: ["--runs-error-bg", "--runs-error-fg", "--runs-error-dot"],
+    partial: ["--runs-partial-bg", "--runs-partial-fg", "--runs-partial-dot"],
+    pending: ["--runs-pending-bg", "--runs-pending-fg", "--runs-pending-dot"],
+  }[variant] || ["--runs-pending-bg", "--runs-pending-fg", "--runs-pending-dot"];
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pl-2 pr-2.5 text-[11px] font-semibold"
+      style={{ backgroundColor: `var(${vars[0]})`, color: `var(${vars[1]})` }}
+    >
+      <span className="h-1.5 w-1.5 flex-none rounded-full" style={{ backgroundColor: `var(${vars[2]})` }} />
+      {label}
+    </span>
+  );
+}
+
+// Lang chip -- uppercase code, --runs-lang-chip-* tokens, 5px radius (not
+// quite any of Tailwind's default rounded-* steps).
+function RunLangChip({ children }) {
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-semibold uppercase"
+      style={{ backgroundColor: "var(--runs-lang-chip-bg)", color: "var(--runs-lang-chip-text)", borderRadius: 5 }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ModeIcon({ mode }) {
+  const isRecurring = mode === "automation";
+  return (
+    <span
+      title={isRecurring ? "Recurring — re-syncs automatically" : "One-send — sent once"}
+      className="inline-flex flex-none"
+      style={{ color: "var(--runs-text-faint)" }}
+    >
+      <RunIcon path={isRecurring ? "calendar" : "file"} size={14} />
+    </span>
+  );
+}
+
 /**
  * Groups GET /work-units' flat (item x locale) rows back into one row per
  * document, keyed by entityId (not workUnitName -- a user-configurable
@@ -204,7 +298,6 @@ export default function Runs() {
   const [orgUnits, setOrgUnits] = useState([]);
   const [timezone, setTimezone] = useState(undefined);
   const [activeTab, setActiveTab] = useState(initialTabFromHash);
-  const [logType, setLogType] = useState("all"); // all | one-time | recurring
   const [historySearch, setHistorySearch] = useState("");
   const [historyStatusFilter, setHistoryStatusFilter] = useState("all"); // all | synced | issues
   const [historyOffset, setHistoryOffset] = useState(0);
@@ -367,10 +460,6 @@ export default function Runs() {
   };
   const historySearchTerm = historySearch.trim().toLowerCase();
   const filteredHistory = historyBuckets.filter(({ batch, status }) => {
-    if (logType !== "all") {
-      const type = batch.mode === "automation" ? "recurring" : "one-time";
-      if (type !== logType) return false;
-    }
     if (historyStatusFilter !== "all" && status.bucket !== historyStatusFilter) return false;
     if (historySearchTerm && !(batch.reference || batch.wxrksProjectUUID).toLowerCase().includes(historySearchTerm)) return false;
     return true;
@@ -547,76 +636,81 @@ export default function Runs() {
       )}
 
       {activeTab === "history" && (
-      <>
+      <div style={{ fontFamily: "'Instrument Sans', system-ui, sans-serif" }}>
       {/* History */}
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <div className="max-w-[320px] flex-1">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative max-w-[340px] flex-1">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--runs-text-faint)" }}>
+            <RunIcon path="search" size={15} />
+          </span>
           <input
             type="text"
             value={historySearch}
             onChange={(e) => setHistorySearch(e.target.value)}
-            placeholder="Search runs…"
-            className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
+            placeholder="Search projects…"
+            className="w-full py-2 pl-9 pr-3 text-[13.5px] outline-none"
+            style={{
+              borderRadius: 9,
+              border: "1px solid var(--runs-search-border)",
+              backgroundColor: "var(--runs-card-bg)",
+              color: "var(--runs-text-primary)",
+            }}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           {[
             ["all", "All"],
             ["synced", "Synced"],
             ["issues", "Issues"],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setHistoryStatusFilter(value)}
-              className={
-                "rounded-full border px-3 py-1 text-xs font-semibold " +
-                (historyStatusFilter === value ? "border-ink bg-ink text-canvas" : "border-border-strong bg-surface text-ink-soft")
-              }
-            >
-              {label} <span className="ml-1 tabular-nums opacity-70">{historyStatusCounts[value]}</span>
-            </button>
-          ))}
+          ].map(([value, label]) => {
+            const active = historyStatusFilter === value;
+            return (
+              <button
+                key={value}
+                onClick={() => setHistoryStatusFilter(value)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12.5px] font-medium"
+                style={{
+                  backgroundColor: active ? "var(--runs-filter-active-bg)" : "var(--runs-card-bg)",
+                  color: active ? "var(--runs-filter-active-text)" : "var(--runs-filter-inactive-text)",
+                  border: `1px solid ${active ? "var(--runs-filter-active-bg)" : "var(--runs-search-border)"}`,
+                }}
+              >
+                {label}
+                <span className="tabular-nums opacity-70">{historyStatusCounts[value]}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="flex gap-2">
-          {[
-            ["all", "All modes"],
-            ["one-time", "One-time"],
-            ["recurring", "Recurring"],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setLogType(value)}
-              className={
-                "rounded-full border px-3 py-1 text-xs font-semibold " +
-                (logType === value ? "border-ink bg-ink text-canvas" : "border-border-strong bg-surface text-ink-soft")
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className="ml-auto whitespace-nowrap text-xs text-ink-faint">
+        <span className="ml-auto whitespace-nowrap text-[12.5px]" style={{ color: "#8a8a94" }}>
           {filteredHistory.length} of {(history || []).length} runs
         </span>
       </div>
 
       {history === null ? (
-        <p className="text-sm text-ink-soft">Loading history...</p>
+        <p className="text-sm" style={{ color: "var(--runs-text-muted)" }}>
+          Loading history...
+        </p>
       ) : filteredHistory.length === 0 ? (
-        <Card className="p-6 text-center text-sm text-ink-faint">
+        <div
+          className="p-6 text-center text-sm"
+          style={{ backgroundColor: "var(--runs-card-bg)", border: "1px solid var(--runs-card-border)", borderRadius: 12, color: "var(--runs-text-faint)" }}
+        >
           {historySearchTerm ? `No runs match "${historySearch.trim()}"` : "No runs of this type yet."}
-        </Card>
+        </div>
       ) : (
         <>
-        <div className="mb-1.5 hidden items-center gap-3 px-4 text-[10.5px] font-bold uppercase tracking-wide text-ink-faint sm:flex">
-          <span className="w-3 flex-none" />
+        <div
+          className="mb-2 hidden items-center gap-2.5 px-3.5 text-[11px] font-semibold uppercase tracking-[0.06em] sm:flex"
+          style={{ color: "var(--runs-text-faint)" }}
+        >
+          <span className="w-3.5 flex-none" />
           <span className="min-w-0 flex-1">Project</span>
-          <span className="w-12 flex-none text-right">Docs</span>
-          <span className="w-16 flex-none text-right">Words</span>
-          <span className="w-24 flex-none">Langs</span>
-          <span className="w-[104px] flex-none">Sent to wxrks</span>
-          <span className="w-[104px] flex-none">Updated on Webflow</span>
-          <span className="w-24 flex-none text-right">Status</span>
+          <span className="w-[30px] flex-none text-right">Docs</span>
+          <span className="w-12 flex-none text-right">Words</span>
+          <span className="w-[72px] flex-none">Langs</span>
+          <span className="w-[86px] flex-none">Works</span>
+          <span className="w-[86px] flex-none">Webflow</span>
+          <span className="w-[66px] flex-none text-right">Status</span>
         </div>
         <div className="flex flex-col gap-2">
           {filteredHistory.map(({ batch, status }) => {
@@ -624,150 +718,216 @@ export default function Runs() {
             const workUnits = workUnitsByRun[batch.wxrksProjectUUID];
             const documents = Array.isArray(workUnits) ? groupWorkUnitsByDocument(workUnits, batch) : null;
             const wordCount = batch.items.reduce((sum, i) => sum + (i.wordCount || 0), 0);
+            const runVariant = status.hasErrors ? "error" : status.complete ? "synced" : "pending";
+            const runLabel = status.hasErrors ? "Issues" : status.complete ? "Synced" : "Pending";
             return (
-              <Card id={batch.wxrksProjectUUID} key={batch.wxrksProjectUUID}>
+              <div
+                key={batch.wxrksProjectUUID}
+                id={batch.wxrksProjectUUID}
+                style={{
+                  backgroundColor: "var(--runs-card-bg)",
+                  border: `1px solid ${status.hasErrors ? "var(--runs-card-border-error)" : "var(--runs-card-border)"}`,
+                  borderRadius: 12,
+                  boxShadow: "0 1px 2px rgba(23,23,28,0.04)",
+                  overflow: "hidden",
+                }}
+              >
                 <div
                   onClick={() => toggleRunWorkUnits(batch.wxrksProjectUUID)}
-                  className="flex flex-wrap items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-sunken"
+                  className="flex flex-wrap items-center gap-2.5 cursor-pointer"
+                  style={{ padding: 14 }}
                 >
-                  <span className={"w-3 flex-none text-[10px] text-ink-faint transition-transform " + (isOpen ? "rotate-90" : "")}>▸</span>
+                  <span
+                    className="flex-none transition-transform"
+                    style={{ color: "var(--runs-text-faint)", transform: isOpen ? "rotate(90deg)" : undefined }}
+                  >
+                    <RunIcon path="chevron" size={14} />
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2.5">
                       {batch.reference ? (
-                        <span className="truncate text-[13.5px] font-semibold text-ink">{batch.reference}</span>
+                        <span className="truncate text-[14px] font-semibold" style={{ color: "var(--runs-text-primary)" }}>
+                          {batch.reference}
+                        </span>
                       ) : (
-                        <span className="truncate font-mono text-[12px] text-ink-faint">{batch.wxrksProjectUUID}</span>
+                        <span
+                          className="truncate text-[14px]"
+                          style={{ color: "var(--runs-text-muted)", fontFamily: "'JetBrains Mono', monospace" }}
+                        >
+                          {batch.wxrksProjectUUID}
+                        </span>
                       )}
-                      <span
-                        className={
-                          "rounded-full px-2 py-0.5 text-[10.5px] font-semibold " +
-                          (batch.mode === "automation" ? "bg-status-auto-bg text-status-auto-fg" : "bg-accent-subtle text-accent-text")
-                        }
-                      >
-                        {batch.mode === "automation" ? "Recurring" : "One-time"}
-                      </span>
-                      <a
-                        href={wxrksProjectUrl(batch.wxrksProjectUUID)}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className={linkClass + " whitespace-nowrap text-xs"}
-                      >
-                        Open in wxrks →
-                      </a>
+                      <ModeIcon mode={batch.mode} />
+                      <RunExternalLink href={wxrksProjectUrl(batch.wxrksProjectUUID)} onClick={(e) => e.stopPropagation()}>
+                        Open in wxrks
+                      </RunExternalLink>
                     </div>
                   </div>
-                  <span className="w-12 flex-none text-right font-mono text-[12.5px] tabular-nums text-ink-soft">{batch.items.length}</span>
-                  <span className="w-16 flex-none text-right font-mono text-[12.5px] tabular-nums text-ink-soft">{wordCount.toLocaleString()}</span>
-                  <span className="flex w-24 flex-none flex-wrap gap-1">
+                  <span className="w-[30px] flex-none text-right text-[13px] tabular-nums" style={{ color: "var(--runs-text-secondary)" }}>
+                    {batch.items.length}
+                  </span>
+                  <span className="w-12 flex-none text-right text-[13px] tabular-nums" style={{ color: "var(--runs-text-secondary)" }}>
+                    {wordCount.toLocaleString()}
+                  </span>
+                  <span className="flex w-[72px] flex-none flex-wrap gap-1">
                     {langChips(batch.targetLocales).map((l) => (
-                      <Chip key={l}>{l}</Chip>
+                      <RunLangChip key={l}>{l}</RunLangChip>
                     ))}
                   </span>
-                  <span className="w-[104px] flex-none text-[12px] text-ink-soft">{formatDateTime(batch.createdAt, timezone)}</span>
-                  <span className="w-[104px] flex-none text-[12px] text-ink-soft">
-                    {status.latestDeliveredAt ? formatDateTime(status.latestDeliveredAt, timezone) : "—"}
+                  <span className="w-[86px] flex-none text-[11.5px]" style={{ color: "var(--runs-text-muted)" }}>
+                    {formatCompactDateTime(batch.createdAt, timezone)}
                   </span>
-                  <span className="w-24 flex-none text-right">
-                    {status.hasErrors ? (
-                      <StatusPill variant="error" label="Issues" />
-                    ) : status.complete ? (
-                      <StatusPill variant="success" label="Synced" />
-                    ) : (
-                      <StatusPill variant="progress" label="In progress" />
-                    )}
+                  <span className="w-[86px] flex-none text-[11.5px]" style={{ color: "var(--runs-text-muted)" }}>
+                    {status.latestDeliveredAt ? formatCompactDateTime(status.latestDeliveredAt, timezone) : "—"}
+                  </span>
+                  <span className="w-[66px] flex-none text-right">
+                    <RunStatusPill variant={runVariant} label={runLabel} />
                   </span>
                 </div>
 
                 {isOpen && (
-                  <div className="border-t border-border bg-surface-sunken px-4 py-3">
-                    <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-ink-soft">
+                  <div
+                    style={{
+                      borderTop: "1px solid var(--runs-expanded-border)",
+                      backgroundColor: "var(--runs-expanded-bg)",
+                      padding: 16,
+                      overflowX: "auto",
+                    }}
+                  >
+                    <div
+                      className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px]"
+                      style={{ color: "var(--runs-text-muted)" }}
+                    >
                       {batch.contentScope && (
-                        <span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <RunIcon path="funnel" size={13} />
                           Sync criteria:{" "}
-                          <strong className="font-semibold text-ink">{scopeSummary(batch.contentScope, collections, pageFolders)}</strong>
+                          <strong className="font-semibold" style={{ color: "var(--runs-text-primary)" }}>
+                            {scopeSummary(batch.contentScope, collections, pageFolders)}
+                          </strong>
                         </span>
                       )}
-                      <span className="ml-auto">
-                        Time to translate: <strong className="font-semibold text-ink">{formatDuration(batch.createdAt, status)}</strong>
+                      <span
+                        className="ml-auto inline-flex items-center gap-1.5"
+                        title="First file sent to wxrks until last file updated on Webflow"
+                      >
+                        <RunIcon path="clock" size={13} />
+                        Time to translate:{" "}
+                        <strong className="font-semibold" style={{ color: "var(--runs-text-primary)" }}>
+                          {formatDuration(batch.createdAt, status)}
+                        </strong>
                       </span>
                     </div>
 
                     {status.hasErrors && (
-                      <div className="mb-3 rounded-md border border-status-error-bg bg-status-error-bg p-3">
-                        <div className="flex flex-col gap-1.5">
-                          {status.errors.map((e, i) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <span className="text-status-error-fg">⚠</span>
-                              <div>
-                                <span className="text-ink-soft">
-                                  {e.entityId} ({e.locale})
-                                </span>
-                                <div className="mt-0.5 rounded bg-surface px-2 py-1 font-mono text-[11.5px] text-status-error-fg">{e.error}</div>
+                      <div
+                        className="mb-3 flex flex-col gap-1.5 text-[13px]"
+                        style={{
+                          backgroundColor: "var(--runs-error-banner-bg)",
+                          border: "1px solid var(--runs-error-banner-border)",
+                          borderRadius: 9,
+                          padding: 12,
+                          color: "var(--runs-error-banner-fg)",
+                        }}
+                      >
+                        {status.errors.map((e, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <RunIcon path="alert" size={13} className="mt-0.5" />
+                            <div>
+                              <span>
+                                {e.entityId} ({e.locale})
+                              </span>
+                              <div
+                                className="mt-0.5 rounded px-2 py-1 font-mono text-[11.5px]"
+                                style={{ backgroundColor: "var(--runs-card-bg)" }}
+                              >
+                                {e.error}
                               </div>
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
                       </div>
                     )}
 
                     {workUnits === "loading" || workUnits === undefined ? (
-                      <p className="text-sm text-ink-faint">Loading documents...</p>
+                      <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
+                        Loading documents...
+                      </p>
                     ) : workUnits === "error" ? (
-                      <p className="text-sm text-status-error-fg">Couldn't load documents for this run.</p>
+                      <p className="text-sm" style={{ color: "var(--runs-error-fg)" }}>
+                        Couldn't load documents for this run.
+                      </p>
                     ) : documents.length === 0 ? (
-                      <p className="text-sm text-ink-faint">No documents in this run.</p>
+                      <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
+                        No documents in this run.
+                      </p>
                     ) : (
-                      <div className="overflow-x-auto rounded-md border border-border bg-surface">
-                        <table className="w-full text-left text-[12.5px]">
+                      <div
+                        className="overflow-x-auto"
+                        style={{ backgroundColor: "var(--runs-card-bg)", border: "1px solid var(--runs-card-border)", borderRadius: 9 }}
+                      >
+                        <table className="w-full text-left text-[13px]">
                           <thead>
-                            <tr className="border-b border-border bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                            <tr
+                              className="text-[11px] font-semibold uppercase tracking-wide"
+                              style={{ borderBottom: "1px solid var(--runs-card-border)", color: "var(--runs-text-faint)" }}
+                            >
                               <th className="px-3 py-2">Document</th>
                               <th className="px-3 py-2 text-right">Words</th>
                               <th className="px-3 py-2">Languages</th>
-                              <th className="px-3 py-2">Sent to wxrks</th>
+                              <th className="px-3 py-2">Updated on Works</th>
                               <th className="px-3 py-2">Updated on Webflow</th>
                               <th className="px-3 py-2">Status</th>
                               <th className="px-3 py-2" />
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-border">
-                            {documents.map((doc) => (
-                              <tr key={doc.entityId}>
-                                <td className="px-3 py-2 font-mono text-ink">{doc.workUnitName}</td>
-                                <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-soft">{doc.words.toLocaleString()}</td>
-                                <td className="px-3 py-2 text-ink-soft">{doc.locales.join(", ")}</td>
-                                <td className="px-3 py-2 text-ink-soft">{formatDateTime(batch.createdAt, timezone)}</td>
-                                <td className="px-3 py-2 text-ink-soft">
-                                  {doc.latestUpdatedAt ? formatDateTime(doc.latestUpdatedAt, timezone) : <span className="text-ink-faint">—</span>}
-                                </td>
-                                <td className="px-3 py-2">
-                                  {doc.hasError ? (
-                                    <StatusPill variant="error" label="Error" />
-                                  ) : doc.allDelivered ? (
-                                    <StatusPill variant="success" label="Synced" />
-                                  ) : (
-                                    <StatusPill variant="progress" label="Pending" />
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  {doc.link ? (
-                                    <a href={doc.link.url} target="_blank" rel="noreferrer" className={linkClass}>
-                                      {doc.link.type === "published" ? "View live →" : "Open in Designer →"}
-                                    </a>
-                                  ) : (
-                                    <span className="text-ink-faint">—</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
+                          <tbody>
+                            {documents.map((doc, i) => {
+                              const docVariant = doc.hasError ? "error" : doc.allDelivered ? "synced" : "pending";
+                              const docLabel = doc.hasError ? "Error" : doc.allDelivered ? "Synced" : "Pending";
+                              return (
+                                <tr key={doc.entityId} style={{ borderTop: i === 0 ? undefined : "1px solid var(--runs-row-divider)" }}>
+                                  <td className="px-3 py-2" style={{ color: "var(--runs-text-primary)" }}>
+                                    {doc.workUnitName}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--runs-text-secondary)" }}>
+                                    {doc.words.toLocaleString()}
+                                  </td>
+                                  <td className="px-3 py-2 uppercase" style={{ color: "var(--runs-text-secondary)" }}>
+                                    {doc.locales.join(", ")}
+                                  </td>
+                                  <td className="px-3 py-2" style={{ color: "var(--runs-text-secondary)" }}>
+                                    {formatCompactDateTime(batch.createdAt, timezone)}
+                                  </td>
+                                  <td className="px-3 py-2" style={{ color: "var(--runs-text-secondary)" }}>
+                                    {doc.latestUpdatedAt ? (
+                                      formatCompactDateTime(doc.latestUpdatedAt, timezone)
+                                    ) : (
+                                      <span style={{ color: "var(--runs-text-faint)" }}>—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <RunStatusPill variant={docVariant} label={docLabel} />
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-right">
+                                    {doc.link ? (
+                                      <RunExternalLink href={doc.link.url}>
+                                        {doc.link.type === "published" ? "View live" : "Open in Designer"}
+                                      </RunExternalLink>
+                                    ) : (
+                                      <span style={{ color: "var(--runs-text-faint)" }}>—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
                     )}
                   </div>
                 )}
-              </Card>
+              </div>
             );
           })}
         </div>
@@ -780,13 +940,14 @@ export default function Runs() {
             type="button"
             onClick={loadMoreHistory}
             disabled={loadingMoreHistory}
-            className="rounded-md border border-border-strong bg-surface px-4 py-1.5 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md px-4 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ border: "1px solid var(--runs-search-border)", backgroundColor: "var(--runs-card-bg)", color: "var(--runs-text-secondary)" }}
           >
             {loadingMoreHistory ? "Loading…" : "Load more"}
           </button>
         </div>
       )}
-      </>
+      </div>
       )}
 
       {detailAutomation && (
