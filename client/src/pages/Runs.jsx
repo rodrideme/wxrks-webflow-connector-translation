@@ -390,6 +390,20 @@ export default function Runs() {
     setEagerBatchUuids(null);
   }
 
+  // Only these block the page-level loading screen -- the rest of a
+  // batch keeps eager-loading in the background (unawaited) so a later
+  // click is still usually instant, without making everyone wait on the
+  // slowest run in the whole page. 2 covers the auto-expanded most-recent
+  // run plus one more, matching what a user is actually likely to look at
+  // immediately. Doesn't change total concurrent Webflow traffic at any
+  // moment -- the background slice's workers only start once the
+  // priority slice's own Promise.all has fully resolved.
+  const PRIORITY_EAGER_COUNT = 2;
+  async function loadHistoryBatchPrioritized(batches) {
+    await loadWorkUnitsForBatches(batches.slice(0, PRIORITY_EAGER_COUNT));
+    loadWorkUnitsForBatches(batches.slice(PRIORITY_EAGER_COUNT)); // fire-and-forget
+  }
+
   function loadMoreHistory() {
     setLoadingMoreHistory(true);
     const search = historySearch.trim() || undefined;
@@ -401,7 +415,7 @@ export default function Runs() {
         // list -- by the time they appear, every card opens instantly. The
         // "Load more" button's own "Loading…" label already covers this
         // whole span (see loadingMoreHistory below), not just the list fetch.
-        await loadWorkUnitsForBatches(more);
+        await loadHistoryBatchPrioritized(more);
         setHistory((prev) => [...(prev || []), ...more]);
         setHistoryOffset((prev) => prev + more.length);
         setHistoryHasMore(more.length === HISTORY_PAGE_SIZE);
@@ -448,7 +462,7 @@ export default function Runs() {
         // -- the page shows one loading indicator (see the history === null
         // render branch) until every run's documents are ready, so by the
         // time a user sees any card, expanding it is instant.
-        await loadWorkUnitsForBatches(history);
+        await loadHistoryBatchPrioritized(history);
         setHistory(history);
         setHistoryOffset(history.length);
         setHistoryHasMore(history.length === HISTORY_PAGE_SIZE);
@@ -491,7 +505,7 @@ export default function Runs() {
           // Same gate as the mount effect -- documents are ready before the
           // list (re)appears, so the page-level loading indicator covers
           // the whole search transition, not just the list refetch.
-          await loadWorkUnitsForBatches(page);
+          await loadHistoryBatchPrioritized(page);
           setHistory(page);
           setHistoryOffset(page.length);
           setHistoryHasMore(page.length === HISTORY_PAGE_SIZE);
@@ -966,13 +980,12 @@ export default function Runs() {
                     )}
 
                     {workUnits === "loading" || workUnits === undefined ? (
-                      // Structurally unreachable in normal use -- a run only
-                      // ever appears in the list once its batch's eager
-                      // doc-load has already settled (see the history ===
-                      // null gate above). Kept as a defensive fallback only.
-                      <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
-                        Loading documents...
-                      </p>
+                      // Genuinely reachable now -- only the first
+                      // PRIORITY_EAGER_COUNT runs block the page-level
+                      // loading screen; the rest keep eager-loading in the
+                      // background, so a card clicked before its own
+                      // background fetch finishes lands here.
+                      <LoadingState label="Loading documents" />
                     ) : workUnits === "error" ? (
                       <p className="text-sm" style={{ color: "var(--runs-error-fg)" }}>
                         Couldn't load documents for this run.
