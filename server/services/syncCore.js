@@ -79,10 +79,16 @@ async function syncItemIntoBatch({ accountId, projectUuid, collection, item, tar
  * `nodes` is the page's full primary-locale DOM node list (pre-fetched by
  * the caller via webflow.getPageDom(page.id, {locale: sourceLocale}), same
  * pattern as syncItemIntoBatch receiving a pre-fetched `item`). v1 scope:
- * only `type: "text"` nodes are extracted (see webflowDom.js).
+ * only `type: "text"` nodes are extracted (see webflowDom.js). Also passes
+ * the account's whole componentPropertyExclusions/autoExcludeKeywords
+ * through to extractTextNodes, so a component-instance placed on this page
+ * has its excluded/auto-excluded properties' overrides skipped too --
+ * exactly like syncComponentIntoBatch does for that component's own
+ * definition-level properties.
  */
-async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, namePattern, workflows, site, folder }) {
-  const translatableNodes = webflowDom.extractTextNodes(nodes);
+async function syncPageIntoBatch({ accountId, projectUuid, page, nodes, targetLocales, namePattern, workflows, site, folder }) {
+  const { componentPropertyExclusions, componentPropertyAutoExcludeKeywords } = await store.getSettings(accountId);
+  const translatableNodes = webflowDom.extractTextNodes(nodes, componentPropertyExclusions, componentPropertyAutoExcludeKeywords);
   const filename = webflow.buildPageResourceFileName(namePattern, { page });
   const previewUrl = webflow.buildPagePreviewUrl({ site, page, folder });
 
@@ -113,10 +119,11 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
  * content) is no longer silently skipped.
  */
 async function syncComponentIntoBatch({ accountId, projectUuid, component, nodes, properties, targetLocales, namePattern, workflows }) {
-  const exclusions = await store.getComponentPropertyExclusions(accountId, component.id);
+  const { componentPropertyExclusions, componentPropertyAutoExcludeKeywords } = await store.getSettings(accountId);
+  const exclusions = componentPropertyExclusions[component.id] || [];
   const translatableContent = {
-    ...webflowDom.extractTextNodes(nodes),
-    ...webflowDom.extractComponentProperties(properties, exclusions),
+    ...webflowDom.extractTextNodes(nodes, componentPropertyExclusions, componentPropertyAutoExcludeKeywords),
+    ...webflowDom.extractComponentProperties(properties, exclusions, componentPropertyAutoExcludeKeywords),
   };
   const filename = webflow.buildComponentResourceFileName(namePattern, { component });
 

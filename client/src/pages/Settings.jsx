@@ -129,7 +129,10 @@ export default function Settings() {
               }
             />
             <Route path="fields" element={<SettingsFieldExclusions />} />
-            <Route path="component-properties" element={<SettingsComponentPropertyExclusions />} />
+            <Route
+              path="component-properties"
+              element={<SettingsComponentPropertyExclusions settings={settings} markDirty={markDirty} />}
+            />
             <Route path="keys" element={<SettingsKeys settings={settings} />} />
           </Routes>
         </div>

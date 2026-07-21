@@ -54,6 +54,14 @@ const DEFAULT_SETTINGS = {
   // can't distinguish real text from a config value (e.g. "48px", raw
   // CSS) that merely happens to use the same type.
   componentPropertyExclusions: {},
+  // Property labels containing any of these keywords (case-insensitive
+  // substring match, stored lowercased) are auto-excluded from translation
+  // on top of componentPropertyExclusions above -- the automatic layer
+  // that covers the common case (a Property named "Logo width"/"Style"/
+  // "quote width") without needing to manually toggle each one off.
+  // Applies to both a component's own default properties and any page's
+  // per-placement override of one.
+  componentPropertyAutoExcludeKeywords: ["width", "class", "style"],
   // Controls whether/how a CMS item's Webflow slug is regenerated for each
   // target locale on write-back (see webhooks.js's wxrks-webhook handler).
   // "source": never touch the slug (today's behavior, default). "translate"/

@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const webflow = require("../services/webflow");
+const webflowDom = require("../services/webflowDom");
 const wxrks = require("../services/wxrks");
 const store = require("../store");
 const { syncComponentIntoBatch, requestBatchApproval } = require("../services/syncCore");
@@ -125,14 +126,15 @@ router.post("/item", requireWriteAccess, async (req, res) => {
 /**
  * GET /api/sync/components/:id/properties
  * A component definition's real Properties (propertyId/type/label), merged
- * with any user-configured exclusions, for the property-exclusion UI.
- * Mirrors collections.js's GET /:id/fields -- needs sourceLocale first,
- * unlike that route, since Component Properties (unlike CMS field schema)
- * are fetched per-locale.
+ * with any user-configured exclusions plus the account's keyword-based
+ * auto-exclusions (see store.js's componentPropertyAutoExcludeKeywords),
+ * for the property-exclusion UI. Mirrors collections.js's GET /:id/fields
+ * -- needs sourceLocale first, unlike that route, since Component
+ * Properties (unlike CMS field schema) are fetched per-locale.
  */
 router.get("/:id/properties", async (req, res) => {
   try {
-    const { sourceLocale } = await store.getSettings(req.account.id);
+    const { sourceLocale, componentPropertyAutoExcludeKeywords } = await store.getSettings(req.account.id);
     const [properties, exclusions] = await Promise.all([
       webflow.getComponentProperties(req.params.id, { locale: sourceLocale }),
       store.getComponentPropertyExclusions(req.account.id, req.params.id),
@@ -140,12 +142,16 @@ router.get("/:id/properties", async (req, res) => {
     const excluded = new Set(exclusions);
 
     res.json({
-      properties: properties.map((p) => ({
-        propertyId: p.propertyId,
-        type: p.type,
-        label: p.label,
-        excluded: excluded.has(p.propertyId),
-      })),
+      properties: properties.map((p) => {
+        const autoExcluded = webflowDom.labelMatchesKeyword(p.label, componentPropertyAutoExcludeKeywords);
+        return {
+          propertyId: p.propertyId,
+          type: p.type,
+          label: p.label,
+          excluded: excluded.has(p.propertyId) || autoExcluded,
+          autoExcluded,
+        };
+      }),
     });
   } catch (err) {
     res.status(502).json({ error: err.response?.data?.message || err.message });

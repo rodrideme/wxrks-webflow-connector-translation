@@ -63,7 +63,7 @@ async function mapWithConcurrency(items, concurrency, fn) {
  * a page added to scope later (new folder, new page) still gets correct
  * first-encounter treatment on its own.
  */
-async function scanAndEnqueuePages(automation, { sourceLocale }) {
+async function scanAndEnqueuePages(automation, { sourceLocale, componentPropertyExclusions, componentPropertyAutoExcludeKeywords }) {
   const allPages = await webflow.listStaticPages();
   const inScope =
     automation.contentScope.scope === "all" ? allPages : webflow.filterPagesByFolderScope(allPages, leafIds(automation, "pagesFolder"));
@@ -79,7 +79,7 @@ async function scanAndEnqueuePages(automation, { sourceLocale }) {
   // once at the end.
   const scanned = await mapWithConcurrency(inScope, SCAN_CONCURRENCY, async (page) => {
     const nodes = await webflow.getPageDom(page.id, { locale: sourceLocale });
-    return { page, contentHash: hashNodes(nodes) };
+    return { page, contentHash: hashNodes(nodes, { exclusionsByComponentId: componentPropertyExclusions, autoExcludeKeywords: componentPropertyAutoExcludeKeywords }) };
   });
 
   const lastSyncedPageHashes = { ...automation.checkpoint.lastSyncedPageHashes };
@@ -101,25 +101,24 @@ async function scanAndEnqueuePages(automation, { sourceLocale }) {
   }
 }
 
-async function scanAndEnqueueComponents(automation, { sourceLocale }) {
+async function scanAndEnqueueComponents(automation, { sourceLocale, componentPropertyExclusions, componentPropertyAutoExcludeKeywords }) {
   // Components always all-or-nothing (no sub-scope) -- and carry no
   // modification timestamp at all (confirmed live), so dedup hashes each
   // component's translatable DOM content and compares against the last
   // synced hash, rather than a cheap timestamp comparison. Concurrency +
   // batched-write reasoning mirrors scanAndEnqueuePages above exactly.
   const components = await webflow.listComponents();
-  // Fetched once for the whole scan (not per component, inside the
-  // concurrent map below) -- store.getSettings has no caching layer, and
-  // this runs over every component on the site every cycle, so a
-  // per-component fetch would mean N redundant identical DB reads of the
-  // same settings row for no benefit.
-  const settings = await store.getSettings(automation.accountId);
 
   const scanned = await mapWithConcurrency(components, SCAN_CONCURRENCY, async (component) => {
     const nodes = await webflow.getComponentDom(component.id, { locale: sourceLocale });
     const properties = await webflow.getComponentProperties(component.id, { locale: sourceLocale });
-    const propertyExclusions = settings.componentPropertyExclusions[component.id] || [];
-    return { component, contentHash: hashNodes(nodes, properties, propertyExclusions) };
+    const contentHash = hashNodes(nodes, {
+      properties,
+      excludedPropertyIds: componentPropertyExclusions[component.id] || [],
+      exclusionsByComponentId: componentPropertyExclusions,
+      autoExcludeKeywords: componentPropertyAutoExcludeKeywords,
+    });
+    return { component, contentHash };
   });
 
   const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };

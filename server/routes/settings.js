@@ -54,7 +54,7 @@ router.get("/", async (req, res) => {
 
 /**
  * PUT /api/settings
- * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, workUnitNamePattern?, timezone?, pagesWorkUnitNamePattern?, componentsWorkUnitNamePattern?, slugHandling? }
+ * body: { sourceLocale?, targetLocales?, autoPublish?, autoApprove?, orgUnitUUID?, workUnitNamePattern?, timezone?, pagesWorkUnitNamePattern?, componentsWorkUnitNamePattern?, slugHandling?, componentPropertyAutoExcludeKeywords? }
  * Env-backed connection secrets are not editable here — they're deploy-time
  * config. Automation config (schedule, content scope, org-unit/target-locale
  * override) lives in the `automations` table now -- see routes/automations.js,
@@ -76,6 +76,7 @@ router.put("/", requireWriteAccess, async (req, res) => {
     pagesWorkUnitNamePattern,
     componentsWorkUnitNamePattern,
     slugHandling,
+    componentPropertyAutoExcludeKeywords,
   } = req.body || {};
   const patch = {};
   if (sourceLocale !== undefined) patch.sourceLocale = sourceLocale;
@@ -88,6 +89,11 @@ router.put("/", requireWriteAccess, async (req, res) => {
   if (timezone !== undefined) patch.timezone = timezone;
   if (pagesWorkUnitNamePattern !== undefined) patch.pagesWorkUnitNamePattern = pagesWorkUnitNamePattern;
   if (componentsWorkUnitNamePattern !== undefined) patch.componentsWorkUnitNamePattern = componentsWorkUnitNamePattern;
+  if (componentPropertyAutoExcludeKeywords !== undefined) {
+    patch.componentPropertyAutoExcludeKeywords = componentPropertyAutoExcludeKeywords
+      .map((k) => String(k).trim().toLowerCase())
+      .filter(Boolean);
+  }
 
   try {
     if (slugHandling !== undefined) {

@@ -60,6 +60,22 @@ function extractOverridableText(textField) {
 }
 
 /**
+ * Whether a Component Property's (or override's) own label matches any of
+ * the account's configured auto-exclude keywords (case-insensitive
+ * substring match) -- the automatic layer underneath the manual per-
+ * property exclusion list, catching the common case of a Property that's
+ * actually a CSS/config value (e.g. "Logo width", "Style", "quote width")
+ * without needing to manually toggle each one off. `keywords` is expected
+ * already-lowercased (see store.js's PUT /settings normalization), but
+ * lowercased again here defensively in case of legacy/direct-DB data.
+ */
+function labelMatchesKeyword(label, keywords = []) {
+  if (!label) return false;
+  const lower = label.toLowerCase();
+  return keywords.some((kw) => kw && lower.includes(kw.toLowerCase()));
+}
+
+/**
  * Extracts translatable text from a page's or component's DOM node list
  * into a flat { [key]: html } dict, analogous to a CMS item's fieldData --
  * exactly the shape syncCore.js's shared batching logic needs (a plain
@@ -68,8 +84,18 @@ function extractOverridableText(textField) {
  * round-trips through translation, the same way CMS RichText fields
  * already do; component-instance overrides go through
  * extractOverridableText since their type-dependent shape differs.
+ *
+ * `exclusionsByComponentId` ({ [componentId]: string[] of excluded
+ * propertyIds } -- the account's whole componentPropertyExclusions
+ * settings blob, not just one component's list, since a single node list
+ * can contain instances of many different components) applies the same
+ * per-property exclusion a component's own definition-level properties get
+ * (see extractComponentProperties) to a PLACEMENT's override of that same
+ * property -- confirmed live, a component-instance node carries its own
+ * `componentId`, so an override's propertyId can be checked against that
+ * specific component's exclusion list.
  */
-function extractTextNodes(nodes = []) {
+function extractTextNodes(nodes = [], exclusionsByComponentId = {}, autoExcludeKeywords = []) {
   const translatable = {};
   for (const node of nodes) {
     if (node.type === TEXT_NODE_TYPE) {
@@ -79,7 +105,10 @@ function extractTextNodes(nodes = []) {
       if (!plain) continue; // skip empty/whitespace-only nodes -- nothing to translate
       translatable[node.id] = html;
     } else if (node.type === COMPONENT_INSTANCE_NODE_TYPE) {
+      const excluded = new Set(exclusionsByComponentId[node.componentId] || []);
       for (const override of node.propertyOverrides || []) {
+        if (excluded.has(override.propertyId)) continue;
+        if (labelMatchesKeyword(override.label, autoExcludeKeywords)) continue;
         const value = extractOverridableText(override.text);
         if (value === undefined) continue;
         translatable[overrideKey(node.id, override.propertyId)] = value;
@@ -97,11 +126,12 @@ function extractTextNodes(nodes = []) {
  * as a component's DOM text/overrides (see syncCore.js's
  * syncComponentIntoBatch) without ever colliding.
  */
-function extractComponentProperties(properties = [], excludedPropertyIds = []) {
+function extractComponentProperties(properties = [], excludedPropertyIds = [], autoExcludeKeywords = []) {
   const excluded = new Set(excludedPropertyIds);
   const translatable = {};
   for (const property of properties) {
     if (excluded.has(property.propertyId)) continue;
+    if (labelMatchesKeyword(property.label, autoExcludeKeywords)) continue;
     const value = extractOverridableText(property.text);
     if (value === undefined) continue;
     translatable[propertyKey(property.propertyId)] = value;
@@ -159,21 +189,27 @@ function splitTranslatedContent(translatedById = {}) {
  * instead of trusting a modification timestamp -- Pages' `lastUpdated`
  * gets bumped by a full "Publish site" action regardless of whether that
  * page's content changed, and Components carry no modification timestamp
- * at all. `properties` is omitted for Pages (no definition-properties
- * channel there); passed for Components so a properties-only edit (no DOM
- * node/override touched at all) still changes the hash -- previously
- * impossible, since extractTextNodes ignored component-instance nodes
- * entirely and properties weren't read at all, so neither an override-only
- * nor a properties-only edit would have changed this hash before this fix.
+ * at all. `properties`/`excludedPropertyIds` are omitted for Pages (no
+ * definition-properties channel there); passed for Components so a
+ * properties-only edit (no DOM node/override touched at all) still changes
+ * the hash. `exclusionsByComponentId`/`autoExcludeKeywords` apply to BOTH
+ * (a page's or a component's own DOM can each contain component-instance
+ * nodes referencing other components' properties) -- an options object
+ * rather than more positional params since Pages and Components now need
+ * different subsets of these.
  */
-function hashNodes(nodes, properties, excludedPropertyIds) {
-  const translatableText = { ...extractTextNodes(nodes), ...extractComponentProperties(properties, excludedPropertyIds) };
+function hashNodes(nodes, { properties, excludedPropertyIds, exclusionsByComponentId = {}, autoExcludeKeywords = [] } = {}) {
+  const translatableText = {
+    ...extractTextNodes(nodes, exclusionsByComponentId, autoExcludeKeywords),
+    ...extractComponentProperties(properties, excludedPropertyIds, autoExcludeKeywords),
+  };
   return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
 }
 
 module.exports = {
   extractTextNodes,
   extractComponentProperties,
+  labelMatchesKeyword,
   splitTranslatedContent,
   hashNodes,
   overrideKey,

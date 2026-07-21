@@ -314,8 +314,9 @@ async function flush(automationId, { jobId } = {}) {
         // the translation and the recorded hash keeps them from ever
         // disagreeing with each other.
         const nodes = await webflow.getPageDom(entry.page.id, { locale: sourceLocale });
-        const contentHash = hashNodes(nodes);
+        const contentHash = hashNodes(nodes, { exclusionsByComponentId: settings.componentPropertyExclusions, autoExcludeKeywords: settings.componentPropertyAutoExcludeKeywords });
         const result = await syncPageIntoBatch({
+          accountId: automation.accountId,
           projectUuid: project.uuid,
           page: entry.page,
           nodes,
@@ -337,8 +338,12 @@ async function flush(automationId, { jobId } = {}) {
       } else if (entry.entityType === "component") {
         const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
         const properties = await webflow.getComponentProperties(entry.component.id, { locale: sourceLocale });
-        const propertyExclusions = await store.getComponentPropertyExclusions(automation.accountId, entry.component.id);
-        const contentHash = hashNodes(nodes, properties, propertyExclusions);
+        const contentHash = hashNodes(nodes, {
+          properties,
+          excludedPropertyIds: settings.componentPropertyExclusions[entry.component.id] || [],
+          exclusionsByComponentId: settings.componentPropertyExclusions,
+          autoExcludeKeywords: settings.componentPropertyAutoExcludeKeywords,
+        });
         const result = await syncComponentIntoBatch({
           accountId: automation.accountId,
           projectUuid: project.uuid,

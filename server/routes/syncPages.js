@@ -81,6 +81,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
           if (!page) throw new Error(`Page ${id} not found`);
           const nodes = await webflow.getPageDom(id, { locale: sourceLocale });
           const result = await syncPageIntoBatch({
+            accountId,
             projectUuid: project.uuid,
             page,
             nodes,
