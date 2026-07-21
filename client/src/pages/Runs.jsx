@@ -312,11 +312,21 @@ export default function Runs() {
   const [error, setError] = useState(null);
   const [expandedRuns, setExpandedRuns] = useState({}); // { [wxrksProjectUUID]: true }
   const [workUnitsByRun, setWorkUnitsByRun] = useState({}); // { [wxrksProjectUUID]: rows[] | "loading" | "error" }
+  // Tracks which runs have already been dispatched, checked synchronously
+  // (unlike workUnitsByRun state, which only updates on the next render) --
+  // needed because React.StrictMode's dev-only double-invoke of the mount
+  // effect calls loadWorkUnitsForBatches twice back to back, before the
+  // first invocation's setWorkUnitsByRun("loading") has flushed. Without a
+  // synchronous guard, the state-only check let both invocations pass and
+  // fire duplicate fetches for every run, doubling load on an already
+  // expensive endpoint and starving some requests past any reasonable wait.
+  const dispatchedRunsRef = useRef(new Set());
 
   function loadRunWorkUnits(wxrksProjectUUID) {
-    if (workUnitsByRun[wxrksProjectUUID]) return; // already fetched/fetching
+    if (dispatchedRunsRef.current.has(wxrksProjectUUID)) return Promise.resolve(); // already fetched/fetching
+    dispatchedRunsRef.current.add(wxrksProjectUUID);
     setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "loading" }));
-    api
+    return api
       .getRunWorkUnits(wxrksProjectUUID)
       .then((res) => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: res.rows || [] })))
       .catch(() => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "error" })));
@@ -326,6 +336,25 @@ export default function Runs() {
     const nowExpanded = !expandedRuns[wxrksProjectUUID];
     setExpandedRuns((prev) => ({ ...prev, [wxrksProjectUUID]: nowExpanded }));
     if (nowExpanded) loadRunWorkUnits(wxrksProjectUUID);
+  }
+
+  // Eager-loads a whole loaded page's documents (see the mount effect,
+  // loadMoreHistory, and the search effect below) at a bounded concurrency
+  // -- GET /work-units does real, non-trivial live Webflow work per run
+  // (per-locale item reads, a pages/folders fetch), so firing all 10 at
+  // once risked hitting Webflow's own rate limiting and leaving later rows
+  // stuck "loading" or erroring out. Mirrors this app's existing
+  // SCAN_CONCURRENCY pattern (automationScheduler.js) for the same reason.
+  const EAGER_LOAD_CONCURRENCY = 3;
+  async function loadWorkUnitsForBatches(batches) {
+    let index = 0;
+    async function worker() {
+      while (index < batches.length) {
+        const batch = batches[index++];
+        await loadRunWorkUnits(batch.wxrksProjectUUID);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(EAGER_LOAD_CONCURRENCY, batches.length) }, worker));
   }
 
   function loadMoreHistory() {
@@ -340,7 +369,7 @@ export default function Runs() {
         setHistoryHasMore(more.length === HISTORY_PAGE_SIZE);
         // Loaded together with the page, not lazily on click -- by the time
         // a user expands any of these, its documents are already there.
-        more.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
+        loadWorkUnitsForBatches(more);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingMoreHistory(false));
@@ -390,7 +419,7 @@ export default function Runs() {
         if (history.length > 0) {
           setExpandedRuns((prev) => ({ ...prev, [history[0].wxrksProjectUUID]: true }));
         }
-        history.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
+        loadWorkUnitsForBatches(history);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -418,7 +447,7 @@ export default function Runs() {
           setHistory(page);
           setHistoryOffset(page.length);
           setHistoryHasMore(page.length === HISTORY_PAGE_SIZE);
-          page.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
+          loadWorkUnitsForBatches(page);
         })
         .catch((err) => setError(err.message));
     }, 300);
