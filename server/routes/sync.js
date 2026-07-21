@@ -393,6 +393,27 @@ router.get("/history", async (req, res) => {
  * -- resolved here, not client-side, since this is the only place with the
  * live per-locale draft-status data needed to decide which to show.
  */
+// This route recomputes real, non-trivial live Webflow work every call
+// (per-locale item reads, a pages/folders fetch -- see below). A run
+// older than an hour has almost certainly had every one of its
+// deliveries settle already (Webflow webhooks fire within seconds/
+// minutes, not hours) and its item/locale set never changes after
+// creation, so its result is safe to treat as effectively permanent --
+// most History rows are old runs, and redoing this work for them on
+// every single page load was pure waste. Young (possibly still-
+// delivering) runs get a short TTL instead, just enough to dedupe rapid
+// repeat requests for the same run. Keyed by wxrksProjectUUID alone
+// (globally unique) -- ownership is still checked fresh from the DB on
+// every request before this cache is ever consulted, so this isn't a
+// security shortcut. In-memory, not DB-persisted, matching every other
+// cache in this codebase (webflow.js's makeTtlCache/
+// siteLocalesCacheByAccount) -- fine for a process-lifetime performance
+// optimization, and this app restarts rarely outside active local dev.
+const WORK_UNITS_CACHE = new Map(); // uuid -> { rows, expiresAt }
+const OLD_RUN_THRESHOLD_MS = 60 * 60 * 1000;
+const OLD_RUN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const YOUNG_RUN_CACHE_TTL_MS = 30 * 1000;
+
 router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
   try {
     const mapping = await store.getProjectMapping(req.params.wxrksProjectUUID);
@@ -401,6 +422,11 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
     // ownership check so one account can't fetch another's run.
     if (!mapping || mapping.accountId !== req.account.id) {
       return res.status(404).json({ error: "Run not found" });
+    }
+
+    const cached = WORK_UNITS_CACHE.get(req.params.wxrksProjectUUID);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json({ rows: cached.rows });
     }
 
     const { site, secondary } = await webflow.getSiteLocales();
@@ -425,7 +451,7 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
     const settledItems = await Promise.allSettled(
       [...neededPairs].map(async (key) => {
         const [collectionId, locale] = key.split("::");
-        return { collectionId, locale, items: await webflow.listAllItems(collectionId, { locale }) };
+        return { collectionId, locale, items: await webflow.listAllItemsCached(collectionId, { locale }) };
       })
     );
     for (const r of settledItems) {
@@ -528,6 +554,12 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
         });
       }
     }
+
+    const isOldRun = Date.now() - new Date(mapping.createdAt).getTime() > OLD_RUN_THRESHOLD_MS;
+    WORK_UNITS_CACHE.set(req.params.wxrksProjectUUID, {
+      rows,
+      expiresAt: Date.now() + (isOldRun ? OLD_RUN_CACHE_TTL_MS : YOUNG_RUN_CACHE_TTL_MS),
+    });
 
     res.json({ rows });
   } catch (err) {

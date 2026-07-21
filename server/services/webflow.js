@@ -625,6 +625,36 @@ async function listAllItems(collectionId, { locale } = {}) {
   return items;
 }
 
+// Short TTL (unlike the 30-minute structural caches above) -- this is
+// live CMS item content/draft-status, not rarely-changing site
+// structure. Long enough to dedupe a single Runs-page eager-load batch
+// of History rows that often share the same collection/locale (e.g. an
+// account that mostly translates one blog collection into the same
+// couple of locales -- without this, each of those runs independently
+// re-fetched an identical item list); short enough to stay fresh for
+// anyone actively editing in Webflow at the same time. Deliberately a
+// separate function from listAllItems, not a change to it --
+// autoSyncReconciliation.js's hourly CMS safety-net scan calls
+// listAllItems directly and wants always-fresh publish/draft data, since
+// missing a just-published item is exactly the failure mode it exists to
+// catch. Keyed by account (multi-tenant) + collection + locale, mirroring
+// makeTtlCache's promise-caching/evict-on-reject shape above but with a
+// composite key instead of a zero-arg per-account one.
+const LIST_ALL_ITEMS_CACHE_TTL_MS = 3 * 60 * 1000;
+const listAllItemsCache = new Map(); // "accountId::collectionId::locale" -> { value: Promise, expiresAt }
+
+async function listAllItemsCached(collectionId, { locale } = {}) {
+  const accountContext = require("./accountContext");
+  const accountId = accountContext.getAccountId();
+  const key = `${accountId}::${collectionId}::${locale}`;
+  const entry = listAllItemsCache.get(key);
+  if (entry && entry.expiresAt > Date.now()) return entry.value;
+  const promise = listAllItems(collectionId, { locale });
+  promise.catch(() => listAllItemsCache.delete(key));
+  listAllItemsCache.set(key, { value: promise, expiresAt: Date.now() + LIST_ALL_ITEMS_CACHE_TTL_MS });
+  return promise;
+}
+
 async function getItem(collectionId, itemId, { locale } = {}) {
   const cmsLocaleId = await resolveCmsLocaleId(locale);
   const { data } = await (await client()).get(`/collections/${collectionId}/items/${itemId}`, {
@@ -977,6 +1007,7 @@ module.exports = {
   getCollection,
   getSiteLocales,
   listAllItems,
+  listAllItemsCached,
   listItemsPage,
   getItem,
   patchItemLocale,
