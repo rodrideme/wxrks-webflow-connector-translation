@@ -8,22 +8,6 @@ import LoadingState from "../components/LoadingState.jsx";
 import { cadenceLabel } from "../runLabels.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
-// Ticks its own elapsed-seconds display independent of the parent's
-// re-renders -- startedAt is a real dispatch timestamp (see
-// loadStartedAtRef below), so this counts up honestly against how long
-// the fetch has actually been in flight, not a fake/simulated progress bar.
-function DocumentsLoadingState({ startedAt, docCount }) {
-  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
-  useEffect(() => {
-    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, [startedAt]);
-  const label = docCount
-    ? `Loading ${docCount} document${docCount === 1 ? "" : "s"}… ${elapsed}s`
-    : `Loading documents… ${elapsed}s`;
-  return <LoadingState label={label} />;
-}
-
 function scopeSummary(contentScope, collections, pageFolders) {
   if (contentScope.scope === "all") return "every collection, page & component";
   const leaves = contentScope.leaves || [];
@@ -329,29 +313,47 @@ export default function Runs() {
   const [error, setError] = useState(null);
   const [expandedRuns, setExpandedRuns] = useState({}); // { [wxrksProjectUUID]: true }
   const [workUnitsByRun, setWorkUnitsByRun] = useState({}); // { [wxrksProjectUUID]: rows[] | "loading" | "error" }
-  // Tracks which runs have already been dispatched, checked synchronously
-  // (unlike workUnitsByRun state, which only updates on the next render) --
-  // needed because React.StrictMode's dev-only double-invoke of the mount
-  // effect calls loadWorkUnitsForBatches twice back to back, before the
-  // first invocation's setWorkUnitsByRun("loading") has flushed. Without a
-  // synchronous guard, the state-only check let both invocations pass and
-  // fire duplicate fetches for every run, doubling load on an already
-  // expensive endpoint and starving some requests past any reasonable wait.
-  const dispatchedRunsRef = useRef(new Set());
-  // Real dispatch timestamps, keyed by run -- feeds DocumentsLoadingState's
-  // elapsed-seconds counter so it reflects how long the fetch has actually
-  // been running, including time spent waiting for an eager-load worker.
-  const loadStartedAtRef = useRef({});
+  // Caches the actual in-flight/settled promise per run, checked
+  // synchronously (unlike workUnitsByRun state, which only updates on the
+  // next render) -- needed because React.StrictMode's dev-only
+  // double-invoke of the mount effect calls loadWorkUnitsForBatches twice
+  // back to back. A boolean-only guard would make the second invocation's
+  // "already dispatched" check return an instantly-resolved dummy promise
+  // instead of the real one, so a batch-level `await` could resolve (and
+  // reveal the run list) before that run's actual fetch had settled.
+  // Returning the SAME real promise to every caller for a given run fixes
+  // both problems at once: no duplicate fetches, and every awaiter --
+  // regardless of which invocation dispatched it -- only resolves once the
+  // real data (or error) is in.
+  const dispatchedRunsRef = useRef(new Map());
+  // uuids of whichever batch is currently being eager-loaded (initial page,
+  // "load more" page, or a fresh search page); null once settled. Progress
+  // is derived from real workUnitsByRun state below (not an imperative
+  // counter) so it can't be thrown off by React.StrictMode's dev-only
+  // double-invoke of the mount effect dispatching the same batch twice.
+  const [eagerBatchUuids, setEagerBatchUuids] = useState(null); // string[] | null
+  const eagerBatchProgress = eagerBatchUuids && {
+    total: eagerBatchUuids.length,
+    done: eagerBatchUuids.filter((uuid) => workUnitsByRun[uuid] && workUnitsByRun[uuid] !== "loading").length,
+  };
+
+  // GET /work-units has no server-side or fetch-level timeout, so a single
+  // hung upstream Webflow call used to only stall that one card's spinner.
+  // Now that the whole page gates on every run in the batch settling (see
+  // loadWorkUnitsForBatches), one hung request would otherwise block the
+  // entire list from ever appearing -- this bounds that risk without
+  // touching the shared api.js request() helper other callers rely on.
+  const WORK_UNITS_TIMEOUT_MS = 20000;
 
   function loadRunWorkUnits(wxrksProjectUUID) {
-    if (dispatchedRunsRef.current.has(wxrksProjectUUID)) return Promise.resolve(); // already fetched/fetching
-    dispatchedRunsRef.current.add(wxrksProjectUUID);
-    loadStartedAtRef.current[wxrksProjectUUID] = Date.now();
+    if (dispatchedRunsRef.current.has(wxrksProjectUUID)) return dispatchedRunsRef.current.get(wxrksProjectUUID);
     setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "loading" }));
-    return api
-      .getRunWorkUnits(wxrksProjectUUID)
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("Timed out")), WORK_UNITS_TIMEOUT_MS));
+    const promise = Promise.race([api.getRunWorkUnits(wxrksProjectUUID), timeout])
       .then((res) => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: res.rows || [] })))
       .catch(() => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "error" })));
+    dispatchedRunsRef.current.set(wxrksProjectUUID, promise);
+    return promise;
   }
 
   function toggleRunWorkUnits(wxrksProjectUUID) {
@@ -370,6 +372,7 @@ export default function Runs() {
   // -- HISTORY_PAGE_SIZE is 10, so this nearly parallelizes a full page.
   const EAGER_LOAD_CONCURRENCY = 8;
   async function loadWorkUnitsForBatches(batches) {
+    setEagerBatchUuids(batches.map((b) => b.wxrksProjectUUID));
     let index = 0;
     async function worker() {
       while (index < batches.length) {
@@ -378,6 +381,7 @@ export default function Runs() {
       }
     }
     await Promise.all(Array.from({ length: Math.min(EAGER_LOAD_CONCURRENCY, batches.length) }, worker));
+    setEagerBatchUuids(null);
   }
 
   function loadMoreHistory() {
@@ -385,14 +389,16 @@ export default function Runs() {
     const search = historySearch.trim() || undefined;
     api
       .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: historyOffset, search })
-      .then((res) => {
+      .then(async (res) => {
         const more = res.history || [];
+        // Documents are eager-loaded before these rows join the visible
+        // list -- by the time they appear, every card opens instantly. The
+        // "Load more" button's own "Loading…" label already covers this
+        // whole span (see loadingMoreHistory below), not just the list fetch.
+        await loadWorkUnitsForBatches(more);
         setHistory((prev) => [...(prev || []), ...more]);
         setHistoryOffset((prev) => prev + more.length);
         setHistoryHasMore(more.length === HISTORY_PAGE_SIZE);
-        // Loaded together with the page, not lazily on click -- by the time
-        // a user expands any of these, its documents are already there.
-        loadWorkUnitsForBatches(more);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingMoreHistory(false));
@@ -426,23 +432,25 @@ export default function Runs() {
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
       api.getSettings().catch(() => null),
     ])
-      .then(([historyRes, collectionsRes, foldersRes, orgUnitsRes, settingsRes]) => {
+      .then(async ([historyRes, collectionsRes, foldersRes, orgUnitsRes, settingsRes]) => {
         const history = historyRes.history || [];
-        setHistory(history);
-        setHistoryOffset(history.length);
-        setHistoryHasMore(history.length === HISTORY_PAGE_SIZE);
         setCollections(collectionsRes.collections || []);
         setPageFolders(foldersRes.folders || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
+        // Documents are eager-loaded before the list becomes visible at all
+        // -- the page shows one loading indicator (see the history === null
+        // render branch) until every run's documents are ready, so by the
+        // time a user sees any card, expanding it is instant.
+        await loadWorkUnitsForBatches(history);
+        setHistory(history);
+        setHistoryOffset(history.length);
+        setHistoryHasMore(history.length === HISTORY_PAGE_SIZE);
         // The most recent run (history is already most-recent-first) starts
-        // expanded -- every other run in this page stays visually collapsed,
-        // but ALL of their documents are fetched right away below (not
-        // lazily on click), so expanding any of them later is instant.
+        // expanded -- every other run in this page stays visually collapsed.
         if (history.length > 0) {
           setExpandedRuns((prev) => ({ ...prev, [history[0].wxrksProjectUUID]: true }));
         }
-        loadWorkUnitsForBatches(history);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -451,12 +459,19 @@ export default function Runs() {
   // client-side-only filter would silently miss any match sitting on a
   // page that hasn't been loaded yet. Debounced so it doesn't re-fetch on
   // every keystroke; skips the very first render, since the mount effect
-  // above already did the initial (no-search) fetch.
+  // above already did the initial (no-search) fetch. The cleanup resets the
+  // ref rather than leaving it flipped -- React.StrictMode's dev-only
+  // double-invoke of the mount cycle runs this effect twice back to back;
+  // without undoing the flip, the second invocation would see "not first"
+  // and fire a spurious extra search fetch (with an empty query) during
+  // ordinary page load, racing the real mount effect's own eager-load.
   const isFirstSearchRender = useRef(true);
   useEffect(() => {
     if (isFirstSearchRender.current) {
       isFirstSearchRender.current = false;
-      return;
+      return () => {
+        isFirstSearchRender.current = true;
+      };
     }
     const search = historySearch.trim() || undefined;
     const handle = setTimeout(() => {
@@ -465,12 +480,15 @@ export default function Runs() {
       setHistoryHasMore(false);
       api
         .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: 0, search })
-        .then((res) => {
+        .then(async (res) => {
           const page = res.history || [];
+          // Same gate as the mount effect -- documents are ready before the
+          // list (re)appears, so the page-level loading indicator covers
+          // the whole search transition, not just the list refetch.
+          await loadWorkUnitsForBatches(page);
           setHistory(page);
           setHistoryOffset(page.length);
           setHistoryHasMore(page.length === HISTORY_PAGE_SIZE);
-          loadWorkUnitsForBatches(page);
         })
         .catch((err) => setError(err.message));
     }, 300);
@@ -775,9 +793,13 @@ export default function Runs() {
       </div>
 
       {history === null ? (
-        <p className="text-sm" style={{ color: "var(--runs-text-muted)" }}>
-          Loading history...
-        </p>
+        <LoadingState
+          label={
+            eagerBatchProgress
+              ? `Loading ${eagerBatchProgress.done} of ${eagerBatchProgress.total} run${eagerBatchProgress.total === 1 ? "" : "s"}…`
+              : "Loading history…"
+          }
+        />
       ) : filteredHistory.length === 0 ? (
         <div
           className="p-6 text-center text-sm"
@@ -938,10 +960,13 @@ export default function Runs() {
                     )}
 
                     {workUnits === "loading" || workUnits === undefined ? (
-                      <DocumentsLoadingState
-                        startedAt={loadStartedAtRef.current[batch.wxrksProjectUUID] || Date.now()}
-                        docCount={batch.items.length}
-                      />
+                      // Structurally unreachable in normal use -- a run only
+                      // ever appears in the list once its batch's eager
+                      // doc-load has already settled (see the history ===
+                      // null gate above). Kept as a defensive fallback only.
+                      <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
+                        Loading documents...
+                      </p>
                     ) : workUnits === "error" ? (
                       <p className="text-sm" style={{ color: "var(--runs-error-fg)" }}>
                         Couldn't load documents for this run.
