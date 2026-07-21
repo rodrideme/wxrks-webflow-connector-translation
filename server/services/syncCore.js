@@ -53,7 +53,11 @@ async function syncItemIntoBatch({ accountId, projectUuid, collection, item, tar
   // templatePage is the collection's real Collection Page (see
   // webflow.findCollectionTemplatePage) -- its own slug is the real URL
   // segment, which commonly differs from the collection's own slug.
-  const previewUrl = webflow.buildCmsItemPreviewUrl({ site, templatePage, item });
+  // A draft source item has no real "live" URL -- buildCmsItemPreviewUrl
+  // only checks that site/template/slug exist, not publish status, so it
+  // would otherwise construct one anyway and point wxrks reviewers at
+  // content that isn't actually online yet.
+  const previewUrl = item.isDraft ? undefined : webflow.buildCmsItemPreviewUrl({ site, templatePage, item });
 
   return syncTranslatableContentIntoBatch({
     projectUuid,

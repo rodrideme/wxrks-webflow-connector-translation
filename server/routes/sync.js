@@ -428,7 +428,14 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
       if (r.status !== "fulfilled") continue;
       const { collectionId, locale, items } = r.value;
       draftByCollectionLocale[collectionId] ||= {};
-      draftByCollectionLocale[collectionId][locale] = new Map(items.map((it) => [it.id, it.isDraft]));
+      // Captures each locale's own real slug too (not just isDraft) -- a
+      // translated item's slug can legitimately differ from the source
+      // locale's (see settings.slugHandling), so building this locale's
+      // "live" URL from item.sourceSlug (the source locale's slug) was
+      // wrong whenever slug translation/transliteration is on.
+      draftByCollectionLocale[collectionId][locale] = new Map(
+        items.map((it) => [it.id, { isDraft: it.isDraft, slug: it.fieldData?.slug }])
+      );
     }
 
     const allPagesRaw = hasCmsItems ? await webflow.listPages() : [];
@@ -457,9 +464,21 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
             templatePageByCollection.set(item.webflowCollectionId, webflow.findCollectionTemplatePage(allPagesRaw, item.webflowCollectionId));
           }
           const templatePage = templatePageByCollection.get(item.webflowCollectionId);
-          const isDraft = draftByCollectionLocale[item.webflowCollectionId]?.[locale]?.get(item.webflowItemId);
-          if (isDraft === false) {
-            webflowUrl = webflow.buildCmsItemPreviewUrl({ site, templatePage, item: { fieldData: { slug: item.sourceSlug } }, subdirectory });
+          const localeItem = draftByCollectionLocale[item.webflowCollectionId]?.[locale]?.get(item.webflowItemId);
+          // Both conditions matter: the ITEM's own draft status (per-locale
+          // CMS field), and whether the LOCALE ITSELF is enabled/published
+          // site-wide yet (a secondary locale can exist with real, non-draft
+          // item content while the locale as a whole still isn't live on the
+          // custom domain -- see getSiteLocales' `enabled` field, mirroring
+          // the Pages branch below, which already checked this and was the
+          // only branch that did).
+          if (localeItem?.isDraft === false && enabledByLocale[locale]) {
+            webflowUrl = webflow.buildCmsItemPreviewUrl({
+              site,
+              templatePage,
+              item: { fieldData: { slug: localeItem.slug || item.sourceSlug } },
+              subdirectory,
+            });
             linkType = "published";
           } else {
             webflowUrl = webflow.buildCmsItemDesignerUrl({ site, templatePage, item: { id: item.webflowItemId }, locale });
