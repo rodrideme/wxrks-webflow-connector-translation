@@ -136,6 +136,13 @@ function mappingRowToObject(row) {
     // ran (not a foreign key: automations are deletable and history must
     // stay attributable after deletion).
     automationName: row.automation_name || null,
+    // The wxrks project's own `reference` string (see wxrks.createProject),
+    // cached locally at creation time -- wxrks's own GET /project/:uuid
+    // already echoes it back, so this is never re-derived, just a local
+    // copy so the Runs page doesn't need a live wxrks call to show it. Runs
+    // created before this column existed are simply null (Runs.jsx falls
+    // back to showing the project uuid instead).
+    reference: row.reference || null,
   };
 }
 
@@ -143,8 +150,8 @@ async function createProjectMapping(accountId, wxrksProjectUUID, mapping) {
   const { rows } = await db.query(
     `INSERT INTO project_mappings
        (wxrks_project_uuid, account_id, mode, source_locale, target_locales, org_unit_uuid,
-        work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name, reference)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING *`,
     [
       wxrksProjectUUID,
@@ -159,6 +166,7 @@ async function createProjectMapping(accountId, wxrksProjectUUID, mapping) {
       mapping.status || "in_progress",
       mapping.wxrksStatus || "DRAFT",
       mapping.automationName || null,
+      mapping.reference || null,
     ]
   );
   return mappingRowToObject(rows[0]);
@@ -319,6 +327,33 @@ async function getDeliveryStatusByEntity(accountId, idField) {
     }
   }
   return statusMap;
+}
+
+/**
+ * Same "most recent attempt per (entity, locale)" reduction as
+ * getDeliveryStatusByEntity, scoped to one already-loaded mapping's own
+ * updates[] instead of scanning every mapping account-wide, and generic
+ * across entity kinds (a mapping can mix CMS items/pages/components, e.g.
+ * a "combined" sync) rather than requiring one specific idField -- each
+ * resultsByItem[] entry only ever has one of webflowItemId/webflowPageId/
+ * webflowComponentId populated, so this just takes whichever is present.
+ * Used by the Runs page's per-run work-unit list.
+ */
+function latestUpdateByEntityAndLocale(mapping) {
+  const result = {};
+  for (const update of mapping.updates || []) {
+    for (const resultEntry of update.resultsByItem || []) {
+      const entityId = resultEntry.webflowItemId || resultEntry.webflowPageId || resultEntry.webflowComponentId;
+      if (!entityId) continue;
+      for (const rl of resultEntry.resultsByLocale || []) {
+        const existing = result[entityId]?.[rl.locale];
+        if (!existing || new Date(update.updatedAt) > new Date(existing.updatedAt)) {
+          result[entityId] = { ...result[entityId], [rl.locale]: { error: rl.error || null, updatedAt: update.updatedAt } };
+        }
+      }
+    }
+  }
+  return result;
 }
 
 /**
@@ -1259,6 +1294,7 @@ module.exports = {
   listProjectMappings,
   listActiveProjects,
   getDeliveryStatusByEntity,
+  latestUpdateByEntityAndLocale,
   computeLocaleStatus,
   getSettings,
   updateSettings,

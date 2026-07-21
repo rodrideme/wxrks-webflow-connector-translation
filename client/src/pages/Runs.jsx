@@ -29,6 +29,28 @@ function scopeSummary(contentScope, collections, pageFolders) {
     .join(", ");
 }
 
+// wxrks has two redundant webhooks registered against it, so every real
+// delivery event produces two near-identical `updates[]` entries (same
+// content, `updatedAt` a few seconds apart). This is a display-side-only
+// fix -- the underlying race (Webflow genuinely gets written twice) isn't
+// being closed here. Generous vs. the seconds-apart gap two redundant
+// webhooks actually produce, but short enough that a later, coincidentally
+// identical push is never mistaken for the same delivery.
+const DUPLICATE_UPDATE_WINDOW_MS = 5 * 60 * 1000;
+
+function dedupWebflowUpdates(updates) {
+  const kept = [];
+  for (const update of updates) {
+    const { updatedAt, ...rest } = update;
+    const signature = JSON.stringify(rest);
+    const isDuplicate = kept.some(
+      (k) => k.signature === signature && Math.abs(new Date(updatedAt) - new Date(k.updatedAt)) <= DUPLICATE_UPDATE_WINDOW_MS
+    );
+    if (!isDuplicate) kept.push({ signature, updatedAt, update });
+  }
+  return kept.map((k) => k.update);
+}
+
 // "not_registered" is a normal, expected state (no automation needs this
 // webhook yet) -- only "deactivated"/other unexpected statuses get an actual
 // Reregister action, since that's the only case something is really broken.
@@ -86,6 +108,23 @@ export default function Runs() {
   const [refreshing, setRefreshing] = useState(false);
   const [reregistering, setReregistering] = useState(null); // "cms" | "pages" | null
   const [error, setError] = useState(null);
+  const [expandedRuns, setExpandedRuns] = useState({}); // { [wxrksProjectUUID]: true }
+  const [workUnitsByRun, setWorkUnitsByRun] = useState({}); // { [wxrksProjectUUID]: rows[] | "loading" | "error" }
+
+  function loadRunWorkUnits(wxrksProjectUUID) {
+    if (workUnitsByRun[wxrksProjectUUID]) return; // already fetched/fetching
+    setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "loading" }));
+    api
+      .getRunWorkUnits(wxrksProjectUUID)
+      .then((res) => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: res.rows || [] })))
+      .catch(() => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "error" })));
+  }
+
+  function toggleRunWorkUnits(wxrksProjectUUID) {
+    const nowExpanded = !expandedRuns[wxrksProjectUUID];
+    setExpandedRuns((prev) => ({ ...prev, [wxrksProjectUUID]: nowExpanded }));
+    if (nowExpanded) loadRunWorkUnits(wxrksProjectUUID);
+  }
 
   function loadAutomations() {
     setRefreshing(true);
@@ -118,13 +157,22 @@ export default function Runs() {
       api.getSettings().catch(() => null),
     ])
       .then(([historyRes, collectionsRes, pagesRes, foldersRes, componentsRes, orgUnitsRes, settingsRes]) => {
-        setHistory(historyRes.history || []);
+        const history = historyRes.history || [];
+        setHistory(history);
         setCollections(collectionsRes.collections || []);
         setPages(pagesRes.pages || []);
         setPageFolders(foldersRes.folders || []);
         setComponents(componentsRes.components || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
+        // The most recent run (history is already most-recent-first) starts
+        // expanded, fetching its work units immediately -- every other run
+        // stays collapsed until manually expanded.
+        if (history.length > 0) {
+          const mostRecentUUID = history[0].wxrksProjectUUID;
+          setExpandedRuns((prev) => ({ ...prev, [mostRecentUUID]: true }));
+          loadRunWorkUnits(mostRecentUUID);
+        }
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -433,11 +481,14 @@ export default function Runs() {
         <div className="flex flex-col gap-5">
           {filteredHistory.map((batch) => {
             const wordCount = batch.items.reduce((sum, i) => sum + (i.wordCount || 0), 0);
+            const dedupedUpdates = dedupWebflowUpdates(batch.updates);
+            const workUnits = workUnitsByRun[batch.wxrksProjectUUID];
             return (
               <Card className="p-5" id={batch.wxrksProjectUUID} key={batch.wxrksProjectUUID}>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h2 className="break-all font-mono text-[13px] font-semibold text-ink">{batch.wxrksProjectUUID}</h2>
+                    <h2 className="text-[14px] font-semibold text-ink">{batch.reference || batch.wxrksProjectUUID}</h2>
+                    <p className="break-all font-mono text-[11px] text-ink-faint">{batch.wxrksProjectUUID}</p>
                     <a href={wxrksProjectUrl(batch.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass + " text-xs"}>
                       Open in wxrks →
                     </a>
@@ -493,11 +544,11 @@ export default function Runs() {
                 </div>
 
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Updated on Webflow</p>
-                {batch.updates.length === 0 ? (
+                {dedupedUpdates.length === 0 ? (
                   <p className="text-sm text-ink-faint">No translations pushed back to Webflow yet.</p>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {batch.updates.map((update, i) => {
+                    {dedupedUpdates.map((update, i) => {
                       const errors = (update.resultsByItem || []).flatMap((item) =>
                         (item.resultsByLocale || [])
                           .filter((l) => l.error)
@@ -541,6 +592,66 @@ export default function Runs() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => toggleRunWorkUnits(batch.wxrksProjectUUID)}
+                  className="mt-4 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint hover:text-ink"
+                >
+                  <span>{expandedRuns[batch.wxrksProjectUUID] ? "▾" : "▸"}</span>
+                  Work units
+                </button>
+                {expandedRuns[batch.wxrksProjectUUID] && (
+                  <div className="mt-2">
+                    {workUnits === "loading" || workUnits === undefined ? (
+                      <p className="text-sm text-ink-faint">Loading work units...</p>
+                    ) : workUnits === "error" ? (
+                      <p className="text-sm text-status-error-fg">Couldn't load work units for this run.</p>
+                    ) : workUnits.length === 0 ? (
+                      <p className="text-sm text-ink-faint">No work units in this run.</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-md border border-border">
+                        <table className="w-full text-left text-[12.5px]">
+                          <thead>
+                            <tr className="border-b border-border bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
+                              <th className="px-3 py-2">Work unit</th>
+                              <th className="px-3 py-2">Locale</th>
+                              <th className="px-3 py-2">Sent to wxrks</th>
+                              <th className="px-3 py-2">Updated on Webflow</th>
+                              <th className="px-3 py-2">Webflow</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {workUnits.map((row, i) => (
+                              <tr key={i}>
+                                <td className="px-3 py-2 font-mono text-ink">{row.workUnitName}</td>
+                                <td className="px-3 py-2 font-mono text-ink-soft">{row.targetLocale}</td>
+                                <td className="px-3 py-2 text-ink-soft">{formatDateTime(row.sentToWxrksAt, timezone)}</td>
+                                <td className="px-3 py-2 text-ink-soft">
+                                  {row.updatedOnWebflowAt ? (
+                                    formatDateTime(row.updatedOnWebflowAt, timezone)
+                                  ) : (
+                                    <span className="text-ink-faint">—</span>
+                                  )}
+                                  {row.updateError && <span className="ml-1.5 text-status-error-fg" title={row.updateError}>⚠</span>}
+                                </td>
+                                <td className="px-3 py-2">
+                                  {row.webflowUrl ? (
+                                    <a href={row.webflowUrl} target="_blank" rel="noreferrer" className={linkClass}>
+                                      {row.linkType === "published" ? "View live →" : "Open in Designer →"}
+                                    </a>
+                                  ) : (
+                                    <span className="text-ink-faint">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
               </Card>

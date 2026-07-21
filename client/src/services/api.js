@@ -72,6 +72,7 @@ const api = {
   getOrgUnitResources: (orgUnitUUID) => request(`/config/org-units/${orgUnitUUID}/resources`),
   getWebflowLocales: () => request("/config/webflow-locales"),
   getSyncHistory: () => request("/sync/history"),
+  getRunWorkUnits: (wxrksProjectUUID) => request(`/sync/history/${wxrksProjectUUID}/work-units`),
   getCollectionFields: (collectionId) => request(`/collections/${collectionId}/fields`),
   getFieldsSummary: () => request("/collections/fields-summary"),
   updateFieldExclusions: (collectionId, excludedFields) =>

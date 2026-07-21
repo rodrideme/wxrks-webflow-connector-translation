@@ -49,6 +49,15 @@ async function migrate() {
   // history must stay attributable after deletion.
   await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS automation_name TEXT`);
 
+  // Forward migration: the wxrks project reference string computed at
+  // wxrks.createProject({reference}) time was never persisted anywhere --
+  // confirmed live that GET /project/:uuid echoes it back exactly, so this
+  // column is purely a local cache of a string this app already computes
+  // itself, never re-derived from a live wxrks call. Runs created before
+  // this migration simply have `reference: null` (Runs.jsx falls back to
+  // showing the project uuid for those).
+  await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS reference TEXT`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,

@@ -57,14 +57,14 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     // Fetched once for the whole request (not per item) -- feeds
     // syncItemIntoBatch's previewUrl computation below.
     const { site } = await webflow.getSiteLocales();
+    const allPages = await webflow.listPages();
+    const templatePage = webflow.findCollectionTemplatePage(allPages, collectionId);
 
-    const project = await wxrks.createProject({
-      reference: projectName || `Item Sync / ${collection.displayName || collectionId} / ${new Date().toISOString()}`,
-      sourceLocale,
-      orgUnitUUID,
-    });
+    const reference = projectName || `Item Sync / ${collection.displayName || collectionId} / ${new Date().toISOString()}`;
+    const project = await wxrks.createProject({ reference, sourceLocale, orgUnitUUID });
     await store.createProjectMapping(accountId, project.uuid, {
       mode: "item",
+      reference,
       sourceLocale,
       targetLocales,
       orgUnitUUID,
@@ -95,6 +95,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
             namePattern: workUnitNamePattern,
             workflows,
             site,
+            templatePage,
           });
           store.appendSyncJobResult(jobId, { itemId: id, ...result });
         } catch (err) {
@@ -173,14 +174,17 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
     // kind that needs it is present -- same guard idiom as orgUnitUUID above.
     const needsSite = groups.some((g) => g.kind === "collection" || g.kind === "pagesFolder");
     const { site } = needsSite ? await webflow.getSiteLocales() : { site: null };
+    // One unfiltered pages fetch, shared by BOTH the collection branch's
+    // template-page lookup and the pagesFolder branch's page list below --
+    // listStaticPages() is just this same list minus collection-template
+    // pages, so there's no reason to fetch it twice.
+    const allPagesRaw = needsSite ? await webflow.listPages() : [];
 
-    const project = await wxrks.createProject({
-      reference: projectName || `Combined Sync / ${new Date().toISOString()}`,
-      sourceLocale,
-      orgUnitUUID,
-    });
+    const reference = projectName || `Combined Sync / ${new Date().toISOString()}`;
+    const project = await wxrks.createProject({ reference, sourceLocale, orgUnitUUID });
     await store.createProjectMapping(accountId, project.uuid, {
       mode: "combined",
+      reference,
       sourceLocale,
       targetLocales,
       orgUnitUUID,
@@ -203,6 +207,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
 
         if (g.kind === "collection") {
           const collection = await webflow.getCollection(g.leafId);
+          const templatePage = webflow.findCollectionTemplatePage(allPagesRaw, g.leafId);
           for (const id of g.ids) {
             if (store.getSyncJob(jobId).cancelled) break;
             try {
@@ -216,6 +221,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
                 namePattern: workUnitNamePattern,
                 workflows,
                 site,
+                templatePage,
               });
               store.appendSyncJobResult(jobId, { itemId: id, ...result });
             } catch (err) {
@@ -223,7 +229,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
             }
           }
         } else if (g.kind === "pagesFolder") {
-          const allPages = await webflow.listStaticPages();
+          const allPages = allPagesRaw.filter((p) => !p.collectionId);
           const pagesById = new Map(allPages.map((p) => [p.id, p]));
           const foldersById = await webflow.getPageFoldersByIds(g.ids.map((id) => pagesById.get(id)?.parentId));
           for (const id of g.ids) {
@@ -352,6 +358,134 @@ router.get("/history", async (req, res) => {
     res.json({ history });
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/sync/history/:wxrksProjectUUID/work-units
+ * One row per (item, target locale) synced in this one run -- lazily
+ * fetched by the Runs page when a History card is expanded, not bundled
+ * into GET /history itself (this does real, non-trivial live Webflow work:
+ * per-locale CMS item reads to check publish status, a pages/folders fetch
+ * for Page links). Each row's `webflowUrl` is the real published URL when
+ * that locale/item is actually public, else a Webflow Designer deep link
+ * -- resolved here, not client-side, since this is the only place with the
+ * live per-locale draft-status data needed to decide which to show.
+ */
+router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
+  try {
+    const mapping = await store.getProjectMapping(req.params.wxrksProjectUUID);
+    // Looked up by uuid directly (globally unique, assigned by wxrks) --
+    // unlike listProjectMappings above, this needs its own explicit
+    // ownership check so one account can't fetch another's run.
+    if (!mapping || mapping.accountId !== req.account.id) {
+      return res.status(404).json({ error: "Run not found" });
+    }
+
+    const { site, secondary } = await webflow.getSiteLocales();
+    const subdirectoryByLocale = Object.fromEntries(secondary.map((l) => [l.tag, l.subdirectory]));
+    const enabledByLocale = Object.fromEntries(secondary.map((l) => [l.tag, l.enabled]));
+
+    const hasCmsItems = mapping.items.some((item) => (item.entityType || "cmsItem") === "cmsItem");
+    const hasPages = mapping.items.some((item) => item.entityType === "page");
+
+    // Distinct (collectionId, locale) pairs this run's CMS items actually
+    // need -- fetched once each, not once per item, and isolated so one
+    // failing collection/locale combo degrades to "no draft-status data
+    // for it" rather than failing the whole response.
+    const neededPairs = new Set();
+    if (hasCmsItems) {
+      for (const item of mapping.items) {
+        if ((item.entityType || "cmsItem") !== "cmsItem") continue;
+        for (const locale of mapping.targetLocales) neededPairs.add(`${item.webflowCollectionId}::${locale}`);
+      }
+    }
+    const draftByCollectionLocale = {};
+    const settledItems = await Promise.allSettled(
+      [...neededPairs].map(async (key) => {
+        const [collectionId, locale] = key.split("::");
+        return { collectionId, locale, items: await webflow.listAllItems(collectionId, { locale }) };
+      })
+    );
+    for (const r of settledItems) {
+      if (r.status !== "fulfilled") continue;
+      const { collectionId, locale, items } = r.value;
+      draftByCollectionLocale[collectionId] ||= {};
+      draftByCollectionLocale[collectionId][locale] = new Map(items.map((it) => [it.id, it.isDraft]));
+    }
+
+    const allPagesRaw = hasCmsItems ? await webflow.listPages() : [];
+    const templatePageByCollection = new Map();
+
+    const staticPages = hasPages ? await webflow.listStaticPages() : [];
+    const pagesById = new Map(staticPages.map((p) => [p.id, p]));
+    const folderIds = staticPages.map((p) => p.parentId).filter(Boolean);
+    const foldersById = hasPages ? await webflow.getPageFoldersByIds(folderIds) : new Map();
+
+    const latestUpdateByEntity = store.latestUpdateByEntityAndLocale(mapping);
+
+    const rows = [];
+    for (const item of mapping.items) {
+      const entityType = item.entityType || "cmsItem";
+      const entityId = item.webflowItemId || item.webflowPageId || item.webflowComponentId;
+
+      for (const locale of mapping.targetLocales) {
+        const delivery = latestUpdateByEntity[entityId]?.[locale];
+        const subdirectory = subdirectoryByLocale[locale];
+        let webflowUrl;
+        let linkType;
+
+        if (entityType === "cmsItem") {
+          if (!templatePageByCollection.has(item.webflowCollectionId)) {
+            templatePageByCollection.set(item.webflowCollectionId, webflow.findCollectionTemplatePage(allPagesRaw, item.webflowCollectionId));
+          }
+          const templatePage = templatePageByCollection.get(item.webflowCollectionId);
+          const isDraft = draftByCollectionLocale[item.webflowCollectionId]?.[locale]?.get(item.webflowItemId);
+          if (isDraft === false) {
+            webflowUrl = webflow.buildCmsItemPreviewUrl({ site, templatePage, item: { fieldData: { slug: item.sourceSlug } }, subdirectory });
+            linkType = "published";
+          } else {
+            webflowUrl = webflow.buildCmsItemDesignerUrl({ site, templatePage, item: { id: item.webflowItemId }, locale });
+            linkType = "designer";
+          }
+        } else if (entityType === "page") {
+          const page = pagesById.get(item.webflowPageId);
+          if (!page) {
+            // Page no longer exists (deleted since this run) -- nothing to
+            // link to. Not treated as "no slug" (which buildPagePreviewUrl
+            // would otherwise read as the homepage case).
+            webflowUrl = undefined;
+            linkType = "none";
+          } else if (enabledByLocale[locale]) {
+            webflowUrl = webflow.buildPagePreviewUrl({ site, page, folder: foldersById.get(page.parentId), subdirectory });
+            linkType = "published";
+          } else {
+            webflowUrl = webflow.buildPageDesignerUrl({ site, page, locale });
+            linkType = "designer";
+          }
+        } else {
+          // Components have no addressable URL -- no page association is
+          // ever stored for where a given instance lives.
+          webflowUrl = undefined;
+          linkType = "none";
+        }
+
+        rows.push({
+          entityType,
+          workUnitName: item.resourceFileName,
+          targetLocale: locale,
+          sentToWxrksAt: mapping.createdAt,
+          updatedOnWebflowAt: delivery?.updatedAt || null,
+          updateError: delivery?.error || null,
+          webflowUrl,
+          linkType,
+        });
+      }
+    }
+
+    res.json({ rows });
+  } catch (err) {
+    res.status(502).json({ error: err.response?.data?.message || err.message });
   }
 });
 

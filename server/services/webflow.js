@@ -125,7 +125,11 @@ async function getSiteLocales() {
     // instead of used to hide anything, so callers (the Send to wxrks
     // wizard in particular) can choose not to pre-select a locale that
     // isn't public yet, without hiding it as an option entirely.
-    secondary: secondary.map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId, enabled: l.enabled })),
+    // `subdirectory` (confirmed live) is this locale's own URL prefix --
+    // not always a simple transform of `tag` (e.g. "pt-BR" -> "pt",
+    // "fr-FR" -> "fr") -- pass it through rather than deriving it, so
+    // callers building a target-locale's real published URL never guess.
+    secondary: secondary.map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId, enabled: l.enabled, subdirectory: l.subdirectory })),
   };
 }
 
@@ -843,16 +847,34 @@ function buildComponentResourceFileName(pattern, { component }) {
 }
 
 /**
- * The live URL a CMS item renders at, per Webflow's default Collection
- * Page convention (a collection page template's own URL slug defaults to
- * matching the collection's slug unless customized in the Designer).
- * Returns undefined -- never a guess -- if any ingredient is missing.
+ * Finds the collection's own Collection Page template, if any -- among the
+ * UNFILTERED page list (listPages(), not listStaticPages(), which
+ * deliberately filters these out), the one whose `collectionId` matches. A
+ * collection can have zero template pages (never bound to one in the
+ * Designer). Pure lookup, not a fetch -- callers fetch `pages` via
+ * listPages() once and reuse it, no extra Webflow call per collection/item.
  */
-function buildCmsItemPreviewUrl({ site, collection, item }) {
-  const collectionSlug = collection?.slug;
+function findCollectionTemplatePage(pages, collectionId) {
+  return pages.find((p) => p.collectionId === collectionId);
+}
+
+/**
+ * The live URL a CMS item renders at. Takes the collection's real template
+ * PAGE (see findCollectionTemplatePage), not the collection itself --
+ * confirmed live a template page's own URL slug commonly does NOT match
+ * the collection's own `slug` field (real site: collection slug
+ * "blog-tags", template page slug "detail_blog-tags"), so guessing from
+ * the collection alone was wrong. `subdirectory` (optional) is a secondary
+ * locale's own URL prefix (see getSiteLocales' `subdirectory` field) --
+ * omitted, this builds the primary-locale URL exactly as before. Returns
+ * undefined -- never a guess -- if any ingredient is missing.
+ */
+function buildCmsItemPreviewUrl({ site, templatePage, item, subdirectory }) {
+  const templateSlug = templatePage?.slug;
   const itemSlug = item?.fieldData?.slug;
-  if (!site?.url || !collectionSlug || !itemSlug) return undefined;
-  return `${site.url}/${collectionSlug}/${itemSlug}`;
+  if (!site?.url || !templateSlug || !itemSlug) return undefined;
+  const prefix = subdirectory ? `/${subdirectory}` : "";
+  return `${site.url}${prefix}/${templateSlug}/${itemSlug}`;
 }
 
 /**
@@ -863,6 +885,7 @@ function buildCmsItemPreviewUrl({ site, collection, item }) {
  * be the RAW getPageFolder() object (see getPageFoldersByIds above), so
  * its own `parentId` is available to detect that deeper-nesting case and
  * return undefined instead of a guaranteed-wrong partial path.
+ * `subdirectory` (optional): see buildCmsItemPreviewUrl above.
  *
  * The site's homepage is a special case (confirmed live): Webflow gives
  * it `slug: null` rather than an empty path segment, since it IS the site
@@ -870,12 +893,42 @@ function buildCmsItemPreviewUrl({ site, collection, item }) {
  * page. Only valid at the top level; a null slug on a page with a parent
  * isn't a shape Webflow actually produces.
  */
-function buildPagePreviewUrl({ site, page, folder }) {
+function buildPagePreviewUrl({ site, page, folder, subdirectory }) {
   if (!site?.url) return undefined;
-  if (!page?.slug) return !page?.parentId ? site.url : undefined;
-  if (!page.parentId) return `${site.url}/${page.slug}`;
-  if (folder && !folder.parentId && folder.slug) return `${site.url}/${folder.slug}/${page.slug}`;
+  const prefix = subdirectory ? `/${subdirectory}` : "";
+  if (!page?.slug) return !page?.parentId ? `${site.url}${prefix}` : undefined;
+  if (!page.parentId) return `${site.url}${prefix}/${page.slug}`;
+  if (folder && !folder.parentId && folder.slug) return `${site.url}${prefix}/${folder.slug}/${page.slug}`;
   return undefined;
+}
+
+/**
+ * Webflow Designer deep link for a static page -- the fallback shown when
+ * no real published URL is available (locale not enabled, or unresolvable
+ * per buildPagePreviewUrl's own limits). Confirmed live against real
+ * Designer usage (not Webflow's formal deep-linking doc, which only
+ * documents the separate ?app=<client-id> App-extension handoff pattern).
+ */
+function buildPageDesignerUrl({ site, page, locale }) {
+  if (!site?.shortName || !page?.id) return undefined;
+  return `https://${site.shortName}.design.webflow.com?${new URLSearchParams({ locale, pageId: page.id })}`;
+}
+
+/**
+ * Sibling of buildPageDesignerUrl for a CMS item. `templatePage` must be
+ * the collection's own template page (see findCollectionTemplatePage) --
+ * the Designer's `pageId` param picks which Collection Page template to
+ * open the canvas on; `itemId` + `workflow=canvas` select which item's
+ * content loads into it.
+ */
+function buildCmsItemDesignerUrl({ site, templatePage, item, locale }) {
+  if (!site?.shortName || !templatePage?.id || !item?.id) return undefined;
+  return `https://${site.shortName}.design.webflow.com?${new URLSearchParams({
+    locale,
+    pageId: templatePage.id,
+    itemId: item.id,
+    workflow: "canvas",
+  })}`;
 }
 
 module.exports = {
@@ -915,8 +968,11 @@ module.exports = {
   updateComponentProperties,
   buildComponentResourceFileName,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
+  findCollectionTemplatePage,
   buildCmsItemPreviewUrl,
   buildPagePreviewUrl,
+  buildPageDesignerUrl,
+  buildCmsItemDesignerUrl,
   sanitizeSlug,
   transliterateToLatin,
   WEBFLOW_SLUG_REGEX,

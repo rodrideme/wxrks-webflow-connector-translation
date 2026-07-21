@@ -233,13 +233,11 @@ async function flush(automationId, { jobId } = {}) {
   }
 
   const orgUnitUUID = automation.orgUnitOverride || settingsOrgUnitUUID || (await wxrks.getOrgUnit());
-  const project = await wxrks.createProject({
-    reference: automation.projectName || `Automation "${automation.name}" ${new Date().toISOString()}`,
-    sourceLocale,
-    orgUnitUUID,
-  });
+  const reference = automation.projectName || `Automation "${automation.name}" ${new Date().toISOString()}`;
+  const project = await wxrks.createProject({ reference, sourceLocale, orgUnitUUID });
   await store.createProjectMapping(automation.accountId, project.uuid, {
     mode: "automation",
+    reference,
     automationName: automation.name,
     sourceLocale,
     targetLocales,
@@ -274,6 +272,12 @@ async function flush(automationId, { jobId } = {}) {
   const { site } = needsSite ? await webflow.getSiteLocales() : { site: null };
   const pageParentIds = batch.filter(([, entry]) => entry.entityType === "page").map(([, entry]) => entry.page.parentId);
   const foldersById = await webflow.getPageFoldersByIds(pageParentIds);
+  // Same unfiltered pages fetch as routes/sync.js's combined endpoint --
+  // feeds syncItemIntoBatch's previewUrl fix (a collection's real template
+  // page, found by matching collectionId, rather than guessing from the
+  // collection's own slug).
+  const needsTemplatePages = batch.some(([, entry]) => entry.entityType === "cms");
+  const allPagesRaw = needsTemplatePages ? await webflow.listPages() : [];
 
   let itemsSynced = 0;
   for (const [, entry] of batch) {
@@ -281,6 +285,7 @@ async function flush(automationId, { jobId } = {}) {
 
     try {
       if (entry.entityType === "cms") {
+        const templatePage = webflow.findCollectionTemplatePage(allPagesRaw, entry.collection.id);
         const result = await syncItemIntoBatch({
           accountId: automation.accountId,
           projectUuid: project.uuid,
@@ -290,6 +295,7 @@ async function flush(automationId, { jobId } = {}) {
           namePattern: workUnitNamePattern,
           workflows: automation.workflows,
           site,
+          templatePage,
         });
         if (!result.skipped) {
           itemsSynced += 1;

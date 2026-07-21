@@ -48,13 +48,11 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     const allComponents = await webflow.listComponents();
     const componentsById = new Map(allComponents.map((c) => [c.id, c]));
 
-    const project = await wxrks.createProject({
-      reference: projectName || `Components Item Sync / ${new Date().toISOString()}`,
-      sourceLocale,
-      orgUnitUUID,
-    });
+    const reference = projectName || `Components Item Sync / ${new Date().toISOString()}`;
+    const project = await wxrks.createProject({ reference, sourceLocale, orgUnitUUID });
     await store.createProjectMapping(accountId, project.uuid, {
       mode: "components-item",
+      reference,
       sourceLocale,
       targetLocales,
       orgUnitUUID,

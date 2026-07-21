@@ -53,13 +53,11 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     const { site } = await webflow.getSiteLocales();
     const foldersById = await webflow.getPageFoldersByIds(ids.map((id) => pagesById.get(id)?.parentId));
 
-    const project = await wxrks.createProject({
-      reference: projectName || `Pages Item Sync / ${new Date().toISOString()}`,
-      sourceLocale,
-      orgUnitUUID,
-    });
+    const reference = projectName || `Pages Item Sync / ${new Date().toISOString()}`;
+    const project = await wxrks.createProject({ reference, sourceLocale, orgUnitUUID });
     await store.createProjectMapping(accountId, project.uuid, {
       mode: "pages-item",
+      reference,
       sourceLocale,
       targetLocales,
       orgUnitUUID,
