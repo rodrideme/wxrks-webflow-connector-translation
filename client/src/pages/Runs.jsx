@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../services/api.js";
 import { wxrksProjectUrl } from "../wxrksLinks.js";
 import { formatDateTime, formatCompactDateTime } from "../formatDate.js";
@@ -112,6 +112,7 @@ function langChips(targetLocales) {
 // this app -- see Card/StatusPill/Chip, which are all plain markup).
 const RUN_ICON_PATHS = {
   search: "M11 4a7 7 0 105.2 11.7L21 21l-4.8-5.3A7 7 0 0011 4z",
+  chevron: "M9 6l6 6-6 6",
   alert: "M12 3l10 18H2L12 3zm0 7v4m0 3v.5",
   ext: "M14 4h6v6M20 4L10 14M9 5H5v14h14v-4",
   clock: "M12 3a9 9 0 100 18 9 9 0 000-18zm0 4v5l3 3",
@@ -270,7 +271,7 @@ function webhookPill(status, label, onReregister, busy, canEdit) {
 // no total-count query, so "a full page came back" is the only signal
 // there might be more; the Load more button disappears once a page comes
 // back short.
-const HISTORY_PAGE_SIZE = 20;
+const HISTORY_PAGE_SIZE = 10;
 
 const TABS = [
   ["history", "History"],
@@ -329,13 +330,17 @@ export default function Runs() {
 
   function loadMoreHistory() {
     setLoadingMoreHistory(true);
+    const search = historySearch.trim() || undefined;
     api
-      .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: historyOffset })
+      .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: historyOffset, search })
       .then((res) => {
         const more = res.history || [];
         setHistory((prev) => [...(prev || []), ...more]);
         setHistoryOffset((prev) => prev + more.length);
         setHistoryHasMore(more.length === HISTORY_PAGE_SIZE);
+        // Loaded together with the page, not lazily on click -- by the time
+        // a user expands any of these, its documents are already there.
+        more.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingMoreHistory(false));
@@ -379,16 +384,46 @@ export default function Runs() {
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
         // The most recent run (history is already most-recent-first) starts
-        // expanded, fetching its work units immediately -- every other run
-        // stays collapsed until manually expanded.
+        // expanded -- every other run in this page stays visually collapsed,
+        // but ALL of their documents are fetched right away below (not
+        // lazily on click), so expanding any of them later is instant.
         if (history.length > 0) {
-          const mostRecentUUID = history[0].wxrksProjectUUID;
-          setExpandedRuns((prev) => ({ ...prev, [mostRecentUUID]: true }));
-          loadRunWorkUnits(mostRecentUUID);
+          setExpandedRuns((prev) => ({ ...prev, [history[0].wxrksProjectUUID]: true }));
         }
+        history.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
       })
       .catch((err) => setError(err.message));
   }, []);
+
+  // Server-side search (see GET /sync/history's `search` param) -- a
+  // client-side-only filter would silently miss any match sitting on a
+  // page that hasn't been loaded yet. Debounced so it doesn't re-fetch on
+  // every keystroke; skips the very first render, since the mount effect
+  // above already did the initial (no-search) fetch.
+  const isFirstSearchRender = useRef(true);
+  useEffect(() => {
+    if (isFirstSearchRender.current) {
+      isFirstSearchRender.current = false;
+      return;
+    }
+    const search = historySearch.trim() || undefined;
+    const handle = setTimeout(() => {
+      setHistory(null);
+      setHistoryOffset(0);
+      setHistoryHasMore(false);
+      api
+        .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: 0, search })
+        .then((res) => {
+          const page = res.history || [];
+          setHistory(page);
+          setHistoryOffset(page.length);
+          setHistoryHasMore(page.length === HISTORY_PAGE_SIZE);
+          page.forEach((batch) => loadRunWorkUnits(batch.wxrksProjectUUID));
+        })
+        .catch((err) => setError(err.message));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [historySearch]);
 
   // Deep-link support: /logs#<wxrksProjectUUID> or /runs#automation-<id>
   // scrolls straight to that card/row (used by the Dashboard's runs and
@@ -458,12 +493,13 @@ export default function Runs() {
     synced: historyBuckets.filter((h) => h.status.bucket === "synced").length,
     issues: historyBuckets.filter((h) => h.status.bucket === "issues").length,
   };
-  const historySearchTerm = historySearch.trim().toLowerCase();
-  const filteredHistory = historyBuckets.filter(({ batch, status }) => {
-    if (historyStatusFilter !== "all" && status.bucket !== historyStatusFilter) return false;
-    if (historySearchTerm && !(batch.reference || batch.wxrksProjectUUID).toLowerCase().includes(historySearchTerm)) return false;
-    return true;
-  });
+  // Search itself is server-side now (see the debounced effect above) --
+  // `history` already only contains matches, so this only still applies
+  // the status filter, which (unlike search) stays scoped to whatever
+  // page is currently loaded.
+  const filteredHistory = historyBuckets.filter(
+    ({ status }) => historyStatusFilter === "all" || status.bucket === historyStatusFilter
+  );
 
   const archivedCount = (automations || []).filter((a) => a.archived).length;
   const visibleAutomations = (automations || []).filter((a) => showArchived || !a.archived);
@@ -695,7 +731,7 @@ export default function Runs() {
           className="p-6 text-center text-sm"
           style={{ backgroundColor: "var(--runs-card-bg)", border: "1px solid var(--runs-card-border)", borderRadius: 12, color: "var(--runs-text-faint)" }}
         >
-          {historySearchTerm ? `No runs match "${historySearch.trim()}"` : "No runs of this type yet."}
+          {historySearch.trim() ? `No runs match "${historySearch.trim()}"` : "No runs of this type yet."}
         </div>
       ) : (
         <>

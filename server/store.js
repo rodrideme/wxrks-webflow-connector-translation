@@ -319,10 +319,21 @@ async function listProjectMappings(accountId) {
 // listActivity's own reasoning -- the client treats a full page
 // (history.length === limit) as "there might be more" and offers a Load
 // more button instead.
-async function listProjectMappingsPage(accountId, { limit, offset }) {
+// `search` (optional) matches against the project's reference name or its
+// raw wxrks project uuid -- done here in SQL, not client-side, since the
+// whole point of pagination is that the client never has more than one
+// page loaded at a time to filter over.
+async function listProjectMappingsPage(accountId, { limit, offset, search }) {
+  const conditions = ["account_id = $1"];
+  const params = [accountId];
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`(reference ILIKE $${params.length} OR wxrks_project_uuid ILIKE $${params.length})`);
+  }
+  params.push(limit, offset);
   const { rows } = await db.query(
-    `SELECT * FROM project_mappings WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-    [accountId, limit, offset]
+    `SELECT * FROM project_mappings WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
   );
   return rows.map(mappingRowToObject);
 }

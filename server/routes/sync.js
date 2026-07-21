@@ -350,7 +350,7 @@ router.get("/status", async (req, res) => {
 
 /**
  * GET /api/sync/history
- * GET /api/sync/history?limit=&offset=
+ * GET /api/sync/history?limit=&offset=&search=
  * Every batch ever created (not just active ones), most recent first --
  * each entry carries the full settings snapshot (org unit, locales,
  * collections, naming pattern) that produced its wxrks project.
@@ -361,7 +361,10 @@ router.get("/status", async (req, res) => {
  * History tab only ever needs to browse a page at a time, so it passes
  * limit/offset to get a real paginated query instead -- same "no total-
  * count, client treats a full page as 'there might be more'" convention
- * as listActivity/getActivity.
+ * as listActivity/getActivity. `search` (only meaningful alongside paging)
+ * matches server-side against the whole account's history, not just
+ * whatever page happens to be loaded client-side -- a client-side-only
+ * filter would silently miss any match sitting on an unloaded page.
  */
 router.get("/history", async (req, res) => {
   try {
@@ -370,6 +373,7 @@ router.get("/history", async (req, res) => {
       ? await store.listProjectMappingsPage(req.account.id, {
           limit: Math.min(Number(req.query.limit) || 20, 100),
           offset: Number(req.query.offset) || 0,
+          search: req.query.search?.trim() || undefined,
         })
       : await store.listProjectMappings(req.account.id);
     res.json({ history });
