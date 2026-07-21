@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api.js";
 import dataCache from "../services/dataCache.js";
@@ -84,6 +84,14 @@ export default function Translate() {
   const [dateAfter, setDateAfter] = useState("");
   const [selected, setSelected] = useState({}); // `${kind}:${id}` -> true
   const [itemFilter, setItemFilter] = useState("all"); // all | needs | failed
+
+  // Cross-entity name/slug search (CMS items, Pages, Components) -- see
+  // searchIndex below. highlightItemId briefly flashes/scrolls to a
+  // clicked result's row once it appears in the opened leaf's table;
+  // itemRowRefs holds each visible row's DOM node so that scroll can happen.
+  const [searchTerm, setSearchTerm] = useState("");
+  const [highlightItemId, setHighlightItemId] = useState(null);
+  const itemRowRefs = useRef({});
 
   // Starts true (rather than false + flip-on-effect) so the very first
   // render -- before the mount effect below has even resolved once -- shows
@@ -278,6 +286,23 @@ export default function Translate() {
     }
   }
 
+  // Jumps to a search result (see searchIndex/searchResults below) --
+  // reuses openLeaf as-is, since a result's {leafKind, leafId, leafLabel}
+  // is already the exact argument shape it takes. itemFilter is reset to
+  // "all" since it's display-only (confirmed: not part of selection/rule
+  // logic) and could otherwise hide the very item just searched for.
+  // filtersByLeaf is deliberately left untouched -- clearing it here could
+  // silently reselect a whole collection for translation (see
+  // updateFilters' rule-based resync); see searchTargetMissing below for
+  // the "an active filter is hiding this" banner instead.
+  function goToSearchResult(result) {
+    setMode("specific");
+    setItemFilter("all");
+    setSearchTerm("");
+    openLeaf(result.leafKind, result.leafId, result.leafLabel);
+    setHighlightItemId(result.id);
+  }
+
   // Every collection's summary (id + word count) is loaded eagerly,
   // regardless of mode -- "All content" needs it for its aggregate totals,
   // and "Select specific content" needs it so the rail shows every
@@ -338,6 +363,77 @@ export default function Translate() {
       .filter(passesDateFilter)
       .filter((it) => itemMatchesFilters(it, filters));
   }
+
+  // ---- Cross-entity search index ----
+  // Derived purely from state already held for other reasons -- no new
+  // fetching, no new cache. Naturally reflects "whatever's loaded so far":
+  // a collection with no collectionSummaries[c.id] yet (still being
+  // progressively scanned) simply contributes nothing until
+  // loadCollectionSummary resolves for it, at which point this memo
+  // recomputes on its own since collectionSummaries is a dependency. Pages/
+  // Components are always fully loaded up front, so those two are
+  // searchable immediately. Name/slug only -- see the plan's scope
+  // boundary on why this doesn't search actual field content.
+  const searchIndex = useMemo(() => {
+    const entries = [];
+
+    for (const c of collections) {
+      const summary = collectionSummaries[c.id];
+      if (!summary) continue;
+      const collLabel = c.displayName || c.singularName;
+      for (const item of summary) {
+        entries.push({
+          kind: "cmsItem",
+          id: item.id,
+          label: item.name,
+          slug: item.slug,
+          contextLabel: collLabel,
+          leafKind: "collection",
+          leafId: c.id,
+          leafLabel: collLabel,
+        });
+      }
+    }
+
+    const folderTitleById = new Map(pageFolders.map((f) => [f.id, f.title]));
+    for (const p of pages) {
+      const folderId = p.folderId || NO_FOLDER_ID;
+      const folderLabel = folderTitleById.get(folderId) || "Static Pages";
+      entries.push({
+        kind: "page",
+        id: p.id,
+        label: p.title,
+        slug: p.slug,
+        contextLabel: folderLabel,
+        leafKind: "pagesFolder",
+        leafId: folderId,
+        leafLabel: folderLabel,
+      });
+    }
+
+    for (const c of components) {
+      entries.push({
+        kind: "component",
+        id: c.id,
+        label: c.name,
+        slug: null,
+        contextLabel: c.group || "Components",
+        leafKind: "components",
+        leafId: "_",
+        leafLabel: "Components",
+      });
+    }
+
+    return entries;
+  }, [collections, collectionSummaries, pages, pageFolders, components]);
+
+  const searchResults = (() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return [];
+    return searchIndex
+      .filter((e) => e.label?.toLowerCase().includes(term) || e.slug?.toLowerCase().includes(term))
+      .slice(0, 25);
+  })();
 
   // ---- Groups render data for the rail ----
   const collectionLeaves = collections.map((c) => {
@@ -488,6 +584,33 @@ export default function Translate() {
     return true;
   });
   const allVisibleSelected = visibleItems.length > 0 && visibleItems.every((it) => isEntitySelected(activeLeaf?.kind, it.id));
+
+  // True while a just-searched item exists in this leaf's raw item list but
+  // an active field filter (filtersByLeaf) excludes it from activeMatching
+  // -- itemFilter can't be the cause here, since goToSearchResult always
+  // resets it to "all" first. Distinct from "still loading": itemsForLeaf
+  // returns [] for a collection not yet fetched, so this stays false until
+  // the item is actually known and excluded, not merely absent so far.
+  const searchTargetMissing =
+    Boolean(highlightItemId) &&
+    Boolean(activeLeaf) &&
+    !activeMatching.some((it) => it.id === highlightItemId) &&
+    itemsForLeaf(activeLeaf).some((it) => it.id === highlightItemId);
+
+  // Scrolls to and briefly flashes a search result's row once it actually
+  // appears in visibleItems -- for a CMS item this can lag a tick behind
+  // the click (openLeaf's loadCollectionItems is async); for a Page/
+  // Component it's present on the very next render. Never fires (and
+  // never auto-clears) if a field filter is hiding the item instead --
+  // see searchTargetMissing's banner, which offers an explicit way out.
+  useEffect(() => {
+    if (!highlightItemId) return;
+    if (!visibleItems.some((it) => it.id === highlightItemId)) return;
+    itemRowRefs.current[highlightItemId]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const t = setTimeout(() => setHighlightItemId(null), 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightItemId, visibleItems]);
 
   function toggleAllVisible() {
     setSelected((prev) => {
@@ -693,6 +816,42 @@ export default function Translate() {
         ))}
       </div>
 
+      {initialDataLoaded && (
+        <div className="relative mb-4 w-full max-w-md">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search collections, pages, and components by name…"
+            className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
+          />
+          {searchTerm.trim() && (
+            <div className="absolute left-0 top-full z-30 mt-1 max-h-80 w-full overflow-auto rounded-md border border-border bg-surface shadow-card">
+              {searchResults.length === 0 ? (
+                <p className="p-3 text-sm text-ink-faint">
+                  No matches{allItemsLoading ? " yet — still scanning your site" : ""}.
+                </p>
+              ) : (
+                searchResults.map((r) => (
+                  <button
+                    key={`${r.kind}:${r.id}`}
+                    type="button"
+                    onClick={() => goToSearchResult(r)}
+                    className="flex w-full flex-col items-start gap-0.5 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-surface-sunken"
+                  >
+                    <span className="truncate text-[13px] font-medium text-ink">{r.label}</span>
+                    <span className="text-[11px] text-ink-faint">
+                      {r.kind === "cmsItem" ? "CMS item in " : r.kind === "page" ? "Page in " : "Component in "}
+                      {r.contextLabel}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {mode === "specific" && allItemsLoading && (
         <Card>
           <LoadingState
@@ -859,6 +1018,15 @@ export default function Translate() {
                   </div>
                 )}
 
+                {searchTargetMissing && (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-status-error-bg px-3 py-2 text-[12.5px] text-status-error-fg">
+                    <span>An active filter is hiding the item you searched for.</span>
+                    <button type="button" onClick={() => updateFilters(activeLeaf, () => [])} className="font-semibold underline hover:no-underline">
+                      Clear filter
+                    </button>
+                  </div>
+                )}
+
                 <Card>
                   {visibleItems.length > 0 ? (
                     <div className="max-h-[28rem] overflow-auto">
@@ -885,7 +1053,13 @@ export default function Translate() {
                         </thead>
                         <tbody className="divide-y divide-border">
                           {visibleItems.map((item) => (
-                            <tr key={item.id} className="hover:bg-surface-sunken">
+                            <tr
+                              key={item.id}
+                              ref={(el) => {
+                                itemRowRefs.current[item.id] = el;
+                              }}
+                              className={"hover:bg-surface-sunken " + (item.id === highlightItemId ? "bg-accent-subtle" : "")}
+                            >
                               <td className="px-4 py-2.5">
                                 <input type="checkbox" checked={isEntitySelected(activeLeaf.kind, item.id)} onChange={() => toggleEntity(activeLeaf.kind, item.id)} />
                               </td>

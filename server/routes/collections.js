@@ -204,6 +204,12 @@ router.get("/:id/items", async (req, res) => {
  * even mid-way through one large collection, instead of that collection's
  * whole contribution to the total arriving in one lump the moment it
  * finally finishes.
+ *
+ * `name`/`slug` are included too (same fallback convention as GET
+ * /:id/items) -- `sourceItem.fieldData` is already in memory from
+ * listItemsPage above, so this costs zero extra Webflow calls. Feeds the
+ * Translate page's cross-entity search (it's the only source of CMS item
+ * names outside of a fully-opened collection).
  */
 router.get("/:id/items-summary", async (req, res) => {
   const { id } = req.params;
@@ -220,7 +226,12 @@ router.get("/:id/items-summary", async (req, res) => {
 
     const items = pageItems.map((sourceItem) => {
       const translatableFields = webflow.filterTranslatableFields(sourceItem.fieldData, fieldTypeBySlug, exclusions);
-      return { id: sourceItem.id, wordCount: webflow.countWords(translatableFields) };
+      return {
+        id: sourceItem.id,
+        name: sourceItem.fieldData?.name || sourceItem.fieldData?.slug || sourceItem.id,
+        slug: sourceItem.fieldData?.slug || "",
+        wordCount: webflow.countWords(translatableFields),
+      };
     });
 
     res.json({ items, total, offset, limit });
