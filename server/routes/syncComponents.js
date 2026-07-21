@@ -77,6 +77,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
           const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
           const properties = await webflow.getComponentProperties(id, { locale: sourceLocale });
           const result = await syncComponentIntoBatch({
+            accountId,
             projectUuid: project.uuid,
             component,
             nodes,
@@ -117,6 +118,59 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     if (err.code === "WXRKS_NOT_CONNECTED") {
       return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });
     }
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/sync/components/:id/properties
+ * A component definition's real Properties (propertyId/type/label), merged
+ * with any user-configured exclusions, for the property-exclusion UI.
+ * Mirrors collections.js's GET /:id/fields -- needs sourceLocale first,
+ * unlike that route, since Component Properties (unlike CMS field schema)
+ * are fetched per-locale.
+ */
+router.get("/:id/properties", async (req, res) => {
+  try {
+    const { sourceLocale } = await store.getSettings(req.account.id);
+    const [properties, exclusions] = await Promise.all([
+      webflow.getComponentProperties(req.params.id, { locale: sourceLocale }),
+      store.getComponentPropertyExclusions(req.account.id, req.params.id),
+    ]);
+    const excluded = new Set(exclusions);
+
+    res.json({
+      properties: properties.map((p) => ({
+        propertyId: p.propertyId,
+        type: p.type,
+        label: p.label,
+        excluded: excluded.has(p.propertyId),
+      })),
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.response?.data?.message || err.message });
+  }
+});
+
+/**
+ * PUT /api/sync/components/:id/property-exclusions
+ * body: { excludedPropertyIds: string[] }
+ * Explicit propertyId overrides -- unlike CMS field exclusions there's no
+ * automatic type-based filter underneath these, since Webflow's Property
+ * types can't distinguish real text from a config value using the same type.
+ */
+router.put("/:id/property-exclusions", requireWriteAccess, async (req, res) => {
+  try {
+    const { excludedPropertyIds } = req.body || {};
+    const updated = await store.setComponentPropertyExclusions(req.account.id, req.params.id, excludedPropertyIds || []);
+    store
+      .recordActivity(req.account.id, req.user.id, "component_property_exclusions.update", {
+        componentId: req.params.id,
+        excludedCount: updated.length,
+      })
+      .catch(() => {});
+    res.json({ componentId: req.params.id, excludedPropertyIds: updated });
+  } catch (err) {
     res.status(502).json({ error: err.message });
   }
 });

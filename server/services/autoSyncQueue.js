@@ -337,8 +337,10 @@ async function flush(automationId, { jobId } = {}) {
       } else if (entry.entityType === "component") {
         const nodes = await webflow.getComponentDom(entry.component.id, { locale: sourceLocale });
         const properties = await webflow.getComponentProperties(entry.component.id, { locale: sourceLocale });
-        const contentHash = hashNodes(nodes, properties);
+        const propertyExclusions = await store.getComponentPropertyExclusions(automation.accountId, entry.component.id);
+        const contentHash = hashNodes(nodes, properties, propertyExclusions);
         const result = await syncComponentIntoBatch({
+          accountId: automation.accountId,
           projectUuid: project.uuid,
           component: entry.component,
           nodes,

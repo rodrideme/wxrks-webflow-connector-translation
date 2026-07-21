@@ -5,6 +5,7 @@ import SettingsAccount from "./settings/SettingsAccount.jsx";
 import SettingsKeys from "./settings/SettingsKeys.jsx";
 import SettingsWxrks from "./settings/SettingsWxrks.jsx";
 import SettingsFieldExclusions from "./settings/SettingsFieldExclusions.jsx";
+import SettingsComponentPropertyExclusions from "./settings/SettingsComponentPropertyExclusions.jsx";
 import SettingsSlugHandling from "./settings/SettingsSlugHandling.jsx";
 import SettingsLlm from "./settings/SettingsLlm.jsx";
 
@@ -14,6 +15,7 @@ const TABS = [
   { to: "llm", label: "LLM connectors" },
   { to: "wxrks", label: "wxrks connection" },
   { to: "fields", label: "Field exclusions" },
+  { to: "component-properties", label: "Component properties" },
   { to: "keys", label: "Keys" },
 ];
 
@@ -127,6 +129,7 @@ export default function Settings() {
               }
             />
             <Route path="fields" element={<SettingsFieldExclusions />} />
+            <Route path="component-properties" element={<SettingsComponentPropertyExclusions />} />
             <Route path="keys" element={<SettingsKeys settings={settings} />} />
           </Routes>
         </div>

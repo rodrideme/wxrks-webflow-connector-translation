@@ -264,6 +264,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
               const nodes = await webflow.getComponentDom(id, { locale: sourceLocale });
               const properties = await webflow.getComponentProperties(id, { locale: sourceLocale });
               const result = await syncComponentIntoBatch({
+                accountId,
                 projectUuid: project.uuid,
                 component,
                 nodes,

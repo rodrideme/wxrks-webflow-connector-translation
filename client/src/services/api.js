@@ -126,6 +126,12 @@ const api = {
   getComponents: () => dataCache.getOrFetch("components", STRUCTURAL_TTL_MS, () => request("/sync/components/list")),
   syncComponentsItem: (componentIds, options = {}) =>
     request("/sync/components/item", { method: "POST", body: JSON.stringify({ componentIds, ...options }) }),
+  getComponentProperties: (componentId) => request(`/sync/components/${componentId}/properties`),
+  updateComponentPropertyExclusions: (componentId, excludedPropertyIds) =>
+    request(`/sync/components/${componentId}/property-exclusions`, {
+      method: "PUT",
+      body: JSON.stringify({ excludedPropertyIds }),
+    }),
   listAutomations: () => request("/automations"),
   createAutomation: (automation) => request("/automations", { method: "POST", body: JSON.stringify(automation) }),
   updateAutomation: (id, automation) =>

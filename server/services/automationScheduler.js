@@ -108,11 +108,18 @@ async function scanAndEnqueueComponents(automation, { sourceLocale }) {
   // synced hash, rather than a cheap timestamp comparison. Concurrency +
   // batched-write reasoning mirrors scanAndEnqueuePages above exactly.
   const components = await webflow.listComponents();
+  // Fetched once for the whole scan (not per component, inside the
+  // concurrent map below) -- store.getSettings has no caching layer, and
+  // this runs over every component on the site every cycle, so a
+  // per-component fetch would mean N redundant identical DB reads of the
+  // same settings row for no benefit.
+  const settings = await store.getSettings(automation.accountId);
 
   const scanned = await mapWithConcurrency(components, SCAN_CONCURRENCY, async (component) => {
     const nodes = await webflow.getComponentDom(component.id, { locale: sourceLocale });
     const properties = await webflow.getComponentProperties(component.id, { locale: sourceLocale });
-    return { component, contentHash: hashNodes(nodes, properties) };
+    const propertyExclusions = settings.componentPropertyExclusions[component.id] || [];
+    return { component, contentHash: hashNodes(nodes, properties, propertyExclusions) };
   });
 
   const lastSyncedComponentHashes = { ...automation.checkpoint.lastSyncedComponentHashes };

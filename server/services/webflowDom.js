@@ -97,9 +97,11 @@ function extractTextNodes(nodes = []) {
  * as a component's DOM text/overrides (see syncCore.js's
  * syncComponentIntoBatch) without ever colliding.
  */
-function extractComponentProperties(properties = []) {
+function extractComponentProperties(properties = [], excludedPropertyIds = []) {
+  const excluded = new Set(excludedPropertyIds);
   const translatable = {};
   for (const property of properties) {
+    if (excluded.has(property.propertyId)) continue;
     const value = extractOverridableText(property.text);
     if (value === undefined) continue;
     translatable[propertyKey(property.propertyId)] = value;
@@ -164,8 +166,8 @@ function splitTranslatedContent(translatedById = {}) {
  * entirely and properties weren't read at all, so neither an override-only
  * nor a properties-only edit would have changed this hash before this fix.
  */
-function hashNodes(nodes, properties) {
-  const translatableText = { ...extractTextNodes(nodes), ...extractComponentProperties(properties) };
+function hashNodes(nodes, properties, excludedPropertyIds) {
+  const translatableText = { ...extractTextNodes(nodes), ...extractComponentProperties(properties, excludedPropertyIds) };
   return crypto.createHash("sha256").update(JSON.stringify(translatableText)).digest("hex");
 }
 

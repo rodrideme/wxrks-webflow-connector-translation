@@ -112,10 +112,11 @@ async function syncPageIntoBatch({ projectUuid, page, nodes, targetLocales, name
  * dict so a properties-only component (previously zero translatable
  * content) is no longer silently skipped.
  */
-async function syncComponentIntoBatch({ projectUuid, component, nodes, properties, targetLocales, namePattern, workflows }) {
+async function syncComponentIntoBatch({ accountId, projectUuid, component, nodes, properties, targetLocales, namePattern, workflows }) {
+  const exclusions = await store.getComponentPropertyExclusions(accountId, component.id);
   const translatableContent = {
     ...webflowDom.extractTextNodes(nodes),
-    ...webflowDom.extractComponentProperties(properties),
+    ...webflowDom.extractComponentProperties(properties, exclusions),
   };
   const filename = webflow.buildComponentResourceFileName(namePattern, { component });
 

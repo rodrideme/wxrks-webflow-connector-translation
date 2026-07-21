@@ -48,6 +48,12 @@ const DEFAULT_SETTINGS = {
   // { [collectionId]: string[] of field slugs to never translate, on top of
   // the automatic type-based filter }
   fieldExclusions: {},
+  // { [componentId]: string[] of propertyIds to never translate -- unlike
+  // fieldExclusions there's no automatic type-based filter underneath,
+  // since a Component Property's type (Plain Text/Rich Text/Alt Text)
+  // can't distinguish real text from a config value (e.g. "48px", raw
+  // CSS) that merely happens to use the same type.
+  componentPropertyExclusions: {},
   // Controls whether/how a CMS item's Webflow slug is regenerated for each
   // target locale on write-back (see webhooks.js's wxrks-webhook handler).
   // "source": never touch the slug (today's behavior, default). "translate"/
@@ -449,6 +455,18 @@ async function setFieldExclusions(accountId, collectionId, excludedFields) {
   const fieldExclusions = { ...settings.fieldExclusions, [collectionId]: excludedFields };
   await updateSettings(accountId, { fieldExclusions });
   return excludedFields;
+}
+
+async function getComponentPropertyExclusions(accountId, componentId) {
+  const settings = await getSettings(accountId);
+  return settings.componentPropertyExclusions[componentId] || [];
+}
+
+async function setComponentPropertyExclusions(accountId, componentId, excludedPropertyIds) {
+  const settings = await getSettings(accountId);
+  const componentPropertyExclusions = { ...settings.componentPropertyExclusions, [componentId]: excludedPropertyIds };
+  await updateSettings(accountId, { componentPropertyExclusions });
+  return excludedPropertyIds;
 }
 
 /**
@@ -1300,6 +1318,8 @@ module.exports = {
   updateSettings,
   getFieldExclusions,
   setFieldExclusions,
+  getComponentPropertyExclusions,
+  setComponentPropertyExclusions,
   updateAutoSyncWebhookState,
   updateSitePublishWebhookState,
   updateWxrksWebhookState,
