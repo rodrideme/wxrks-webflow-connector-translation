@@ -136,7 +136,7 @@ const listCollections = makeTtlCache(fetchCollections);
  * cmsLocaleId is included in the request." Every caller must resolve a tag
  * to its cmsLocaleId via resolveCmsLocaleId() before touching an item.
  */
-async function getSiteLocales() {
+async function fetchSiteLocales() {
   const { data } = await (await client()).get(`/sites/${await siteId()}`);
   const primary = data?.locales?.primary;
   const secondary = data?.locales?.secondary || [];
@@ -172,6 +172,17 @@ async function getSiteLocales() {
     secondary: secondary.map((l) => ({ tag: l.tag, displayName: l.displayName, cmsLocaleId: l.cmsLocaleId, enabled: l.enabled, subdirectory: l.subdirectory })),
   };
 }
+// TTL-cached (mirrors listPages/listCollections/listComponents/
+// listPageFolders above) -- site locale config changes rarely, and this
+// was being fetched fresh on every single /work-units call (one per run),
+// so N concurrent calls fired N identical GET /sites/:id requests. That
+// redundant fan-out, on top of EAGER_LOAD_CONCURRENCY, was a real
+// contributor to tripping Webflow's ~40-rapid-request throttling
+// threshold (see Runs.jsx's EAGER_LOAD_CONCURRENCY comment) -- confirmed
+// live as part of the same investigation. makeTtlCache also dedupes
+// concurrent callers within the same tick onto one in-flight request, not
+// just repeat callers after the fact.
+const getSiteLocales = makeTtlCache(fetchSiteLocales);
 
 // Cached for the process lifetime -- site locale config changes rarely, and
 // this avoids an extra GET /sites/:id round trip on every single item

@@ -364,13 +364,19 @@ export default function Runs() {
 
   // Eager-loads a whole loaded page's documents (see the mount effect,
   // loadMoreHistory, and the search effect below) at a bounded concurrency
-  // -- GET /work-units does real, non-trivial live Webflow work per run
-  // (per-locale item reads, a pages/folders fetch), so firing all 10 at
-  // once risked hitting Webflow's own rate limiting. Matches
-  // automationScheduler.js's SCAN_CONCURRENCY, the established safe limit
-  // this codebase already uses for the same class of Webflow-heavy fan-out
-  // -- HISTORY_PAGE_SIZE is 10, so this nearly parallelizes a full page.
-  const EAGER_LOAD_CONCURRENCY = 8;
+  // -- GET /work-units does real, non-trivial live Webflow work per run:
+  // getSiteLocales() plus one listAllItems() call per distinct
+  // (collection, locale) pair the run touches (itself paginated for large
+  // collections), plus a page-folders fetch. A single run can already fan
+  // out to several real Webflow API calls, so this is NOT a 1:1 comparison
+  // to automationScheduler.js's SCAN_CONCURRENCY=8 (which bounds calls that
+  // each make only 1-2 Webflow requests) -- confirmed live that 8 here
+  // fanned out past the ~40-rapid-request threshold documented in
+  // webflow.js's 429-retry interceptor, causing card 2 onward to
+  // genuinely error under real account data. Kept low enough that even a
+  // page of runs each touching several collections/locales stays clear of
+  // that threshold.
+  const EAGER_LOAD_CONCURRENCY = 3;
   async function loadWorkUnitsForBatches(batches) {
     setEagerBatchUuids(batches.map((b) => b.wxrksProjectUUID));
     let index = 0;
