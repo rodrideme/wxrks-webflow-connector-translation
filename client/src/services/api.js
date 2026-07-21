@@ -2,11 +2,14 @@ import dataCache from "./dataCache.js";
 
 // Structural Webflow content (which collections/pages/components/org units
 // exist) only changes when someone edits it in Webflow's/wxrks's own UI,
-// not through this app -- safe to serve slightly stale within one browser
-// tab's session. `settings` has real in-app mutators (see below), so it
-// gets a shorter TTL as a safety net on top of explicit invalidation.
-const STRUCTURAL_TTL_MS = 60 * 1000;
-const SETTINGS_TTL_MS = 20 * 1000;
+// not through this app -- safe to serve stale for a while (persisted via
+// dataCache's sessionStorage layer, so this survives a hard refresh too,
+// not just in-app navigation). `settings` has real in-app mutators (see
+// below) that already invalidate it explicitly on save -- this TTL is only
+// a safety net for staleness from another tab/session, not the primary
+// freshness mechanism, so it's fine at the same duration.
+const STRUCTURAL_TTL_MS = 30 * 60 * 1000;
+const SETTINGS_TTL_MS = 30 * 60 * 1000;
 
 // Render's free tier spins the app down when idle -- the first request after
 // a spin-down can take 10-15s to wake it back up, and requests made while

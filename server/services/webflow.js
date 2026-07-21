@@ -82,11 +82,13 @@ async function siteId() {
 // itself, so there's no self-consistency risk in serving a slightly stale
 // list back to this app's own writes. This TTL only trades off "how long
 // until an external Designer edit becomes visible here" against "how many
-// redundant Webflow round trips a burst of navigation/polling causes" -- a
-// few minutes is far shorter than any realistic edit-then-immediately-
+// redundant Webflow round trips a burst of navigation/polling causes" --
+// 30 minutes is still far shorter than any realistic edit-then-immediately-
 // need-it workflow, and far shorter than automationScheduler.js's own
-// hourly/daily/weekly scan cadence.
-const STRUCTURAL_CACHE_TTL_MS = 3 * 60 * 1000;
+// hourly/daily/weekly scan cadence. Matches the client's dataCache TTL so a
+// cold client-side cache (e.g. a new tab) doesn't still pay for a slow
+// live Webflow round trip on the server side either.
+const STRUCTURAL_CACHE_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Wraps a zero-arg fetch function in a per-account TTL cache, mirroring

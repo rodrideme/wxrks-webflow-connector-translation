@@ -14,10 +14,10 @@ import { webflowStatusPill } from "../statusHelpers.jsx";
 
 const NO_FOLDER_ID = "__root__";
 const JOB_POLL_INTERVAL_MS = 1200;
-// Shorter than dataCache's structural-list TTL (60s) since this reflects
-// item word counts, not pure identity/structure -- a translation sync this
-// app itself just ran could plausibly change these within a minute.
-const COLLECTION_SUMMARY_TTL_MS = 30 * 1000;
+// Same duration as dataCache's structural-list TTL -- persisted via
+// sessionStorage, so a hard refresh within this window skips re-scanning
+// every collection from scratch too, not just in-app navigation.
+const COLLECTION_SUMMARY_TTL_MS = 30 * 60 * 1000;
 
 const FILTERABLE_FIELD_TYPES = ["DateTime", "Switch", "PlainText", "Reference", "MultiReference", "WebflowStatus"];
 
@@ -816,7 +816,7 @@ export default function Translate() {
         ))}
       </div>
 
-      {initialDataLoaded && (
+      {mode === "specific" && initialDataLoaded && (
         <div className="relative mb-4 w-full max-w-md">
           <input
             type="text"
