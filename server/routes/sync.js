@@ -474,6 +474,12 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
 
         rows.push({
           entityType,
+          // Lets the client reliably group a document's several target-
+          // locale rows back into one row per document -- workUnitName
+          // alone (a user-configurable naming pattern) isn't guaranteed
+          // unique across different documents if the pattern omits
+          // {collection}/{entry} tokens.
+          entityId,
           workUnitName: item.resourceFileName,
           targetLocale: locale,
           sentToWxrksAt: mapping.createdAt,

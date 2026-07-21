@@ -5,7 +5,7 @@ import { formatDateTime } from "../formatDate.js";
 import Card from "../components/Card.jsx";
 import StatusPill from "../components/StatusPill.jsx";
 import Chip from "../components/Chip.jsx";
-import { modeLabel, cadenceLabel } from "../runLabels.js";
+import { cadenceLabel } from "../runLabels.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
 const linkClass = "font-medium text-accent-text hover:underline";
@@ -49,6 +49,105 @@ function dedupWebflowUpdates(updates) {
     if (!isDuplicate) kept.push({ signature, updatedAt, update });
   }
   return kept.map((k) => k.update);
+}
+
+/**
+ * One run's overall delivery status, derived from its own `updates[]` --
+ * same "latest attempt per (entity, locale) wins" reduction as
+ * store.js's latestUpdateByEntityAndLocale, just computed client-side over
+ * data already loaded by GET /history (no extra fetch). "Synced" requires
+ * every item/locale to be delivered with zero errors; anything else
+ * (still in progress, or any error) is "issues" -- matches the Synced/
+ * Issues filter's definition exactly.
+ */
+function computeRunStatus(batch) {
+  const totalExpected = batch.items.length * batch.targetLocales.length;
+  const latestByKey = new Map();
+  for (const update of dedupWebflowUpdates(batch.updates)) {
+    for (const item of update.resultsByItem || []) {
+      const entityId = item.webflowComponentId || item.webflowPageId || item.webflowItemId;
+      for (const rl of item.resultsByLocale || []) {
+        const key = `${entityId}::${rl.locale}`;
+        const existing = latestByKey.get(key);
+        if (!existing || new Date(update.updatedAt) > new Date(existing.updatedAt)) {
+          latestByKey.set(key, { entityId, locale: rl.locale, error: rl.error || null, updatedAt: update.updatedAt });
+        }
+      }
+    }
+  }
+  const entries = [...latestByKey.values()];
+  const errors = entries.filter((e) => e.error);
+  const delivered = entries.filter((e) => !e.error);
+  const latestDeliveredAt = delivered.reduce(
+    (max, e) => (!max || new Date(e.updatedAt) > new Date(max) ? e.updatedAt : max),
+    null
+  );
+  const complete = delivered.length === totalExpected;
+  return {
+    hasErrors: errors.length > 0,
+    errors,
+    latestDeliveredAt,
+    complete,
+    bucket: errors.length > 0 || !complete ? "issues" : "synced",
+  };
+}
+
+// Mirrors the mockup's own duration() logic: only a real duration once
+// every item/locale has been delivered (min(sent) is always batch.createdAt
+// uniformly -- confirmed live, GET /work-units stamps every row with the
+// same mapping.createdAt -- so no per-row sent timestamp needs tracking).
+function formatDuration(createdAt, status) {
+  if (!status.complete) return "In progress";
+  const mins = Math.round((new Date(status.latestDeliveredAt) - new Date(createdAt)) / 60000);
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return `${hours}h${remMins ? ` ${remMins}m` : ""}`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+function langChips(targetLocales) {
+  return targetLocales.length > 2 ? [targetLocales[0], `+${targetLocales.length - 1}`] : targetLocales;
+}
+
+/**
+ * Groups GET /work-units' flat (item x locale) rows back into one row per
+ * document, keyed by entityId (not workUnitName -- a user-configurable
+ * naming pattern isn't guaranteed unique across different documents).
+ * Word counts come from the batch's own items[] (already stored server-
+ * side), not summed from work-unit rows. The "Open in Webflow" link uses
+ * the first target locale's link -- a deliberate simplification, since the
+ * real URL can differ per locale (locale subdirectories) but the other
+ * locales are already visible via the Languages column.
+ */
+function groupWorkUnitsByDocument(workUnits, batch) {
+  const wordCountByEntityId = new Map(
+    batch.items.map((i) => [i.webflowItemId || i.webflowPageId || i.webflowComponentId, i.wordCount || 0])
+  );
+  const byEntity = new Map();
+  for (const row of workUnits) {
+    if (!byEntity.has(row.entityId)) {
+      byEntity.set(row.entityId, {
+        entityId: row.entityId,
+        workUnitName: row.workUnitName,
+        words: wordCountByEntityId.get(row.entityId) || 0,
+        locales: [],
+        latestUpdatedAt: null,
+        hasError: false,
+        allDelivered: true,
+        link: null,
+      });
+    }
+    const doc = byEntity.get(row.entityId);
+    doc.locales.push(row.targetLocale);
+    if (row.updateError) doc.hasError = true;
+    if (!row.updatedOnWebflowAt) doc.allDelivered = false;
+    else if (!doc.latestUpdatedAt || new Date(row.updatedOnWebflowAt) > new Date(doc.latestUpdatedAt)) {
+      doc.latestUpdatedAt = row.updatedOnWebflowAt;
+    }
+    if (!doc.link && row.webflowUrl) doc.link = { url: row.webflowUrl, type: row.linkType };
+  }
+  return [...byEntity.values()];
 }
 
 // "not_registered" is a normal, expected state (no automation needs this
@@ -95,13 +194,13 @@ export default function Runs() {
   const [pagesWebhook, setPagesWebhook] = useState(null);
   const [history, setHistory] = useState(null);
   const [collections, setCollections] = useState([]);
-  const [pages, setPages] = useState([]);
   const [pageFolders, setPageFolders] = useState([]);
-  const [components, setComponents] = useState([]);
   const [orgUnits, setOrgUnits] = useState([]);
   const [timezone, setTimezone] = useState(undefined);
   const [activeTab, setActiveTab] = useState(initialTabFromHash);
   const [logType, setLogType] = useState("all"); // all | one-time | recurring
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all"); // all | synced | issues
   const [showArchived, setShowArchived] = useState(false);
   const [detailAutomation, setDetailAutomation] = useState(null);
   const [flushing, setFlushing] = useState(false);
@@ -150,19 +249,15 @@ export default function Runs() {
     Promise.all([
       api.getSyncHistory(),
       api.getCollections().catch(() => ({ collections: [] })),
-      api.getPages().catch(() => ({ pages: [] })),
       api.getPageFolders().catch(() => ({ folders: [] })),
-      api.getComponents().catch(() => ({ components: [] })),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
       api.getSettings().catch(() => null),
     ])
-      .then(([historyRes, collectionsRes, pagesRes, foldersRes, componentsRes, orgUnitsRes, settingsRes]) => {
+      .then(([historyRes, collectionsRes, foldersRes, orgUnitsRes, settingsRes]) => {
         const history = historyRes.history || [];
         setHistory(history);
         setCollections(collectionsRes.collections || []);
-        setPages(pagesRes.pages || []);
         setPageFolders(foldersRes.folders || []);
-        setComponents(componentsRes.components || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
         setTimezone(settingsRes?.timezone);
         // The most recent run (history is already most-recent-first) starts
@@ -189,39 +284,6 @@ export default function Runs() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [history, automations]);
 
-  function collectionName(id) {
-    const c = collections.find((c) => c.id === id);
-    return c ? c.displayName || c.singularName : id;
-  }
-  function pageName(id) {
-    const p = pages.find((p) => p.id === id);
-    return p ? p.title || p.slug : id;
-  }
-  function componentName(id) {
-    const c = components.find((c) => c.id === id);
-    return c ? c.name : id;
-  }
-  // "combined" mode's items[] can mix all three entity types in one project
-  // (see routes/sync.js's POST /combined) -- unlike the single-kind modes,
-  // there's no one collectionIds/pages/components list to fall back on, so
-  // this tallies directly from the items themselves, deduping collections
-  // (an item-per-item list would repeat the same collection name for every
-  // item in it) while just counting pages/components.
-  function combinedContentSummary(batch) {
-    const collectionIds = new Set();
-    let pageCount = 0;
-    let componentCount = 0;
-    for (const i of batch.items) {
-      if (i.webflowPageId) pageCount += 1;
-      else if (i.webflowComponentId) componentCount += 1;
-      else if (i.webflowCollectionId) collectionIds.add(i.webflowCollectionId);
-    }
-    const parts = [];
-    if (collectionIds.size > 0) parts.push([...collectionIds].map(collectionName).join(", "));
-    if (pageCount > 0) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
-    if (componentCount > 0) parts.push(`${componentCount} component${componentCount === 1 ? "" : "s"}`);
-    return parts.join(" · ") || "—";
-  }
   function orgUnitName(uuid) {
     const o = orgUnits.find((o) => o.uuid === uuid);
     return o ? o.name : uuid;
@@ -272,10 +334,21 @@ export default function Runs() {
     }
   }
 
-  const filteredHistory = (history || []).filter((batch) => {
-    if (logType === "all") return true;
-    const type = batch.mode === "automation" ? "recurring" : "one-time";
-    return type === logType;
+  const historyBuckets = (history || []).map((batch) => ({ batch, status: computeRunStatus(batch) }));
+  const historyStatusCounts = {
+    all: historyBuckets.length,
+    synced: historyBuckets.filter((h) => h.status.bucket === "synced").length,
+    issues: historyBuckets.filter((h) => h.status.bucket === "issues").length,
+  };
+  const historySearchTerm = historySearch.trim().toLowerCase();
+  const filteredHistory = historyBuckets.filter(({ batch, status }) => {
+    if (logType !== "all") {
+      const type = batch.mode === "automation" ? "recurring" : "one-time";
+      if (type !== logType) return false;
+    }
+    if (historyStatusFilter !== "all" && status.bucket !== historyStatusFilter) return false;
+    if (historySearchTerm && !(batch.reference || batch.wxrksProjectUUID).toLowerCase().includes(historySearchTerm)) return false;
+    return true;
   });
 
   const archivedCount = (automations || []).filter((a) => a.archived).length;
@@ -451,11 +524,37 @@ export default function Runs() {
       {activeTab === "history" && (
       <>
       {/* History */}
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <span className="text-[14px] font-semibold text-ink">History</span>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="max-w-[320px] flex-1">
+          <input
+            type="text"
+            value={historySearch}
+            onChange={(e) => setHistorySearch(e.target.value)}
+            placeholder="Search runs…"
+            className="w-full rounded-md border border-border-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
+          />
+        </div>
         <div className="flex gap-2">
           {[
             ["all", "All"],
+            ["synced", "Synced"],
+            ["issues", "Issues"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setHistoryStatusFilter(value)}
+              className={
+                "rounded-full border px-3 py-1 text-xs font-semibold " +
+                (historyStatusFilter === value ? "border-ink bg-ink text-canvas" : "border-border-strong bg-surface text-ink-soft")
+              }
+            >
+              {label} <span className="ml-1 tabular-nums opacity-70">{historyStatusCounts[value]}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          {[
+            ["all", "All modes"],
             ["one-time", "One-time"],
             ["recurring", "Recurring"],
           ].map(([value, label]) => (
@@ -471,176 +570,165 @@ export default function Runs() {
             </button>
           ))}
         </div>
+        <span className="ml-auto whitespace-nowrap text-xs text-ink-faint">
+          {filteredHistory.length} of {(history || []).length} runs
+        </span>
       </div>
 
       {history === null ? (
         <p className="text-sm text-ink-soft">Loading history...</p>
       ) : filteredHistory.length === 0 ? (
-        <Card className="p-6 text-center text-sm text-ink-faint">No runs of this type yet.</Card>
+        <Card className="p-6 text-center text-sm text-ink-faint">
+          {historySearchTerm ? `No runs match "${historySearch.trim()}"` : "No runs of this type yet."}
+        </Card>
       ) : (
-        <div className="flex flex-col gap-5">
-          {filteredHistory.map((batch) => {
-            const wordCount = batch.items.reduce((sum, i) => sum + (i.wordCount || 0), 0);
-            const dedupedUpdates = dedupWebflowUpdates(batch.updates);
+        <>
+        <div className="mb-1.5 hidden items-center gap-3 px-4 text-[10.5px] font-bold uppercase tracking-wide text-ink-faint sm:flex">
+          <span className="w-3 flex-none" />
+          <span className="min-w-0 flex-1">Project</span>
+          <span className="w-12 flex-none text-right">Docs</span>
+          <span className="w-16 flex-none text-right">Words</span>
+          <span className="w-24 flex-none">Langs</span>
+          <span className="w-[104px] flex-none">Sent to wxrks</span>
+          <span className="w-[104px] flex-none">Updated on Webflow</span>
+          <span className="w-24 flex-none text-right">Status</span>
+        </div>
+        <div className="flex flex-col gap-2">
+          {filteredHistory.map(({ batch, status }) => {
+            const isOpen = Boolean(expandedRuns[batch.wxrksProjectUUID]);
             const workUnits = workUnitsByRun[batch.wxrksProjectUUID];
+            const documents = Array.isArray(workUnits) ? groupWorkUnitsByDocument(workUnits, batch) : null;
+            const wordCount = batch.items.reduce((sum, i) => sum + (i.wordCount || 0), 0);
             return (
-              <Card className="p-5" id={batch.wxrksProjectUUID} key={batch.wxrksProjectUUID}>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-[14px] font-semibold text-ink">{batch.reference || batch.wxrksProjectUUID}</h2>
-                    <p className="break-all font-mono text-[11px] text-ink-faint">{batch.wxrksProjectUUID}</p>
-                    <a href={wxrksProjectUrl(batch.wxrksProjectUUID)} target="_blank" rel="noreferrer" className={linkClass + " text-xs"}>
-                      Open in wxrks →
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={"rounded-full px-2.5 py-0.5 text-[11px] font-semibold " + (batch.mode === "automation" ? "bg-status-auto-bg text-status-auto-fg" : "bg-accent-subtle text-accent-text")}>
-                      {batch.mode === "automation" ? "Recurring" : "One-time"}
-                    </span>
-                    <StatusPill variant={batch.status === "completed" ? "success" : "progress"} label={batch.status} />
-                  </div>
-                </div>
-
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Sent to wxrks</p>
-                <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-md border border-border bg-surface-sunken p-3.5 text-[13px] sm:grid-cols-3">
-                  <Field label="Created" value={formatDateTime(batch.createdAt, timezone)} />
-                  <Field label="Mode" value={modeLabel(batch.mode, batch.automationName)} />
-                  <Field label="wxrks status" value={batch.wxrksStatus} />
-                  <Field label="Org unit" value={batch.orgUnitUUID ? orgUnitName(batch.orgUnitUUID) : "—"} />
-                  <Field label="Source" value={batch.sourceLocale} mono />
-                  <Field
-                    label="Targets"
-                    value={
-                      <span className="flex flex-wrap gap-1">
-                        {batch.targetLocales.map((l) => (
-                          <Chip key={l}>{l}</Chip>
-                        ))}
-                      </span>
-                    }
-                  />
-                  <Field
-                    label={
-                      batch.mode === "combined"
-                        ? "Content"
-                        : batch.mode?.startsWith("pages-")
-                        ? "Pages"
-                        : batch.mode?.startsWith("components-")
-                        ? "Components"
-                        : "Collections"
-                    }
-                    value={
-                      batch.mode === "combined"
-                        ? combinedContentSummary(batch)
-                        : batch.mode?.startsWith("pages-")
-                        ? batch.items.map((i) => pageName(i.webflowPageId)).join(", ") || "—"
-                        : batch.mode?.startsWith("components-")
-                        ? batch.items.map((i) => componentName(i.webflowComponentId)).join(", ") || "—"
-                        : batch.collectionIds.map(collectionName).join(", ") || "—"
-                    }
-                  />
-                  <Field label="Items" value={<span className="font-mono tabular-nums">{batch.items.length}</span>} />
-                  <Field label="Words" value={<span className="font-mono tabular-nums">{wordCount.toLocaleString()}</span>} />
-                  <Field label="Naming pattern" value={batch.workUnitNamePattern || "—"} mono />
-                </div>
-
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Updated on Webflow</p>
-                {dedupedUpdates.length === 0 ? (
-                  <p className="text-sm text-ink-faint">No translations pushed back to Webflow yet.</p>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {dedupedUpdates.map((update, i) => {
-                      const errors = (update.resultsByItem || []).flatMap((item) =>
-                        (item.resultsByLocale || [])
-                          .filter((l) => l.error)
-                          .map((l) => ({
-                            id: item.webflowComponentId || item.webflowPageId || item.webflowItemId,
-                            locale: l.locale,
-                            message: l.error,
-                          }))
-                      );
-                      return (
-                        <div key={i} className="rounded-md border border-border bg-surface-sunken p-3">
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-ink-soft">
-                            {errors.length > 0 ? (
-                              <StatusPill variant="error" label={`${errors.length} error${errors.length === 1 ? "" : "s"}`} />
-                            ) : (
-                              <StatusPill variant="success" label="Pushed" />
-                            )}
-                            <span>{formatDateTime(update.updatedAt, timezone)}</span>
-                            <span>{update.targetLocales.join(", ")}</span>
-                            <span>
-                              <span className="font-mono tabular-nums text-ink">{update.itemsUpdated}</span> item(s) ·{" "}
-                              <span className="font-mono tabular-nums text-ink">{update.wordCount.toLocaleString()}</span> words
-                            </span>
-                            <span>{update.autoPublish ? "Published" : "Left as Draft"}</span>
-                          </div>
-                          {errors.length > 0 && (
-                            <div className="mt-2 flex flex-col gap-1.5">
-                              {errors.map((e, j) => (
-                                <div key={j} className="flex items-start gap-2 text-xs">
-                                  <span className="text-status-error-fg">⚠</span>
-                                  <div>
-                                    <span className="text-ink-soft">
-                                      {e.id} ({e.locale})
-                                    </span>
-                                    <div className="mt-0.5 rounded bg-status-error-bg px-2 py-1 font-mono text-[11.5px] text-status-error-fg">{e.message}</div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <button
-                  type="button"
+              <Card id={batch.wxrksProjectUUID} key={batch.wxrksProjectUUID}>
+                <div
                   onClick={() => toggleRunWorkUnits(batch.wxrksProjectUUID)}
-                  className="mt-4 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint hover:text-ink"
+                  className="flex flex-wrap items-center gap-3 px-4 py-3 cursor-pointer hover:bg-surface-sunken"
                 >
-                  <span>{expandedRuns[batch.wxrksProjectUUID] ? "▾" : "▸"}</span>
-                  Work units
-                </button>
-                {expandedRuns[batch.wxrksProjectUUID] && (
-                  <div className="mt-2">
-                    {workUnits === "loading" || workUnits === undefined ? (
-                      <p className="text-sm text-ink-faint">Loading work units...</p>
-                    ) : workUnits === "error" ? (
-                      <p className="text-sm text-status-error-fg">Couldn't load work units for this run.</p>
-                    ) : workUnits.length === 0 ? (
-                      <p className="text-sm text-ink-faint">No work units in this run.</p>
+                  <span className={"w-3 flex-none text-[10px] text-ink-faint transition-transform " + (isOpen ? "rotate-90" : "")}>▸</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {batch.reference ? (
+                        <span className="truncate text-[13.5px] font-semibold text-ink">{batch.reference}</span>
+                      ) : (
+                        <span className="truncate font-mono text-[12px] text-ink-faint">{batch.wxrksProjectUUID}</span>
+                      )}
+                      <span
+                        className={
+                          "rounded-full px-2 py-0.5 text-[10.5px] font-semibold " +
+                          (batch.mode === "automation" ? "bg-status-auto-bg text-status-auto-fg" : "bg-accent-subtle text-accent-text")
+                        }
+                      >
+                        {batch.mode === "automation" ? "Recurring" : "One-time"}
+                      </span>
+                      <a
+                        href={wxrksProjectUrl(batch.wxrksProjectUUID)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={linkClass + " whitespace-nowrap text-xs"}
+                      >
+                        Open in wxrks →
+                      </a>
+                    </div>
+                  </div>
+                  <span className="w-12 flex-none text-right font-mono text-[12.5px] tabular-nums text-ink-soft">{batch.items.length}</span>
+                  <span className="w-16 flex-none text-right font-mono text-[12.5px] tabular-nums text-ink-soft">{wordCount.toLocaleString()}</span>
+                  <span className="flex w-24 flex-none flex-wrap gap-1">
+                    {langChips(batch.targetLocales).map((l) => (
+                      <Chip key={l}>{l}</Chip>
+                    ))}
+                  </span>
+                  <span className="w-[104px] flex-none text-[12px] text-ink-soft">{formatDateTime(batch.createdAt, timezone)}</span>
+                  <span className="w-[104px] flex-none text-[12px] text-ink-soft">
+                    {status.latestDeliveredAt ? formatDateTime(status.latestDeliveredAt, timezone) : "—"}
+                  </span>
+                  <span className="w-24 flex-none text-right">
+                    {status.hasErrors ? (
+                      <StatusPill variant="error" label="Issues" />
+                    ) : status.complete ? (
+                      <StatusPill variant="success" label="Synced" />
                     ) : (
-                      <div className="overflow-x-auto rounded-md border border-border">
+                      <StatusPill variant="progress" label="In progress" />
+                    )}
+                  </span>
+                </div>
+
+                {isOpen && (
+                  <div className="border-t border-border bg-surface-sunken px-4 py-3">
+                    <div className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-ink-soft">
+                      {batch.contentScope && (
+                        <span>
+                          Sync criteria:{" "}
+                          <strong className="font-semibold text-ink">{scopeSummary(batch.contentScope, collections, pageFolders)}</strong>
+                        </span>
+                      )}
+                      <span className="ml-auto">
+                        Time to translate: <strong className="font-semibold text-ink">{formatDuration(batch.createdAt, status)}</strong>
+                      </span>
+                    </div>
+
+                    {status.hasErrors && (
+                      <div className="mb-3 rounded-md border border-status-error-bg bg-status-error-bg p-3">
+                        <div className="flex flex-col gap-1.5">
+                          {status.errors.map((e, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs">
+                              <span className="text-status-error-fg">⚠</span>
+                              <div>
+                                <span className="text-ink-soft">
+                                  {e.entityId} ({e.locale})
+                                </span>
+                                <div className="mt-0.5 rounded bg-surface px-2 py-1 font-mono text-[11.5px] text-status-error-fg">{e.error}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {workUnits === "loading" || workUnits === undefined ? (
+                      <p className="text-sm text-ink-faint">Loading documents...</p>
+                    ) : workUnits === "error" ? (
+                      <p className="text-sm text-status-error-fg">Couldn't load documents for this run.</p>
+                    ) : documents.length === 0 ? (
+                      <p className="text-sm text-ink-faint">No documents in this run.</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-md border border-border bg-surface">
                         <table className="w-full text-left text-[12.5px]">
                           <thead>
                             <tr className="border-b border-border bg-surface-sunken text-[10.5px] font-bold uppercase tracking-wide text-ink-faint">
-                              <th className="px-3 py-2">Work unit</th>
-                              <th className="px-3 py-2">Locale</th>
+                              <th className="px-3 py-2">Document</th>
+                              <th className="px-3 py-2 text-right">Words</th>
+                              <th className="px-3 py-2">Languages</th>
                               <th className="px-3 py-2">Sent to wxrks</th>
                               <th className="px-3 py-2">Updated on Webflow</th>
-                              <th className="px-3 py-2">Webflow</th>
+                              <th className="px-3 py-2">Status</th>
+                              <th className="px-3 py-2" />
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {workUnits.map((row, i) => (
-                              <tr key={i}>
-                                <td className="px-3 py-2 font-mono text-ink">{row.workUnitName}</td>
-                                <td className="px-3 py-2 font-mono text-ink-soft">{row.targetLocale}</td>
-                                <td className="px-3 py-2 text-ink-soft">{formatDateTime(row.sentToWxrksAt, timezone)}</td>
+                            {documents.map((doc) => (
+                              <tr key={doc.entityId}>
+                                <td className="px-3 py-2 font-mono text-ink">{doc.workUnitName}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums text-ink-soft">{doc.words.toLocaleString()}</td>
+                                <td className="px-3 py-2 text-ink-soft">{doc.locales.join(", ")}</td>
+                                <td className="px-3 py-2 text-ink-soft">{formatDateTime(batch.createdAt, timezone)}</td>
                                 <td className="px-3 py-2 text-ink-soft">
-                                  {row.updatedOnWebflowAt ? (
-                                    formatDateTime(row.updatedOnWebflowAt, timezone)
-                                  ) : (
-                                    <span className="text-ink-faint">—</span>
-                                  )}
-                                  {row.updateError && <span className="ml-1.5 text-status-error-fg" title={row.updateError}>⚠</span>}
+                                  {doc.latestUpdatedAt ? formatDateTime(doc.latestUpdatedAt, timezone) : <span className="text-ink-faint">—</span>}
                                 </td>
                                 <td className="px-3 py-2">
-                                  {row.webflowUrl ? (
-                                    <a href={row.webflowUrl} target="_blank" rel="noreferrer" className={linkClass}>
-                                      {row.linkType === "published" ? "View live →" : "Open in Designer →"}
+                                  {doc.hasError ? (
+                                    <StatusPill variant="error" label="Error" />
+                                  ) : doc.allDelivered ? (
+                                    <StatusPill variant="success" label="Synced" />
+                                  ) : (
+                                    <StatusPill variant="progress" label="Pending" />
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  {doc.link ? (
+                                    <a href={doc.link.url} target="_blank" rel="noreferrer" className={linkClass}>
+                                      {doc.link.type === "published" ? "View live →" : "Open in Designer →"}
                                     </a>
                                   ) : (
                                     <span className="text-ink-faint">—</span>
@@ -658,6 +746,7 @@ export default function Runs() {
             );
           })}
         </div>
+        </>
       )}
       </>
       )}
@@ -696,15 +785,6 @@ export default function Runs() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ label, value, mono = false }) {
-  return (
-    <div>
-      <div className="text-ink-faint">{label}</div>
-      <div className={"font-medium text-ink " + (mono ? "font-mono text-xs" : "")}>{value}</div>
     </div>
   );
 }

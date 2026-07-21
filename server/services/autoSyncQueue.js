@@ -239,6 +239,7 @@ async function flush(automationId, { jobId } = {}) {
     mode: "automation",
     reference,
     automationName: automation.name,
+    contentScope: automation.contentScope,
     sourceLocale,
     targetLocales,
     orgUnitUUID,

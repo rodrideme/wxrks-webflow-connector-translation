@@ -58,6 +58,13 @@ async function migrate() {
   // showing the project uuid for those).
   await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS reference TEXT`);
 
+  // Forward migration: snapshots the automation's content scope at the
+  // moment a recurring run is created, so the Runs page can always show a
+  // "Sync criteria" description even after the automation itself is later
+  // renamed or deleted. Null for every non-automation mode and for rows
+  // created before this migration existed.
+  await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS content_scope JSONB`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,

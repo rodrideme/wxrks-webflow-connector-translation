@@ -157,6 +157,12 @@ function mappingRowToObject(row) {
     // created before this column existed are simply null (Runs.jsx falls
     // back to showing the project uuid instead).
     reference: row.reference || null,
+    // Snapshot of the automation's contentScope at the moment this run was
+    // created (mode "automation" only) -- lets the Runs page always show a
+    // "Sync criteria" description, even after the automation itself is
+    // later renamed or deleted. Null for every non-automation mode and for
+    // rows created before this column existed.
+    contentScope: row.content_scope || null,
   };
 }
 
@@ -164,8 +170,8 @@ async function createProjectMapping(accountId, wxrksProjectUUID, mapping) {
   const { rows } = await db.query(
     `INSERT INTO project_mappings
        (wxrks_project_uuid, account_id, mode, source_locale, target_locales, org_unit_uuid,
-        work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name, reference)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        work_unit_name_pattern, collection_ids, items, status, wxrks_status, automation_name, reference, content_scope)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING *`,
     [
       wxrksProjectUUID,
@@ -181,6 +187,7 @@ async function createProjectMapping(accountId, wxrksProjectUUID, mapping) {
       mapping.wxrksStatus || "DRAFT",
       mapping.automationName || null,
       mapping.reference || null,
+      mapping.contentScope ? JSON.stringify(mapping.contentScope) : null,
     ]
   );
   return mappingRowToObject(rows[0]);
