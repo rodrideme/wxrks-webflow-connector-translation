@@ -312,6 +312,21 @@ async function listProjectMappings(accountId) {
   return rows.map(mappingRowToObject);
 }
 
+// Paginated sibling of listProjectMappings, for the Runs page's History
+// tab -- unlike that function (used by Dashboard's account-wide aggregates
+// and getDeliveryStatusByEntity, both of which need the COMPLETE history),
+// this is for browsing a page at a time. No total-count query, matching
+// listActivity's own reasoning -- the client treats a full page
+// (history.length === limit) as "there might be more" and offers a Load
+// more button instead.
+async function listProjectMappingsPage(accountId, { limit, offset }) {
+  const { rows } = await db.query(
+    `SELECT * FROM project_mappings WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [accountId, limit, offset]
+  );
+  return rows.map(mappingRowToObject);
+}
+
 async function listActiveProjects(accountId) {
   const { rows } = await db.query(
     `SELECT * FROM project_mappings WHERE account_id = $1 AND status = 'in_progress' ORDER BY created_at DESC`,
@@ -1325,6 +1340,7 @@ module.exports = {
   getProjectMapping,
   updateProjectMapping,
   listProjectMappings,
+  listProjectMappingsPage,
   listActiveProjects,
   getDeliveryStatusByEntity,
   latestUpdateByEntityAndLocale,

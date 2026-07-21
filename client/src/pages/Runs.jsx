@@ -172,6 +172,12 @@ function webhookPill(status, label, onReregister, busy, canEdit) {
   );
 }
 
+// GET /api/sync/history's paginated mode (see api.js's getSyncHistory) --
+// no total-count query, so "a full page came back" is the only signal
+// there might be more; the Load more button disappears once a page comes
+// back short.
+const HISTORY_PAGE_SIZE = 20;
+
 const TABS = [
   ["history", "History"],
   ["recurring", "Recurring Automation"],
@@ -201,6 +207,9 @@ export default function Runs() {
   const [logType, setLogType] = useState("all"); // all | one-time | recurring
   const [historySearch, setHistorySearch] = useState("");
   const [historyStatusFilter, setHistoryStatusFilter] = useState("all"); // all | synced | issues
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [detailAutomation, setDetailAutomation] = useState(null);
   const [flushing, setFlushing] = useState(false);
@@ -225,6 +234,20 @@ export default function Runs() {
     if (nowExpanded) loadRunWorkUnits(wxrksProjectUUID);
   }
 
+  function loadMoreHistory() {
+    setLoadingMoreHistory(true);
+    api
+      .getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: historyOffset })
+      .then((res) => {
+        const more = res.history || [];
+        setHistory((prev) => [...(prev || []), ...more]);
+        setHistoryOffset((prev) => prev + more.length);
+        setHistoryHasMore(more.length === HISTORY_PAGE_SIZE);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoadingMoreHistory(false));
+  }
+
   function loadAutomations() {
     setRefreshing(true);
     return api
@@ -247,7 +270,7 @@ export default function Runs() {
 
   useEffect(() => {
     Promise.all([
-      api.getSyncHistory(),
+      api.getSyncHistory({ limit: HISTORY_PAGE_SIZE, offset: 0 }),
       api.getCollections().catch(() => ({ collections: [] })),
       api.getPageFolders().catch(() => ({ folders: [] })),
       api.getOrgUnits().catch(() => ({ orgUnits: [] })),
@@ -256,6 +279,8 @@ export default function Runs() {
       .then(([historyRes, collectionsRes, foldersRes, orgUnitsRes, settingsRes]) => {
         const history = historyRes.history || [];
         setHistory(history);
+        setHistoryOffset(history.length);
+        setHistoryHasMore(history.length === HISTORY_PAGE_SIZE);
         setCollections(collectionsRes.collections || []);
         setPageFolders(foldersRes.folders || []);
         setOrgUnits(orgUnitsRes.orgUnits || []);
@@ -747,6 +772,19 @@ export default function Runs() {
           })}
         </div>
         </>
+      )}
+
+      {historyHasMore && (
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={loadMoreHistory}
+            disabled={loadingMoreHistory}
+            className="rounded-md border border-border-strong bg-surface px-4 py-1.5 text-xs font-semibold hover:border-ink-faint disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loadingMoreHistory ? "Loading…" : "Load more"}
+          </button>
+        </div>
       )}
       </>
       )}

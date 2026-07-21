@@ -87,7 +87,11 @@ const api = {
   getOrgUnits: () => dataCache.getOrFetch("orgUnits", STRUCTURAL_TTL_MS, () => request("/config/org-units")),
   getOrgUnitResources: (orgUnitUUID) => request(`/config/org-units/${orgUnitUUID}/resources`),
   getWebflowLocales: () => dataCache.getOrFetch("webflowLocales", STRUCTURAL_TTL_MS, () => request("/config/webflow-locales")),
-  getSyncHistory: () => request("/sync/history"),
+  // No params -> the full history (Dashboard's account-wide aggregates
+  // need every run). { limit, offset } -> a real paginated page (Runs
+  // page's History tab, which only ever browses one page at a time).
+  getSyncHistory: (params) =>
+    request(params ? `/sync/history?limit=${params.limit}&offset=${params.offset}` : "/sync/history"),
   getRunWorkUnits: (wxrksProjectUUID) => request(`/sync/history/${wxrksProjectUUID}/work-units`),
   getCollectionFields: (collectionId) => request(`/collections/${collectionId}/fields`),
   getFieldsSummary: () => request("/collections/fields-summary"),

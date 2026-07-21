@@ -350,13 +350,28 @@ router.get("/status", async (req, res) => {
 
 /**
  * GET /api/sync/history
+ * GET /api/sync/history?limit=&offset=
  * Every batch ever created (not just active ones), most recent first --
  * each entry carries the full settings snapshot (org unit, locales,
  * collections, naming pattern) that produced its wxrks project.
+ *
+ * Pagination is opt-in: Dashboard computes account-wide aggregates (total
+ * runs, total words translated) that need the COMPLETE history, so a
+ * no-params call keeps returning everything, unchanged. The Runs page's
+ * History tab only ever needs to browse a page at a time, so it passes
+ * limit/offset to get a real paginated query instead -- same "no total-
+ * count, client treats a full page as 'there might be more'" convention
+ * as listActivity/getActivity.
  */
 router.get("/history", async (req, res) => {
   try {
-    const history = await store.listProjectMappings(req.account.id);
+    const hasPaging = req.query.limit !== undefined || req.query.offset !== undefined;
+    const history = hasPaging
+      ? await store.listProjectMappingsPage(req.account.id, {
+          limit: Math.min(Number(req.query.limit) || 20, 100),
+          offset: Number(req.query.offset) || 0,
+        })
+      : await store.listProjectMappings(req.account.id);
     res.json({ history });
   } catch (err) {
     res.status(502).json({ error: err.message });
