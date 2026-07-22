@@ -271,8 +271,12 @@ function webhookPill(status, label, onReregister, busy, canEdit) {
 // GET /api/sync/history's paginated mode (see api.js's getSyncHistory) --
 // no total-count query, so "a full page came back" is the only signal
 // there might be more; the Load more button disappears once a page comes
-// back short.
-const HISTORY_PAGE_SIZE = 10;
+// back short. Kept small (not just PRIORITY_EAGER_COUNT) because the
+// REST of a page still eager-loads in the background at
+// EAGER_LOAD_CONCURRENCY -- a smaller total page means less overall
+// concurrent Webflow call volume in flight, directly reducing how often
+// that background fan-out trips real rate-limiting.
+const HISTORY_PAGE_SIZE = 5;
 
 const TABS = [
   ["history", "History"],
@@ -337,13 +341,20 @@ export default function Runs() {
     done: eagerBatchUuids.filter((uuid) => workUnitsByRun[uuid] && workUnitsByRun[uuid] !== "loading").length,
   };
 
-  // GET /work-units has no server-side or fetch-level timeout, so a single
-  // hung upstream Webflow call used to only stall that one card's spinner.
-  // Now that the whole page gates on every run in the batch settling (see
-  // loadWorkUnitsForBatches), one hung request would otherwise block the
-  // entire list from ever appearing -- this bounds that risk without
-  // touching the shared api.js request() helper other callers rely on.
-  const WORK_UNITS_TIMEOUT_MS = 20000;
+  // GET /work-units has no server-side or fetch-level timeout of its own,
+  // but api.js's shared request() helper already retries an idempotent GET
+  // up to 5x on a 502 (1s/2s/3s/4s backoff), and each of those attempts can
+  // itself hit webflow.js's own 429-retry interceptor (up to 5 more,
+  // Retry-After-aware) before the route even responds -- stacked together,
+  // that legitimate retry chain can genuinely take longer than a tight
+  // timeout allows, and cutting it off early is indistinguishable from a
+  // real failure (this is what caused cards to "sometimes" error: whichever
+  // wins the race depends on live Webflow contention, not anything wrong
+  // with that particular run). Loose enough to let that whole chain
+  // realistically finish; still finite as a backstop against a truly hung
+  // request. A single card's own delay no longer blocks anything else (see
+  // PRIORITY_EAGER_COUNT below), so there's little cost to being generous.
+  const WORK_UNITS_TIMEOUT_MS = 45000;
 
   function loadRunWorkUnits(wxrksProjectUUID) {
     if (dispatchedRunsRef.current.has(wxrksProjectUUID)) return dispatchedRunsRef.current.get(wxrksProjectUUID);
@@ -354,6 +365,15 @@ export default function Runs() {
       .catch(() => setWorkUnitsByRun((prev) => ({ ...prev, [wxrksProjectUUID]: "error" })));
     dispatchedRunsRef.current.set(wxrksProjectUUID, promise);
     return promise;
+  }
+
+  // The server never caches a failed attempt (WORK_UNITS_CACHE, added in a
+  // prior fix, is only written after a successful response), so clearing
+  // the client-side dispatch guard and re-invoking always recomputes fresh
+  // rather than replaying a cached failure.
+  function retryRunWorkUnits(wxrksProjectUUID) {
+    dispatchedRunsRef.current.delete(wxrksProjectUUID);
+    loadRunWorkUnits(wxrksProjectUUID);
   }
 
   function toggleRunWorkUnits(wxrksProjectUUID) {
@@ -988,7 +1008,14 @@ export default function Runs() {
                       <LoadingState label="Loading documents" />
                     ) : workUnits === "error" ? (
                       <p className="text-sm" style={{ color: "var(--runs-error-fg)" }}>
-                        Couldn't load documents for this run.
+                        Couldn't load documents for this run.{" "}
+                        <button
+                          type="button"
+                          className="runs-link font-semibold"
+                          onClick={() => retryRunWorkUnits(batch.wxrksProjectUUID)}
+                        >
+                          Retry
+                        </button>
                       </p>
                     ) : documents.length === 0 ? (
                       <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
