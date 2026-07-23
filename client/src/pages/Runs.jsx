@@ -206,46 +206,6 @@ function ModeIcon({ mode }) {
   );
 }
 
-/**
- * Groups GET /work-units' flat (item x locale) rows back into one row per
- * document, keyed by entityId (not workUnitName -- a user-configurable
- * naming pattern isn't guaranteed unique across different documents).
- * Word counts come from the batch's own items[] (already stored server-
- * side), not summed from work-unit rows. The "Open in Webflow" link uses
- * the first target locale's link -- a deliberate simplification, since the
- * real URL can differ per locale (locale subdirectories) but the other
- * locales are already visible via the Languages column.
- */
-function groupWorkUnitsByDocument(workUnits, batch) {
-  const wordCountByEntityId = new Map(
-    batch.items.map((i) => [i.webflowItemId || i.webflowPageId || i.webflowComponentId, i.wordCount || 0])
-  );
-  const byEntity = new Map();
-  for (const row of workUnits) {
-    if (!byEntity.has(row.entityId)) {
-      byEntity.set(row.entityId, {
-        entityId: row.entityId,
-        workUnitName: row.workUnitName,
-        words: wordCountByEntityId.get(row.entityId) || 0,
-        locales: [],
-        latestUpdatedAt: null,
-        hasError: false,
-        allDelivered: true,
-        link: null,
-      });
-    }
-    const doc = byEntity.get(row.entityId);
-    doc.locales.push(row.targetLocale);
-    if (row.updateError) doc.hasError = true;
-    if (!row.updatedOnWebflowAt) doc.allDelivered = false;
-    else if (!doc.latestUpdatedAt || new Date(row.updatedOnWebflowAt) > new Date(doc.latestUpdatedAt)) {
-      doc.latestUpdatedAt = row.updatedOnWebflowAt;
-    }
-    if (!doc.link && row.webflowUrl) doc.link = { url: row.webflowUrl, type: row.linkType };
-  }
-  return [...byEntity.values()];
-}
-
 // "not_registered" is a normal, expected state (no automation needs this
 // webhook yet) -- only "deactivated"/other unexpected statuses get an actual
 // Reregister action, since that's the only case something is really broken.
@@ -866,7 +826,19 @@ export default function Runs() {
           {filteredHistory.map(({ batch, status }) => {
             const isOpen = Boolean(expandedRuns[batch.wxrksProjectUUID]);
             const workUnits = workUnitsByRun[batch.wxrksProjectUUID];
-            const documents = Array.isArray(workUnits) ? groupWorkUnitsByDocument(workUnits, batch) : null;
+            // One row per (document, language) -- each target locale has its
+            // own real Webflow location and its own real delivery status, so
+            // collapsing them into one row per document (as this used to do)
+            // meant only the first-encountered language's link/status was
+            // ever shown, silently wrong for every other language. wxrks
+            // itself tracks a work unit per (language, workflow step), but
+            // the webhook handler (routes/webhooks.js's is_last_workflow
+            // check) already only ever records the FINAL step's delivery
+            // here -- workUnits is already exactly one row per language, not
+            // per step, so no extra collapsing is needed on top of this.
+            const wordCountByEntityId = Array.isArray(workUnits)
+              ? new Map(batch.items.map((i) => [i.webflowItemId || i.webflowPageId || i.webflowComponentId, i.wordCount || 0]))
+              : null;
             const wordCount = batch.items.reduce((sum, i) => sum + (i.wordCount || 0), 0);
             const runVariant = status.hasErrors ? "error" : status.complete ? "synced" : "pending";
             const runLabel = status.hasErrors ? "Issues" : status.complete ? "Synced" : "Pending";
@@ -1017,7 +989,7 @@ export default function Runs() {
                           Retry
                         </button>
                       </p>
-                    ) : documents.length === 0 ? (
+                    ) : workUnits.length === 0 ? (
                       <p className="text-sm" style={{ color: "var(--runs-text-faint)" }}>
                         No documents in this run.
                       </p>
@@ -1033,8 +1005,8 @@ export default function Runs() {
                               style={{ borderBottom: "1px solid var(--runs-card-border)", color: "var(--runs-text-faint)" }}
                             >
                               <th className="px-3 py-2">Document</th>
+                              <th className="px-3 py-2">Language</th>
                               <th className="px-3 py-2 text-right">Words</th>
-                              <th className="px-3 py-2">Languages</th>
                               <th className="px-3 py-2">Updated on Works</th>
                               <th className="px-3 py-2">Updated on Webflow</th>
                               <th className="px-3 py-2">Status</th>
@@ -1042,37 +1014,40 @@ export default function Runs() {
                             </tr>
                           </thead>
                           <tbody>
-                            {documents.map((doc, i) => {
-                              const docVariant = doc.hasError ? "error" : doc.allDelivered ? "synced" : "pending";
-                              const docLabel = doc.hasError ? "Error" : doc.allDelivered ? "Synced" : "Pending";
+                            {workUnits.map((row, i) => {
+                              const rowVariant = row.updateError ? "error" : row.updatedOnWebflowAt ? "synced" : "pending";
+                              const rowLabel = row.updateError ? "Error" : row.updatedOnWebflowAt ? "Synced" : "Pending";
                               return (
-                                <tr key={doc.entityId} style={{ borderTop: i === 0 ? undefined : "1px solid var(--runs-row-divider)" }}>
+                                <tr
+                                  key={`${row.entityId}:${row.targetLocale}`}
+                                  style={{ borderTop: i === 0 ? undefined : "1px solid var(--runs-row-divider)" }}
+                                >
                                   <td className="px-3 py-2" style={{ color: "var(--runs-text-primary)" }}>
-                                    {doc.workUnitName}
-                                  </td>
-                                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--runs-text-secondary)" }}>
-                                    {doc.words.toLocaleString()}
+                                    {row.workUnitName}
                                   </td>
                                   <td className="px-3 py-2 uppercase" style={{ color: "var(--runs-text-secondary)" }}>
-                                    {doc.locales.join(", ")}
+                                    {row.targetLocale}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--runs-text-secondary)" }}>
+                                    {(wordCountByEntityId.get(row.entityId) || 0).toLocaleString()}
                                   </td>
                                   <td className="px-3 py-2" style={{ color: "var(--runs-text-secondary)" }}>
                                     {formatCompactDateTime(batch.createdAt, timezone)}
                                   </td>
                                   <td className="px-3 py-2" style={{ color: "var(--runs-text-secondary)" }}>
-                                    {doc.latestUpdatedAt ? (
-                                      formatCompactDateTime(doc.latestUpdatedAt, timezone)
+                                    {row.updatedOnWebflowAt ? (
+                                      formatCompactDateTime(row.updatedOnWebflowAt, timezone)
                                     ) : (
                                       <span style={{ color: "var(--runs-text-faint)" }}>—</span>
                                     )}
                                   </td>
                                   <td className="px-3 py-2">
-                                    <RunStatusPill variant={docVariant} label={docLabel} />
+                                    <RunStatusPill variant={rowVariant} label={rowLabel} />
                                   </td>
                                   <td className="whitespace-nowrap px-3 py-2 text-right">
-                                    {doc.link ? (
-                                      <RunExternalLink href={doc.link.url}>
-                                        {doc.link.type === "published" ? "View live" : "Open in Designer"}
+                                    {row.webflowUrl ? (
+                                      <RunExternalLink href={row.webflowUrl}>
+                                        {row.linkType === "published" ? "View live" : "Open in Designer"}
                                       </RunExternalLink>
                                     ) : (
                                       <span style={{ color: "var(--runs-text-faint)" }}>—</span>
