@@ -1046,9 +1046,9 @@ export default function Runs() {
                                   </td>
                                   <td className="whitespace-nowrap px-3 py-2 text-right">
                                     {row.webflowUrl ? (
-                                      <RunExternalLink href={row.webflowUrl}>
-                                        {row.linkType === "published" ? "View live" : "Open in Designer"}
-                                      </RunExternalLink>
+                                      // Always the Designer, never a live/published preview --
+                                      // see the /work-units route's own comment for why.
+                                      <RunExternalLink href={row.webflowUrl}>Open in Designer</RunExternalLink>
                                     ) : (
                                       <span style={{ color: "var(--runs-text-faint)" }}>—</span>
                                     )}

@@ -156,6 +156,16 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
         webflowLocales.secondary.filter((l) => l.enabled && orgBaseLangs.has(baseLang(l.tag))).map((l) => l.tag)
       );
     }
+    // Same pattern as languages above -- wxrks's org units carry their own
+    // default workflow steps (sourced server-side from a "Project Routing"
+    // config, see wxrks.js's listOrgUnits), a hard replace rather than a
+    // merge. Falls back to plain Translation for an org unit with no
+    // routing config, matching this modal's original hardcoded default.
+    // The user can still freely add/remove steps afterward via the
+    // existing chips, same as locales.
+    if (org) {
+      setWorkflowSteps(org.workflows?.length ? org.workflows : ["TRANSLATION"]);
+    }
     setOrgUnitResources(null);
     if (uuid) loadOrgUnitResources(uuid);
   }

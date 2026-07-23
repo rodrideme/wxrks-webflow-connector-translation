@@ -386,12 +386,11 @@ router.get("/history", async (req, res) => {
  * GET /api/sync/history/:wxrksProjectUUID/work-units
  * One row per (item, target locale) synced in this one run -- lazily
  * fetched by the Runs page when a History card is expanded, not bundled
- * into GET /history itself (this does real, non-trivial live Webflow work:
- * per-locale CMS item reads to check publish status, a pages/folders fetch
- * for Page links). Each row's `webflowUrl` is the real published URL when
- * that locale/item is actually public, else a Webflow Designer deep link
- * -- resolved here, not client-side, since this is the only place with the
- * live per-locale draft-status data needed to decide which to show.
+ * into GET /history itself. Each row's `webflowUrl` is always a Webflow
+ * Designer deep link (never a live/published preview URL) -- too many
+ * real-world variations (locale subdirectories, draft status, slug
+ * differences per locale) made the preview path unreliable, so users are
+ * always sent to the Designer instead.
  */
 // This route recomputes real, non-trivial live Webflow work every call
 // (per-locale item reads, a pages/folders fetch -- see below). A run
@@ -429,52 +428,16 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
       return res.json({ rows: cached.rows });
     }
 
-    const { site, secondary } = await webflow.getSiteLocales();
-    const subdirectoryByLocale = Object.fromEntries(secondary.map((l) => [l.tag, l.subdirectory]));
-    const enabledByLocale = Object.fromEntries(secondary.map((l) => [l.tag, l.enabled]));
+    const { site } = await webflow.getSiteLocales();
 
     const hasCmsItems = mapping.items.some((item) => (item.entityType || "cmsItem") === "cmsItem");
     const hasPages = mapping.items.some((item) => item.entityType === "page");
-
-    // Distinct (collectionId, locale) pairs this run's CMS items actually
-    // need -- fetched once each, not once per item, and isolated so one
-    // failing collection/locale combo degrades to "no draft-status data
-    // for it" rather than failing the whole response.
-    const neededPairs = new Set();
-    if (hasCmsItems) {
-      for (const item of mapping.items) {
-        if ((item.entityType || "cmsItem") !== "cmsItem") continue;
-        for (const locale of mapping.targetLocales) neededPairs.add(`${item.webflowCollectionId}::${locale}`);
-      }
-    }
-    const draftByCollectionLocale = {};
-    const settledItems = await Promise.allSettled(
-      [...neededPairs].map(async (key) => {
-        const [collectionId, locale] = key.split("::");
-        return { collectionId, locale, items: await webflow.listAllItemsCached(collectionId, { locale }) };
-      })
-    );
-    for (const r of settledItems) {
-      if (r.status !== "fulfilled") continue;
-      const { collectionId, locale, items } = r.value;
-      draftByCollectionLocale[collectionId] ||= {};
-      // Captures each locale's own real slug too (not just isDraft) -- a
-      // translated item's slug can legitimately differ from the source
-      // locale's (see settings.slugHandling), so building this locale's
-      // "live" URL from item.sourceSlug (the source locale's slug) was
-      // wrong whenever slug translation/transliteration is on.
-      draftByCollectionLocale[collectionId][locale] = new Map(
-        items.map((it) => [it.id, { isDraft: it.isDraft, slug: it.fieldData?.slug }])
-      );
-    }
 
     const allPagesRaw = hasCmsItems ? await webflow.listPages() : [];
     const templatePageByCollection = new Map();
 
     const staticPages = hasPages ? await webflow.listStaticPages() : [];
     const pagesById = new Map(staticPages.map((p) => [p.id, p]));
-    const folderIds = staticPages.map((p) => p.parentId).filter(Boolean);
-    const foldersById = hasPages ? await webflow.getPageFoldersByIds(folderIds) : new Map();
 
     const latestUpdateByEntity = store.latestUpdateByEntityAndLocale(mapping);
 
@@ -485,46 +448,29 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
 
       for (const locale of mapping.targetLocales) {
         const delivery = latestUpdateByEntity[entityId]?.[locale];
-        const subdirectory = subdirectoryByLocale[locale];
         let webflowUrl;
         let linkType;
 
+        // Always the Designer deep-link, never a live/published preview
+        // URL -- too many real-world variations (locale subdirectories,
+        // draft status, slug differences per locale) made the preview
+        // path unreliable. This also drops the per-collection-locale
+        // draft-status fetch that used to exist solely to feed that
+        // preview branch (was real, non-trivial Webflow API load).
         if (entityType === "cmsItem") {
           if (!templatePageByCollection.has(item.webflowCollectionId)) {
             templatePageByCollection.set(item.webflowCollectionId, webflow.findCollectionTemplatePage(allPagesRaw, item.webflowCollectionId));
           }
           const templatePage = templatePageByCollection.get(item.webflowCollectionId);
-          const localeItem = draftByCollectionLocale[item.webflowCollectionId]?.[locale]?.get(item.webflowItemId);
-          // Both conditions matter: the ITEM's own draft status (per-locale
-          // CMS field), and whether the LOCALE ITSELF is enabled/published
-          // site-wide yet (a secondary locale can exist with real, non-draft
-          // item content while the locale as a whole still isn't live on the
-          // custom domain -- see getSiteLocales' `enabled` field, mirroring
-          // the Pages branch below, which already checked this and was the
-          // only branch that did).
-          if (localeItem?.isDraft === false && enabledByLocale[locale]) {
-            webflowUrl = webflow.buildCmsItemPreviewUrl({
-              site,
-              templatePage,
-              item: { fieldData: { slug: localeItem.slug || item.sourceSlug } },
-              subdirectory,
-            });
-            linkType = "published";
-          } else {
-            webflowUrl = webflow.buildCmsItemDesignerUrl({ site, templatePage, item: { id: item.webflowItemId }, locale });
-            linkType = "designer";
-          }
+          webflowUrl = webflow.buildCmsItemDesignerUrl({ site, templatePage, item: { id: item.webflowItemId }, locale });
+          linkType = "designer";
         } else if (entityType === "page") {
           const page = pagesById.get(item.webflowPageId);
           if (!page) {
             // Page no longer exists (deleted since this run) -- nothing to
-            // link to. Not treated as "no slug" (which buildPagePreviewUrl
-            // would otherwise read as the homepage case).
+            // link to.
             webflowUrl = undefined;
             linkType = "none";
-          } else if (enabledByLocale[locale]) {
-            webflowUrl = webflow.buildPagePreviewUrl({ site, page, folder: foldersById.get(page.parentId), subdirectory });
-            linkType = "published";
           } else {
             webflowUrl = webflow.buildPageDesignerUrl({ site, page, locale });
             linkType = "designer";

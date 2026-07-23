@@ -171,13 +171,74 @@ async function getOrgUnit() {
   return uuid;
 }
 
+// Mirrors webflow.js's makeTtlCache pattern -- this file deliberately
+// doesn't import from webflow.js (they're independent platform clients,
+// confirmed elsewhere as a design goal), so a small local equivalent
+// lives here instead. Caches a zero-arg fetch's in-flight/resolved
+// promise per account, evicting on rejection so a transient failure
+// doesn't poison the cache for the rest of the TTL window.
+function makeTtlCache(fetchFn, ttlMs = 30 * 60 * 1000) {
+  const byAccount = new Map();
+  return async function cached() {
+    const accountContext = require("./accountContext");
+    const accountId = accountContext.getAccountId();
+    const entry = byAccount.get(accountId);
+    if (entry && entry.expiresAt > Date.now()) return entry.value;
+    const promise = fetchFn();
+    promise.catch(() => byAccount.delete(accountId));
+    byAccount.set(accountId, { value: promise, expiresAt: Date.now() + ttlMs });
+    return promise;
+  };
+}
+
+async function listProjectRoutingConfigs() {
+  const { data } = await request({ method: "GET", url: "/multi-project?size=100" });
+  return data?.content || [];
+}
+
+async function getProjectRoutingConfigDetail(configUuid) {
+  const { data } = await request({ method: "GET", url: `/multi-project/${configUuid}` });
+  return data;
+}
+
 /**
- * Lists org units for the Settings UI dropdown, including each one's
- * configured default source language and target languages (used to suggest
- * defaults for the app's own locale settings).
+ * Maps each org unit to its default workflow steps. Confirmed live: the
+ * plain org unit endpoint (GET /client/:uuid) has no such field --
+ * workflow defaults only live on configOrgUnits[] within a "Project
+ * Routing" config (GET /multi-project/:uuid), alongside that same
+ * org unit's own targetLanguages. An org unit can appear in more than
+ * one routing config (confirmed live); first match wins, since nothing
+ * in the API signals which should take precedence. An org unit with no
+ * routing config at all simply has no entry in the returned Map.
+ * TTL-cached (real N+1 API calls -- one per routing config -- not
+ * something to redo on every listOrgUnits() call).
+ */
+const getOrgUnitWorkflowsByUuid = makeTtlCache(async function fetchOrgUnitWorkflowsByUuid() {
+  const configs = await listProjectRoutingConfigs();
+  const details = await Promise.allSettled(configs.map((c) => getProjectRoutingConfigDetail(c.uuid)));
+  const map = new Map();
+  for (const r of details) {
+    if (r.status !== "fulfilled") continue;
+    for (const ou of r.value?.configOrgUnits || []) {
+      if (!map.has(ou.uuid)) map.set(ou.uuid, ou.workflows || []);
+    }
+  }
+  return map;
+});
+
+/**
+ * Lists org units for the Settings UI dropdown and the Send to wxrks
+ * wizard, including each one's configured default source/target
+ * languages (used to suggest defaults for the app's own locale settings)
+ * and default workflow steps (see getOrgUnitWorkflowsByUuid above) --
+ * empty array, not a hardcoded fallback, when this org unit has no
+ * routing config, so callers can apply their own default consistently.
  */
 async function listOrgUnits() {
-  const { data } = await request({ method: "GET", url: "/client?size=100" });
+  const [{ data }, workflowsByUuid] = await Promise.all([
+    request({ method: "GET", url: "/client?size=100" }),
+    getOrgUnitWorkflowsByUuid(),
+  ]);
   return (data?.content || []).map((c) => ({
     uuid: c.uuid,
     name: c.name,
@@ -186,6 +247,7 @@ async function listOrgUnits() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    workflows: workflowsByUuid.get(c.uuid) || [],
   }));
 }
 
