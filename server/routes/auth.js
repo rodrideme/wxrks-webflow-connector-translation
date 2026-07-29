@@ -6,7 +6,7 @@ const tokenCrypto = require("../services/tokenCrypto");
 const passwordHash = require("../services/passwordHash");
 const email = require("../services/email");
 const { createRateLimiter } = require("../middleware/rateLimit");
-const { SESSION_COOKIE_NAME, parseCookies, requireSession } = require("../middleware/auth");
+const { SESSION_COOKIE_NAME, parseCookies, requireSession, deleteSessionFromRequestCookie } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -125,7 +125,12 @@ router.get("/callback", async (req, res) => {
       if (!account) {
         account = await store.createAccount({ webflowSiteId: siteId });
       }
-      const role = (await store.listAccountsForUser(user.id)).length === 0 ? "owner" : "member";
+      // Owner of any account you're the FIRST member of -- a per-account
+      // check, not "is this your first account ever": a returning user
+      // authorizing a brand-new site used to land as mere `member` of an
+      // account nobody owned. upsertAccountMembership is ON CONFLICT DO
+      // NOTHING, so an existing membership never changes role here.
+      const role = (await store.listAccountMembers(account.id)).length === 0 ? "owner" : "member";
       await store.upsertAccountMembership(account.id, user.id, role);
       if (!primaryAccount) primaryAccount = account;
 
@@ -147,11 +152,23 @@ router.get("/callback", async (req, res) => {
       });
     }
 
+    await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     const sessionId = await store.createSession(user.id, primaryAccount.id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
 
-    res.redirect("/");
+    // Never guess which account a multi-account user came for:
+    // `authorizedTo.siteIds` is the CUMULATIVE grant (every site this user
+    // ever authorized for this app -- confirmed the source of "logged into
+    // site B, landed back in site A"), so `primaryAccount` (siteIds[0]) is
+    // only a provisional landing the user is a verified member of either
+    // way. With more than one membership (counted across invites too, not
+    // just this grant), land on the in-app picker, whose switch-account
+    // call re-points the session at the real choice. The session must
+    // exist before the redirect -- /select-site lists accounts via
+    // GET /api/auth/me.
+    const memberships = await store.listAccountsForUser(user.id);
+    res.redirect(memberships.length > 1 ? "/select-site" : "/");
   } catch (err) {
     console.error("OAuth callback failed:", err.response?.data || err.message);
     res.status(502).json({ error: "Sign-in failed. Please try again." });
@@ -191,6 +208,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     const accounts = await store.listAccountsForUser(user.id);
     if (accounts.length === 0) return res.status(401).json(genericError);
 
+    await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     const sessionId = await store.createSession(user.id, accounts[0].id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
@@ -263,6 +281,10 @@ router.post("/reset-password", resetPasswordLimiter, async (req, res) => {
     if (accounts.length === 0) {
       return res.status(502).json({ error: "Password reset, but no connected account was found. Please contact whoever manages your connection." });
     }
+    // deleteSessionsForUser above only covered THIS user's rows -- on a
+    // shared browser the cookie can still reference a different user's
+    // live session, which would otherwise be orphaned here.
+    await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     const sessionId = await store.createSession(userId, accounts[0].id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
@@ -305,6 +327,40 @@ router.post("/set-password", requireSession, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("Set-password failed:", err.message);
+    res.status(502).json({ error: "Something went wrong. Please try again." });
+  }
+});
+
+/**
+ * POST /api/auth/switch-account
+ * body: { accountId }
+ * Re-points this browser at another account the user is a member of --
+ * used by the post-OAuth site picker (see the callback's redirect above)
+ * and the sidebar switcher. Deletes the old session row and issues a
+ * fresh one rather than UPDATE-ing sessions.account_id in place:
+ * store.js already has exactly these two primitives, rotating the session
+ * id on a privilege-context change is standard fixation hygiene, and
+ * delete-then-create can never leave two live rows even if it dies
+ * mid-sequence (it fails closed to a re-login). The 30-day expiry
+ * restarting is the same thing any login does.
+ */
+router.post("/switch-account", requireSession, async (req, res) => {
+  const { accountId } = req.body || {};
+  if (!accountId) return res.status(400).json({ error: "accountId is required" });
+
+  try {
+    const accounts = await store.listAccountsForUser(req.user.id);
+    const target = accounts.find((a) => a.id === accountId);
+    if (!target) return res.status(403).json({ error: "You don't have access to that account." });
+
+    await store.deleteSession(req.sessionId);
+    const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
+    const sessionId = await store.createSession(req.user.id, target.id, expiresAt);
+    setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
+    store.recordActivity(target.id, req.user.id, "account.switched", { fromAccountId: req.account.id }).catch(() => {});
+    res.json({ ok: true, account: { id: target.id, name: target.name, webflowSiteId: target.webflowSiteId } });
+  } catch (err) {
+    console.error("Account switch failed:", err.message);
     res.status(502).json({ error: "Something went wrong. Please try again." });
   }
 });

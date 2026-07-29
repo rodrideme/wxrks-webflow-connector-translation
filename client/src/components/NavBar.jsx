@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import api from "../services/api.js";
+import dataCache from "../services/dataCache.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
 // Served as-is from client/public/ (not a Vite-processed src import) so the
@@ -23,9 +24,27 @@ const BASE_LINKS = [
 const ENVIRONMENTS_LINK = { to: "/environments", label: "Environments", icon: "🧩" };
 
 export default function NavBar() {
-  const { user, account, logout } = useAuth();
+  const { user, account, accounts, logout } = useAuth();
   const [site, setSite] = useState(null);
+  const [switching, setSwitching] = useState(false);
   const links = account?.isOriginalAccount ? [...BASE_LINKS, ENVIRONMENTS_LINK] : BASE_LINKS;
+
+  // Same sequence as SelectSite.jsx's choose(): re-point the session, then
+  // a full page load -- remounting everything is what guarantees no page
+  // is left holding the previous account's fetched state.
+  async function switchTo(accountId) {
+    if (!accountId || accountId === account.id) return;
+    setSwitching(true);
+    try {
+      await api.switchAccount(accountId);
+      dataCache.clearAll();
+      window.location.assign("/");
+    } catch {
+      // The select's value no longer matches the real session -- reload to
+      // resync rather than showing a wrong selection.
+      window.location.reload();
+    }
+  }
 
   // Fetched once -- NavBar sits outside <Routes> in App.jsx and never
   // remounts on navigation, so this doesn't refire per page.
@@ -71,6 +90,21 @@ export default function NavBar() {
       </a>
 
       <div className="flex flex-col gap-2 border-t border-border px-2 pt-3">
+        {accounts.length > 1 && (
+          <select
+            value={account.id}
+            onChange={(e) => switchTo(e.target.value)}
+            disabled={switching}
+            title="Switch site"
+            className="w-full rounded-md border border-border-strong bg-surface px-1.5 py-1 text-[11.5px] font-medium text-ink-soft focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.webflowSiteId}
+              </option>
+            ))}
+          </select>
+        )}
         {siteUrl ? (
           <a
             href={siteUrl}

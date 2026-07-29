@@ -25,6 +25,19 @@ function parseCookies(cookieHeader) {
   return cookies;
 }
 
+/**
+ * Any route that issues a fresh session while the browser already holds a
+ * session_id cookie must kill that old row first -- logging in over a live
+ * session used to just overwrite the cookie, leaving the previous row
+ * valid in Postgres for its full 30 days as an orphan nothing could ever
+ * log out again (and, on a shared browser, possibly a DIFFERENT user's
+ * session). Best-effort: an already-deleted/expired id is fine.
+ */
+async function deleteSessionFromRequestCookie(req) {
+  const sessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME];
+  if (sessionId) await store.deleteSession(sessionId).catch(() => {});
+}
+
 async function requireSession(req, res, next) {
   const cookies = parseCookies(req.headers.cookie);
   const sessionId = cookies[SESSION_COOKIE_NAME];
@@ -92,4 +105,12 @@ function requireOriginalAccount(req, res, next) {
   next();
 }
 
-module.exports = { requireSession, requireWriteAccess, requireOwner, requireOriginalAccount, SESSION_COOKIE_NAME, parseCookies };
+module.exports = {
+  requireSession,
+  requireWriteAccess,
+  requireOwner,
+  requireOriginalAccount,
+  deleteSessionFromRequestCookie,
+  SESSION_COOKIE_NAME,
+  parseCookies,
+};

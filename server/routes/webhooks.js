@@ -277,18 +277,4 @@ router.post("/webflow/:accountId/cms-item-published", async (req, res) => {
   res.json({ received: true, results });
 });
 
-// TEMPORARY: inspect recent raw webhook payloads wxrks actually sent, to
-// design real handling for event types beyond "Project Translation
-// Finished". Returns a list (most recent first) since a single-slot capture
-// was getting overwritten by validation pings before we could inspect real
-// events. Remove once done.
-router.get("/wxrks/debug-last/:accountId", async (req, res) => {
-  try {
-    const history = await store.getDebugWebhookPayload(req.params.accountId);
-    res.json(history.length > 0 ? { history } : { message: "No webhook received yet" });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
 module.exports = router;

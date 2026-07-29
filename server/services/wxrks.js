@@ -19,9 +19,9 @@ function isTokenValid(session) {
  * This account's own wxrks credentials, or the developer's own env-
  * configured ones if this IS the developer's own (original) account --
  * every other account with no stored connection gets a WXRKS_NOT_CONNECTED
- * error instead of silently reusing someone else's credentials (mirrors
- * services/webflow.js's resolveConnection(), added in Phase 2, but with no
- * env-var fallback for any account other than the original one).
+ * error instead of silently reusing someone else's credentials (same
+ * original-account-only fallback as services/webflow.js's
+ * resolveConnection()).
  */
 async function resolveConnection() {
   const accountContext = require("./accountContext");

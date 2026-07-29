@@ -1322,6 +1322,10 @@ async function advanceAutomationCheckpoint(automation, isoTimestamp) {
 function createSyncJob(job) {
   syncJobs.set(job.id, {
     id: job.id,
+    // Ownership for routes/sync.js's shared /jobs/:jobId endpoints -- jobIds
+    // are unguessable uuids, but that alone shouldn't be the only thing
+    // keeping one account from reading/cancelling another account's job.
+    accountId: job.accountId || null,
     mode: job.mode,
     total: job.total,
     wxrksProjectUUID: job.wxrksProjectUUID,

@@ -63,7 +63,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     });
 
     const jobId = crypto.randomUUID();
-    store.createSyncJob({ id: jobId, mode: "components-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.createSyncJob({ id: jobId, accountId, mode: "components-item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
     store.recordActivity(accountId, req.user.id, "sync.components_item", { itemCount: ids.length }).catch(() => {});
 
     res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });

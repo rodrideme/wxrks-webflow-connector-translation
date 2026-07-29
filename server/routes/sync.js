@@ -74,7 +74,7 @@ router.post("/item", requireWriteAccess, async (req, res) => {
     });
 
     const jobId = crypto.randomUUID();
-    store.createSyncJob({ id: jobId, mode: "item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.createSyncJob({ id: jobId, accountId, mode: "item", total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
     store.recordActivity(accountId, req.user.id, "sync.item", { collectionName: collection.displayName, itemCount: ids.length }).catch(() => {});
 
     res.json({ jobId, total: ids.length, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
@@ -194,7 +194,7 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
     });
 
     const jobId = crypto.randomUUID();
-    store.createSyncJob({ id: jobId, mode: "combined", total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
+    store.createSyncJob({ id: jobId, accountId, mode: "combined", total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
     store.recordActivity(accountId, req.user.id, "sync.combined", { groupCount: groups.length, itemCount: totalItems }).catch(() => {});
 
     res.json({ jobId, total: totalItems, wxrksProjectUUID: project.uuid, orgUnitUUID, targetLocales });
@@ -318,18 +318,21 @@ router.post("/combined", requireWriteAccess, async (req, res) => {
  * Shared job polling/cancel endpoints for every one-time send (CMS item,
  * pages item, components item) -- store.js's job tracking is keyed purely
  * by jobId (a random uuid), not scoped to which route created it, so one
- * pair of endpoints covers all three kinds.
+ * pair of endpoints covers all three kinds. Ownership IS checked though:
+ * a foreign account's jobId gets the same 404 as a missing one (don't
+ * leak that the job exists), and cancel -- a cross-account write -- only
+ * happens after the check passes.
  */
 router.get("/jobs/:jobId", (req, res) => {
   const job = store.getSyncJob(req.params.jobId);
-  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (!job || job.accountId !== req.account.id) return res.status(404).json({ error: "Job not found" });
   res.json(job);
 });
 
 router.post("/jobs/:jobId/cancel", (req, res) => {
-  const job = store.cancelSyncJob(req.params.jobId);
-  if (!job) return res.status(404).json({ error: "Job not found" });
-  res.json(job);
+  const job = store.getSyncJob(req.params.jobId);
+  if (!job || job.accountId !== req.account.id) return res.status(404).json({ error: "Job not found" });
+  res.json(store.cancelSyncJob(req.params.jobId));
 });
 
 /**

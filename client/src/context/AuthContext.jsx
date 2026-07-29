@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import api from "../services/api.js";
+import dataCache from "../services/dataCache.js";
 
 const AuthContext = createContext(null);
 
@@ -17,8 +18,18 @@ export function AuthProvider({ children }) {
   const refresh = useCallback(() => {
     return api
       .getMe()
-      .then(({ user, account, accounts }) => setState({ loading: false, user, account, accounts: accounts || [] }))
-      .catch(() => setState({ loading: false, user: null, account: null, accounts: [] }));
+      .then(({ user, account, accounts }) => {
+        // BEFORE setState, so every page effect that mounts as a result of
+        // this state flip already reads/writes the cache under the right
+        // account's namespace (and an account CHANGE wipes the previous
+        // account's entries -- see dataCache.setNamespace).
+        dataCache.setNamespace(account?.id || null);
+        setState({ loading: false, user, account, accounts: accounts || [] });
+      })
+      .catch(() => {
+        dataCache.setNamespace(null);
+        setState({ loading: false, user: null, account: null, accounts: [] });
+      });
   }, []);
 
   useEffect(() => {
@@ -26,7 +37,13 @@ export function AuthProvider({ children }) {
   }, [refresh]);
 
   useEffect(() => {
-    api.onUnauthorized = () => setState({ loading: false, user: null, account: null, accounts: [] });
+    api.onUnauthorized = () => {
+      // A revoked/expired session must not leave this account's data warm
+      // for whoever logs in next in this tab.
+      dataCache.clearAll();
+      dataCache.setNamespace(null);
+      setState({ loading: false, user: null, account: null, accounts: [] });
+    };
     return () => {
       api.onUnauthorized = null;
     };
@@ -34,6 +51,8 @@ export function AuthProvider({ children }) {
 
   async function logout() {
     await api.logout().catch(() => {});
+    dataCache.clearAll();
+    dataCache.setNamespace(null);
     setState({ loading: false, user: null, account: null, accounts: [] });
   }
 

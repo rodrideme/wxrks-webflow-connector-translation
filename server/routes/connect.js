@@ -22,7 +22,7 @@ const tokenCrypto = require("../services/tokenCrypto");
 const webflowManualToken = require("../services/webflowManualToken");
 const passwordHash = require("../services/passwordHash");
 const { createRateLimiter } = require("../middleware/rateLimit");
-const { SESSION_COOKIE_NAME } = require("../middleware/auth");
+const { SESSION_COOKIE_NAME, deleteSessionFromRequestCookie } = require("../middleware/auth");
 const { setCookie, SESSION_MAX_AGE_MS } = require("./auth");
 
 const router = express.Router();
@@ -172,11 +172,10 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
     let primaryAccount;
     if (isTeamMemberInvite) {
       // Joining an existing account directly -- role is always "member",
-      // never computed via listAccountsForUser().length === 0 below (that
-      // logic answers "is this your first account ever," irrelevant here:
-      // landing in someone else's existing account should never make you
-      // its owner). No new webflow_connections row -- the account already
-      // has its own.
+      // never computed via the first-member check below (a team_member
+      // invite lands you in someone else's existing account, which should
+      // never make you its owner). No new webflow_connections row -- the
+      // account already has its own.
       primaryAccount = await store.getAccount(invite.accountId);
       await store.upsertAccountMembership(primaryAccount.id, user.id, "member");
     } else {
@@ -186,7 +185,9 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
       for (const site of sites) {
         let account = await store.getAccountByWebflowSiteId(site.id);
         if (!account) account = await store.createAccount({ webflowSiteId: site.id });
-        const role = (await store.listAccountsForUser(user.id)).length === 0 ? "owner" : "member";
+        // Owner of any account you're the FIRST member of (per-account, same
+        // fix as the OAuth callback) -- not "is this your first account ever".
+        const role = (await store.listAccountMembers(account.id)).length === 0 ? "owner" : "member";
         await store.upsertAccountMembership(account.id, user.id, role);
         if (!primaryAccount) primaryAccount = account;
 
@@ -208,6 +209,7 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
     store.attributeInviteRedemption(redeemed.id, { redeemedByUserId: user.id, redeemedAccountId: primaryAccount.id }).catch(() => {});
     store.recordActivity(primaryAccount.id, user.id, isTeamMemberInvite ? "team_invite.redeemed" : "invite.redeemed", {}).catch(() => {});
 
+    await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     const sessionId = await store.createSession(user.id, primaryAccount.id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });

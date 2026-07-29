@@ -11,10 +11,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // (see store.getWebflowConnection), identified implicitly via
 // accountContext -- see that module's docstring for why this is an
 // AsyncLocalStorage-based context rather than an explicit parameter here.
-// Falls back to the static env-configured token/site for any account that
-// has never connected its own Webflow site via OAuth (in practice, just
-// "Account #1", migrated from this app's original single-tenant setup
-// before accounts existed at all) -- lazy-required to avoid a circular
+// Falls back to the static env-configured token/site ONLY for the original
+// account (migrated from this app's single-tenant setup before accounts
+// existed at all) -- mirroring services/wxrks.js's resolveConnection().
+// Every other account with no active connection row gets a coded error:
+// the old unconditional fallback silently pointed such an account at the
+// OPERATOR's own site, meaning its reads listed -- and its sync write-backs
+// PATCHed -- the wrong site's CMS. Lazy-required to avoid a circular
 // require (store.js itself requires this file for a few constants).
 async function resolveConnection() {
   const accountContext = require("./accountContext");
@@ -22,7 +25,17 @@ async function resolveConnection() {
   const accountId = accountContext.getAccountId();
   const connection = await store.getWebflowConnection(accountId);
   if (connection) return connection;
-  return { accessToken: process.env.WEBFLOW_API_TOKEN, webflowSiteId: process.env.WEBFLOW_SITE_ID };
+
+  const account = await store.getAccount(accountId);
+  if (account?.webflowSiteId && account.webflowSiteId === process.env.WEBFLOW_SITE_ID) {
+    return { accessToken: process.env.WEBFLOW_API_TOKEN, webflowSiteId: process.env.WEBFLOW_SITE_ID };
+  }
+
+  const err = new Error(
+    "This account's Webflow connection is missing or inactive. Sign in with Webflow again (or use a new environment invite) to reconnect it."
+  );
+  err.code = "WEBFLOW_NOT_CONNECTED";
+  throw err;
 }
 
 async function client() {

@@ -205,6 +205,7 @@ function startFirstSyncJob(automation) {
   const jobId = crypto.randomUUID();
   store.createSyncJob({
     id: jobId,
+    accountId: automation.accountId,
     mode: "automation",
     total: 0,
     wxrksProjectUUID: null,

@@ -12,6 +12,7 @@ import Runs from "./pages/Runs.jsx";
 import Teams from "./pages/Teams.jsx";
 import Environments from "./pages/Environments.jsx";
 import Settings from "./pages/Settings.jsx";
+import SelectSite from "./pages/SelectSite.jsx";
 import { useAuth } from "./context/AuthContext.jsx";
 
 export default function App() {
@@ -34,6 +35,9 @@ export default function App() {
       <Route path="/connect" element={<Connect />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      {/* Full-screen like /fast (its own layout, no NavBar shell) -- the
+          server redirects here straight after a multi-account OAuth login. */}
+      <Route path="/select-site" element={<SelectSite />} />
       <Route
         path="*"
         element={
