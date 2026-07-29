@@ -75,6 +75,24 @@ function enqueueComponent({ automation, component }) {
   });
 }
 
+// For accountReset.js: drops queued-but-unflushed entries for automations
+// that are about to be deleted, so an already-enqueued item can't flush
+// into wxrks (and recreate project_mappings rows) moments after the purge.
+// flush() itself also bails when getAutomationByIdUnscoped comes back
+// empty, but only AFTER taking the batch -- discarding here keeps the
+// pending map itself clean rather than relying on that backstop.
+function discardPendingForAutomations(automationIds) {
+  const ids = new Set(automationIds);
+  let discarded = 0;
+  for (const [key, entry] of pending) {
+    if (ids.has(entry.automationId)) {
+      pending.delete(key);
+      discarded += 1;
+    }
+  }
+  return discarded;
+}
+
 /**
  * Formats a UTC instant as "HH:mm" wall-clock time (or, with `part:
  * "weekday"`, a short weekday name like "Mon") in the given IANA timezone --
@@ -403,6 +421,7 @@ module.exports = {
   enqueue,
   enqueuePage,
   enqueueComponent,
+  discardPendingForAutomations,
   startFlushLoop,
   stopFlushLoop,
   flush,

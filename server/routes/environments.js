@@ -15,6 +15,9 @@
 
 const express = require("express");
 const store = require("../store");
+const webflow = require("../services/webflow");
+const accountContext = require("../services/accountContext");
+const accountReset = require("../services/accountReset");
 const { requireOwner, requireOriginalAccount } = require("../middleware/auth");
 
 const router = express.Router();
@@ -92,6 +95,83 @@ router.post("/:id/revoke", requireOwner, async (req, res) => {
     store.recordActivity(req.account.id, req.user.id, "invite.revoke", {}).catch(() => {});
     const invites = await store.listInvites(req.account.id, "environment");
     res.json({ environments: invites.map(toSummary) });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/environments/accounts
+ * Every connected environment (account), for the reset panel below --
+ * distinct from GET / above, which lists provisioning *invites* (an
+ * account can also exist with no invite at all, via the direct OAuth
+ * flow). accounts.name is never populated in practice, so each site's
+ * human-recognizable name is resolved live from Webflow, best-effort --
+ * and ONLY for accounts that hold their own webflow_connections row:
+ * webflow.js's resolveConnection() falls back to the operator's env-var
+ * token for accounts without one, which would mislabel a broken account
+ * with the operator's own site name.
+ */
+router.get("/accounts", requireOwner, async (req, res) => {
+  try {
+    const accounts = await store.listEnvironmentAccounts();
+    const enriched = await Promise.all(
+      accounts.map(async (account) => {
+        const isOriginal = accountReset.isOriginalAccount(account);
+        let site = null;
+        if (isOriginal || (await store.getWebflowConnection(account.id))) {
+          site = await accountContext
+            .run(account.id, () => webflow.getSiteLocales())
+            .then((locales) => locales.site)
+            .catch(() => null);
+        }
+        return {
+          id: account.id,
+          webflowSiteId: account.webflowSiteId,
+          status: account.status,
+          createdAt: account.createdAt,
+          isOriginalAccount: isOriginal,
+          siteName: site?.displayName || site?.shortName || account.name || null,
+          siteUrl: site?.url || null,
+        };
+      })
+    );
+    res.json({ accounts: enriched });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/environments/accounts/:accountId/reset
+ * body: { confirmSiteId }
+ * Hard-resets one environment back to "never connected" (see
+ * services/accountReset.js for exactly what is and isn't touched). The
+ * only route in the app that deliberately acts on an account other than
+ * the caller's own -- hence the stacked guards: operator-only
+ * (requireOriginalAccount on the router) + owner role + the target's
+ * webflow_site_id echoed back as explicit confirmation, so a stale UI or
+ * mis-built URL can never erase the wrong environment.
+ */
+router.post("/accounts/:accountId/reset", requireOwner, async (req, res) => {
+  try {
+    const target = await store.getAccount(req.params.accountId);
+    if (!target) return res.status(404).json({ error: "No such environment" });
+    if (accountReset.isOriginalAccount(target)) {
+      return res.status(400).json({ error: "The original (operator) account can't be reset" });
+    }
+    const { confirmSiteId } = req.body || {};
+    if (!confirmSiteId || confirmSiteId !== target.webflowSiteId) {
+      return res.status(400).json({ error: "Confirmation doesn't match this environment's Webflow site id" });
+    }
+
+    const result = await accountReset.resetEnvironment(target.id);
+    // Logged against the OPERATOR's account -- the target's own activity
+    // log was just erased with everything else.
+    store
+      .recordActivity(req.account.id, req.user.id, "environment.reset", { webflowSiteId: target.webflowSiteId })
+      .catch(() => {});
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

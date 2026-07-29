@@ -32,10 +32,16 @@ export default function Environments() {
   const [revokingId, setRevokingId] = useState(null);
   const [timezone, setTimezone] = useState(undefined);
   const [error, setError] = useState(null);
+  const [accounts, setAccounts] = useState(null);
+  const [confirmingId, setConfirmingId] = useState(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [resettingId, setResettingId] = useState(null);
+  const [resetResult, setResetResult] = useState(null);
 
   useEffect(() => {
     if (!account?.isOriginalAccount) return;
     api.listEnvironments().then((res) => setEnvironments(res.environments)).catch((err) => setError(err.message));
+    api.listEnvironmentAccounts().then((res) => setAccounts(res.accounts)).catch((err) => setError(err.message));
     api.getSettings().then((s) => setTimezone(s.timezone)).catch(() => {});
   }, [account?.isOriginalAccount]);
 
@@ -61,6 +67,36 @@ export default function Environments() {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     });
+  }
+
+  // What the operator must type to arm the reset button -- the site's
+  // human-readable name when Webflow resolved one, else the raw site id.
+  function confirmPhraseFor(env) {
+    return env.siteName || env.webflowSiteId;
+  }
+
+  function startConfirming(env) {
+    setConfirmingId(env.id);
+    setConfirmText("");
+    setResetResult(null);
+    setError(null);
+  }
+
+  async function resetEnvironmentData(env) {
+    setResettingId(env.id);
+    setError(null);
+    try {
+      const result = await api.resetEnvironmentAccount(env.id, env.webflowSiteId);
+      setResetResult({ env, result });
+      setConfirmingId(null);
+      setConfirmText("");
+      const res = await api.listEnvironmentAccounts();
+      setAccounts(res.accounts);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResettingId(null);
+    }
   }
 
   async function revoke(id) {
@@ -169,6 +205,101 @@ export default function Environments() {
                 >
                   Revoke
                 </button>
+              )}
+            </div>
+          ))
+        )}
+      </Card>
+
+      <div className="mb-2 mt-8">
+        <h2 className="text-[15px] font-semibold tracking-tight text-ink">Connected environments</h2>
+        <p className="mt-0.5 text-[13px] text-ink-faint">
+          Every account currently connected to this app. Resetting one erases all of its connector
+          data -- runs, history, automations, settings, members, and credentials -- and removes this
+          app's webhooks from the Webflow site, so the next "Sign in with Webflow" goes through the
+          full first-time setup again. The Webflow site itself (content, locales, published
+          translations) is not touched, and projects already created on wxrks stay there.
+        </p>
+      </div>
+
+      {resetResult && (
+        <p className="mb-3 text-sm font-medium text-ink">
+          Environment {confirmPhraseFor(resetResult.env)} was reset -- it now looks like a brand-new
+          connection.
+          {resetResult.result?.webhookTeardown?.ok === false &&
+            " (Warning: its Webflow webhooks couldn't be removed automatically -- delete them in Webflow's site settings.)"}
+        </p>
+      )}
+
+      <Card>
+        {accounts === null ? (
+          <p className="p-4 text-sm text-ink-faint">Loading…</p>
+        ) : accounts.length === 0 ? (
+          <p className="p-4 text-sm text-ink-faint">No environments connected yet.</p>
+        ) : (
+          accounts.map((env) => (
+            <div key={env.id} className="border-t border-border px-4 py-3 first:border-t-0">
+              <div className="flex items-center gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium text-ink">
+                    {env.siteName || "Unknown site"}
+                    {env.isOriginalAccount && (
+                      <span className="ml-2 align-middle text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                        This account
+                      </span>
+                    )}
+                  </div>
+                  <div className="truncate font-mono text-xs text-ink-faint">{env.webflowSiteId}</div>
+                </div>
+                <Chip>{env.status === "active" ? "Connected" : env.status}</Chip>
+                <span className="w-36 flex-none text-right text-xs text-ink-faint">
+                  {formatDateTime(env.createdAt, timezone)}
+                </span>
+                {!env.isOriginalAccount && confirmingId !== env.id && (
+                  <button
+                    type="button"
+                    onClick={() => startConfirming(env)}
+                    className="flex-none text-xs font-medium text-status-error-fg hover:underline"
+                  >
+                    Reset…
+                  </button>
+                )}
+              </div>
+
+              {confirmingId === env.id && (
+                <div className="mt-3 rounded-md border border-border bg-surface-sunken p-3">
+                  <p className="mb-2 text-xs text-ink">
+                    This permanently erases all connector data for{" "}
+                    <span className="font-semibold">{confirmPhraseFor(env)}</span>. Type{" "}
+                    <span className="font-mono font-semibold">{confirmPhraseFor(env)}</span> to
+                    confirm.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={confirmText}
+                      onChange={(e) => setConfirmText(e.target.value)}
+                      placeholder={confirmPhraseFor(env)}
+                      className="w-full max-w-xs rounded-md border border-border-strong bg-surface px-3 py-1.5 font-mono text-xs text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => resetEnvironmentData(env)}
+                      disabled={confirmText !== confirmPhraseFor(env) || resettingId === env.id}
+                      className="flex-none rounded-md bg-status-error-fg px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {resettingId === env.id ? "Resetting…" : "Erase environment data"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(null)}
+                      disabled={resettingId === env.id}
+                      className="flex-none text-xs font-medium text-ink-faint hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           ))

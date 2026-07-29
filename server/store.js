@@ -588,6 +588,74 @@ async function listAllAccounts() {
   return rows.map(accountRowToObject);
 }
 
+// Unlike listAllAccounts above, includes non-active accounts too -- the
+// Environments page's admin listing must still show (and allow retrying a
+// reset of) an account left in status 'resetting' by a failed purge, which
+// the background loops rightly can't see anymore.
+async function listEnvironmentAccounts() {
+  const { rows } = await db.query(`SELECT * FROM accounts ORDER BY created_at ASC`);
+  return rows.map(accountRowToObject);
+}
+
+async function setAccountStatus(accountId, status) {
+  await db.query(`UPDATE accounts SET status = $1, updated_at = now() WHERE id = $2`, [status, accountId]);
+}
+
+/**
+ * Deletes one account and every row of connector data under it, in one
+ * transaction on a single dedicated connection (db.query grabs an arbitrary
+ * pooled connection per call, so BEGIN/COMMIT must not go through it).
+ *
+ * project_mappings/automations/app_state must be deleted explicitly and
+ * FIRST: their account_id FKs were retrofitted (see db.js's migrate) with
+ * no ON DELETE clause, so deleting the account while they still have rows
+ * is an FK violation. Everything else (account_users, sessions,
+ * webflow/wxrks/llm_connections, activity_log, invites) cascades off the
+ * accounts delete. Users are global rows shared across accounts, so only
+ * the ones whose ONLY membership was this account are deleted -- a user who
+ * is also a member of another account (e.g. the operator) survives.
+ *
+ * Data-only: anything living outside Postgres (Webflow-side webhook
+ * registrations, queued auto-sync work) is services/accountReset.js's job,
+ * and must be handled BEFORE this runs -- teardown reads the webhook ids
+ * out of app_state, and the Webflow API token out of webflow_connections,
+ * both of which this deletes.
+ */
+async function purgeAccount(accountId) {
+  const client = await db.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const memberIds = (
+      await client.query(`SELECT user_id FROM account_users WHERE account_id = $1`, [accountId])
+    ).rows.map((r) => r.user_id);
+
+    const deleted = {};
+    deleted.runs = (await client.query(`DELETE FROM project_mappings WHERE account_id = $1`, [accountId])).rowCount;
+    deleted.automations = (await client.query(`DELETE FROM automations WHERE account_id = $1`, [accountId])).rowCount;
+    deleted.appState = (await client.query(`DELETE FROM app_state WHERE account_id = $1`, [accountId])).rowCount;
+    deleted.accounts = (await client.query(`DELETE FROM accounts WHERE id = $1`, [accountId])).rowCount;
+    deleted.users =
+      memberIds.length === 0
+        ? 0
+        : (
+            await client.query(
+              `DELETE FROM users u
+               WHERE u.id = ANY($1)
+                 AND NOT EXISTS (SELECT 1 FROM account_users au WHERE au.user_id = u.id)`,
+              [memberIds]
+            )
+          ).rowCount;
+
+    await client.query("COMMIT");
+    return deleted;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function getUserByWebflowUserId(webflowUserId) {
   const { rows } = await db.query(`SELECT * FROM users WHERE webflow_user_id = $1`, [webflowUserId]);
   return rows[0] ? userRowToObject(rows[0]) : undefined;
@@ -1369,6 +1437,9 @@ module.exports = {
   getAccount,
   createAccount,
   listAllAccounts,
+  listEnvironmentAccounts,
+  setAccountStatus,
+  purgeAccount,
   getUserByWebflowUserId,
   upsertUser,
   getUserForLogin,

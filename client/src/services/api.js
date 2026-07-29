@@ -163,6 +163,9 @@ const api = {
   listEnvironments: () => request("/environments"),
   createEnvironment: (payload = {}) => request("/environments", { method: "POST", body: JSON.stringify(payload) }),
   revokeEnvironment: (id) => request(`/environments/${id}/revoke`, { method: "POST" }),
+  listEnvironmentAccounts: () => request("/environments/accounts"),
+  resetEnvironmentAccount: (accountId, confirmSiteId) =>
+    request(`/environments/accounts/${accountId}/reset`, { method: "POST", body: JSON.stringify({ confirmSiteId }) }),
   checkInvite: (token) => request(`/connect/invite/${encodeURIComponent(token)}`),
   redeemInvite: (payload) => request("/connect/redeem", { method: "POST", body: JSON.stringify(payload) }),
   loginWithPassword: (email, password) => request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
