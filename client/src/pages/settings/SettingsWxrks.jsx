@@ -25,7 +25,7 @@ const SUB_TABS = [
  * wizard, automations) will work.
  */
 export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, onChange, settings, markDirty, saveFields }) {
-  const { canEdit } = useAuth();
+  const { canEdit, refresh } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const subTab = SUB_TABS.some((t) => t.value === searchParams.get("subtab")) ? searchParams.get("subtab") : "keys";
 
@@ -94,6 +94,10 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
       setSecret("");
       setSaved(true);
       onChange?.();
+      // account.wxrksConnected (AuthContext, from /auth/me) gates the Send
+      // wizard -- without this, the modal keeps saying "not connected"
+      // until a hard reload, since SPA navigation never refetches /me.
+      refresh();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -108,6 +112,8 @@ export default function SettingsWxrks({ wxrksConnected, wxrksAccessKeyMasked, on
     try {
       await api.deleteWxrksConnection();
       onChange?.();
+      // Same as save(): flip account.wxrksConnected off everywhere now.
+      refresh();
     } catch (err) {
       setError(err.message);
     } finally {
