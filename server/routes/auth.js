@@ -97,10 +97,13 @@ router.get("/callback", async (req, res) => {
       throw new Error("Webflow did not return an access token");
     }
 
-    const [introspection, authorizedUser] = await Promise.all([
+    const [introspection, authorizedUser, authorizedSites] = await Promise.all([
       webflowOAuth.introspectToken(accessToken),
       webflowOAuth.getAuthorizedUser(accessToken),
+      // Names only -- login must not fail because this listing did.
+      webflowOAuth.listAuthorizedSites(accessToken).catch(() => []),
     ]);
+    const siteNameById = new Map(authorizedSites.map((s) => [s.id, s.displayName || s.shortName || null]));
 
     const siteIds = introspection?.authorization?.authorizedTo?.siteIds || [];
     if (siteIds.length === 0) {
@@ -116,15 +119,26 @@ router.get("/callback", async (req, res) => {
 
     // One grant can in principle cover more than one site (Webflow's
     // consent screen allows selecting several) -- resolve/create an
-    // account per site, membership for all of them, land the session on
-    // the first. A user with more than one account gets an account
-    // switcher (GET /api/auth/me returns the full list).
+    // account per site, membership for all of them. Which account the
+    // session lands on is decided AFTER the loop (see below); this
+    // snapshot of pre-callback memberships is what lets it tell "a site
+    // this login just connected" apart from "a site re-listed by the
+    // cumulative grant".
+    const membershipIdsBefore = new Set((await store.listAccountsForUser(user.id)).map((a) => a.id));
+    const newlyLinkedAccounts = [];
     let primaryAccount = null;
     for (const siteId of siteIds) {
+      const siteName = siteNameById.get(siteId) || null;
       let account = await store.getAccountByWebflowSiteId(siteId);
       if (!account) {
-        account = await store.createAccount({ webflowSiteId: siteId });
+        account = await store.createAccount({ webflowSiteId: siteId, name: siteName });
+      } else if (siteName && siteName !== account.name) {
+        // Refresh on every login -- the site can be renamed on Webflow's
+        // side, and the switcher/picker read accounts.name.
+        await store.setAccountName(account.id, siteName);
+        account = { ...account, name: siteName };
       }
+      if (!membershipIdsBefore.has(account.id)) newlyLinkedAccounts.push(account);
       // Owner of any account you're the FIRST member of -- a per-account
       // check, not "is this your first account ever": a returning user
       // authorizing a brand-new site used to land as mere `member` of an
@@ -152,23 +166,31 @@ router.get("/callback", async (req, res) => {
       });
     }
 
+    // Which account does this session land on? `authorizedTo.siteIds` is
+    // the CUMULATIVE grant -- every site this user ever authorized, with
+    // NO field marking what they just picked on this consent pass (and on
+    // a re-auth Webflow may skip the consent screen entirely) -- so
+    // siteIds order carries no intent signal at all; blindly landing on
+    // siteIds[0] was the "logged into site B, landed back in site A" bug.
+    // What this callback CAN know: which sites became connected to this
+    // user during THIS login. Exactly one newly linked account is an
+    // unambiguous "this is what I came for" (first-time connects, a fresh
+    // reconnect after an environment reset, a reviewer's install) -- land
+    // straight on it. Anything else with multiple memberships is genuinely
+    // ambiguous: land provisionally on siteIds[0] (a verified membership
+    // either way) and send them to the in-app picker, whose
+    // switch-account call re-points the session. The session must exist
+    // before the redirect -- /select-site lists accounts via /api/auth/me.
+    const landingAccount = newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : primaryAccount;
+
     await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
-    const sessionId = await store.createSession(user.id, primaryAccount.id, expiresAt);
+    const sessionId = await store.createSession(user.id, landingAccount.id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
 
-    // Never guess which account a multi-account user came for:
-    // `authorizedTo.siteIds` is the CUMULATIVE grant (every site this user
-    // ever authorized for this app -- confirmed the source of "logged into
-    // site B, landed back in site A"), so `primaryAccount` (siteIds[0]) is
-    // only a provisional landing the user is a verified member of either
-    // way. With more than one membership (counted across invites too, not
-    // just this grant), land on the in-app picker, whose switch-account
-    // call re-points the session at the real choice. The session must
-    // exist before the redirect -- /select-site lists accounts via
-    // GET /api/auth/me.
     const memberships = await store.listAccountsForUser(user.id);
-    res.redirect(memberships.length > 1 ? "/select-site" : "/");
+    const needsPicker = newlyLinkedAccounts.length !== 1 && memberships.length > 1;
+    res.redirect(needsPicker ? "/select-site" : "/");
   } catch (err) {
     console.error("OAuth callback failed:", err.response?.data || err.message);
     res.status(502).json({ error: "Sign-in failed. Please try again." });

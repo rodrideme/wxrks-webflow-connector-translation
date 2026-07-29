@@ -87,4 +87,19 @@ async function getAuthorizedUser(accessToken) {
   return data;
 }
 
-module.exports = { buildAuthorizeUrl, exchangeCodeForToken, introspectToken, getAuthorizedUser };
+/**
+ * The sites this token's grant can access, WITH their human names --
+ * introspection only returns bare siteIds, but the account switcher/site
+ * picker need real names (accounts.name was showing raw site ids until
+ * this). One call covers every site in the grant. Same endpoint shape as
+ * services/webflowManualToken.js's listSitesForToken:
+ * [{ id, displayName, shortName, ... }].
+ */
+async function listAuthorizedSites(accessToken) {
+  const { data } = await axios.get(`${API_BASE}/sites`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return data?.sites || [];
+}
+
+module.exports = { buildAuthorizeUrl, exchangeCodeForToken, introspectToken, getAuthorizedUser, listAuthorizedSites };

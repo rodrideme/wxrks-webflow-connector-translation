@@ -601,6 +601,17 @@ async function setAccountStatus(accountId, status) {
   await db.query(`UPDATE accounts SET status = $1, updated_at = now() WHERE id = $2`, [status, accountId]);
 }
 
+// Keeps accounts.name in sync with the Webflow site's real displayName --
+// refreshed on every OAuth login / invite redemption (and lazily by the
+// Environments listing), since a site can be renamed on Webflow's side at
+// any time. Everything that shows an account to a human (the sidebar
+// switcher, /select-site, /api/auth/me) reads this column and was showing
+// raw site ids while it stayed NULL.
+async function setAccountName(accountId, name) {
+  if (!name) return;
+  await db.query(`UPDATE accounts SET name = $1, updated_at = now() WHERE id = $2`, [name, accountId]);
+}
+
 /**
  * Deletes one account and every row of connector data under it, in one
  * transaction on a single dedicated connection (db.query grabs an arbitrary
@@ -1443,6 +1454,7 @@ module.exports = {
   listAllAccounts,
   listEnvironmentAccounts,
   setAccountStatus,
+  setAccountName,
   purgeAccount,
   getUserByWebflowUserId,
   upsertUser,

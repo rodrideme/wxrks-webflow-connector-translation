@@ -183,8 +183,13 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
       // per granted site, membership for all, land the session on the first.
       primaryAccount = null;
       for (const site of sites) {
+        const siteName = site.displayName || site.shortName || null;
         let account = await store.getAccountByWebflowSiteId(site.id);
-        if (!account) account = await store.createAccount({ webflowSiteId: site.id });
+        if (!account) {
+          account = await store.createAccount({ webflowSiteId: site.id, name: siteName });
+        } else if (siteName && siteName !== account.name) {
+          await store.setAccountName(account.id, siteName);
+        }
         // Owner of any account you're the FIRST member of (per-account, same
         // fix as the OAuth callback) -- not "is this your first account ever".
         const role = (await store.listAccountMembers(account.id)).length === 0 ? "owner" : "member";
