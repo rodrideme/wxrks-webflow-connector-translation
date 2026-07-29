@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import api from "../services/api.js";
 import dataCache from "../services/dataCache.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -21,6 +21,11 @@ export default function SelectSite() {
   const { loading, user, account, accounts } = useAuth();
   const [submittingId, setSubmittingId] = useState(null);
   const [error, setError] = useState(null);
+  // Set by the OAuth callback's redirect only when the provisional landing
+  // really is the user's previous login (users.last_account_id) -- a
+  // first-ever multi-site login has no history worth tagging.
+  const [searchParams] = useSearchParams();
+  const showLastUsed = searchParams.get("last") === "1";
 
   if (loading) {
     return (
@@ -79,8 +84,8 @@ export default function SelectSite() {
                   <div className="truncate text-[13.5px] font-medium text-ink">{a.name || host || "Unnamed site"}</div>
                   {host && <div className="truncate text-[11px] text-ink-faint">{host}</div>}
                 </div>
-                {a.id === account.id && (
-                  <span className="flex-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Current</span>
+                {showLastUsed && a.id === account.id && (
+                  <span className="flex-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Last used</span>
                 )}
                 {submittingId === a.id && <span className="flex-none text-[11px] text-ink-faint">Switching…</span>}
               </button>

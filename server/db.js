@@ -235,6 +235,15 @@ async function migrate() {
   // site picker show it instead of ever surfacing a raw webflow_site_id.
   await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS site_url TEXT`);
 
+  // Which account this user's most recent session landed on (stamped by
+  // store.createSession) -- survives logout (which deletes the session
+  // rows), so the post-OAuth landing/"Last used" picker tag can point at
+  // where the user actually was last time. SET NULL when that account is
+  // purged (services/accountReset.js).
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL`
+  );
+
   // Teams: per-member read/write gating, independent of `role` (which only
   // governs who can manage the team itself, below). Webflow's own API has
   // no way to tell this app a collaborator's site role (confirmed live

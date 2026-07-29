@@ -2,6 +2,8 @@ const crypto = require("crypto");
 const express = require("express");
 const store = require("../store");
 const webflowOAuth = require("../services/webflowOAuth");
+const webflow = require("../services/webflow");
+const accountContext = require("../services/accountContext");
 const tokenCrypto = require("../services/tokenCrypto");
 const passwordHash = require("../services/passwordHash");
 const email = require("../services/email");
@@ -188,23 +190,22 @@ router.get("/callback", async (req, res) => {
     //     login -- an unambiguous "this is what I came for" (first-time
     //     connects, a fresh reconnect after an environment reset, a
     //     reviewer's install). Land straight on it, no picker.
-    //  2. Otherwise, where this browser was last logged in (read from the
-    //     old session before it's deleted below, if the new login is a
-    //     member of it) -- so the picker's "Current" means "where you were
-    //     last time" and dismissing it keeps you there.
-    //  3. Only then siteIds[0] (a verified membership either way).
+    //  2. Otherwise, users.last_account_id -- where this user's previous
+    //     session actually was (stamped by store.createSession; survives
+    //     logout, which deletes the session rows). `user` here was loaded
+    //     by upsertUser BEFORE this login's session overwrites it. The
+    //     picker then tags that row "Last used" (the ?last=1 flag), and
+    //     dismissing the picker keeps the user there.
+    //  3. Only then siteIds[0] (a verified membership either way) -- no
+    //     history to point at, so the picker shows no tag at all.
     // Cases 2/3 with multiple memberships still get the in-app picker,
     // whose switch-account call re-points the session. The session must
     // exist before the redirect -- /select-site lists accounts via
     // /api/auth/me.
-    const previousCookieSessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME];
-    const previousSession = previousCookieSessionId
-      ? await store.getSessionWithUserAndAccount(previousCookieSessionId)
-      : undefined;
     const memberships = await store.listAccountsForUser(user.id);
-    const previousAccount = previousSession ? memberships.find((a) => a.id === previousSession.account.id) : undefined;
+    const lastUsedAccount = user.lastAccountId ? memberships.find((a) => a.id === user.lastAccountId) : undefined;
     const landingAccount =
-      newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : previousAccount || primaryAccount;
+      newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : lastUsedAccount || primaryAccount;
 
     await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
@@ -212,7 +213,8 @@ router.get("/callback", async (req, res) => {
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
 
     const needsPicker = newlyLinkedAccounts.length !== 1 && memberships.length > 1;
-    res.redirect(needsPicker ? "/select-site" : "/");
+    const pickerPath = lastUsedAccount ? "/select-site?last=1" : "/select-site";
+    res.redirect(needsPicker ? pickerPath : "/");
   } catch (err) {
     console.error("OAuth callback failed:", err.response?.data || err.message);
     res.status(502).json({ error: "Sign-in failed. Please try again." });
@@ -409,6 +411,12 @@ router.post("/switch-account", requireSession, async (req, res) => {
   }
 });
 
+// Accounts whose missing name/site_url this process already tried to
+// resolve -- a permanently broken connection shouldn't cost a failing
+// Webflow round trip on every single /me load. Success persists to the
+// accounts row, so a hit never re-runs either.
+const siteInfoBackfillAttempted = new Set();
+
 /**
  * GET /api/auth/me
  * Not behind requireSession (that middleware 401s outright) -- this route
@@ -425,6 +433,36 @@ router.get("/me", async (req, res) => {
   if (!session) return res.json({ user: null, account: null, accounts: [] });
 
   const accounts = await store.listAccountsForUser(session.user.id);
+
+  // Lazy backfill for accounts connected before names/URLs were captured
+  // at login (e.g. environment-invite accounts, whose sites are NOT in
+  // this user's OAuth grant): resolve via each account's OWN stored
+  // Webflow connection and persist, so the switcher/picker never show
+  // "Unnamed site" for anything resolvable.
+  await Promise.all(
+    accounts
+      .filter((a) => (!a.name || !a.siteUrl) && !siteInfoBackfillAttempted.has(a.id))
+      .map(async (a) => {
+        siteInfoBackfillAttempted.add(a.id);
+        try {
+          const { site } = await accountContext.run(a.id, () => webflow.getSiteLocales());
+          const name = site?.displayName || site?.shortName || null;
+          const siteUrl = site?.url || null;
+          if (name || siteUrl) {
+            await store.setAccountSiteInfo(a.id, { name, siteUrl });
+            a.name = name || a.name;
+            a.siteUrl = siteUrl || a.siteUrl;
+            if (session.account.id === a.id) {
+              session.account.name = a.name;
+              session.account.siteUrl = a.siteUrl;
+            }
+          }
+        } catch {
+          // Not connected / dead token -- stays unnamed until reconnected.
+        }
+      })
+  );
+
   res.json({ user: session.user, account: session.account, accounts });
 });
 

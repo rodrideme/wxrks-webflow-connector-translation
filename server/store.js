@@ -560,6 +560,7 @@ function userRowToObject(row) {
     email: row.email,
     firstName: row.first_name,
     lastName: row.last_name,
+    lastAccountId: row.last_account_id,
   };
 }
 
@@ -807,6 +808,12 @@ async function createSession(userId, accountId, expiresAt) {
     accountId,
     expiresAt,
   ]);
+  // Remembered PAST logout (which deletes the session rows themselves) --
+  // every session-issuing path funnels through here (OAuth callback,
+  // password login, invite redemption, switch-account), so this is the
+  // one write that keeps users.last_account_id meaning "where this user
+  // actually was last".
+  await db.query(`UPDATE users SET last_account_id = $1, updated_at = now() WHERE id = $2`, [accountId, userId]);
   return id;
 }
 
