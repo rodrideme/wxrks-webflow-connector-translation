@@ -125,13 +125,15 @@ router.get("/accounts", requireOwner, async (req, res) => {
             .then((locales) => locales.site)
             .catch(() => null);
         }
-        // Lazy backfill: accounts connected before names were captured at
-        // login (or renamed on Webflow's side since) get their
-        // accounts.name refreshed whenever this listing resolves the live
-        // one -- the sidebar switcher and /select-site read that column.
+        // Lazy backfill: accounts connected before names/URLs were
+        // captured at login (or renamed on Webflow's side since) get
+        // accounts.name/site_url refreshed whenever this listing resolves
+        // the live values -- the sidebar switcher and /select-site read
+        // those columns.
         const liveName = site?.displayName || site?.shortName || null;
-        if (liveName && liveName !== account.name) {
-          store.setAccountName(account.id, liveName).catch(() => {});
+        const liveUrl = site?.url || null;
+        if ((liveName && liveName !== account.name) || (liveUrl && liveUrl !== account.siteUrl)) {
+          store.setAccountSiteInfo(account.id, { name: liveName, siteUrl: liveUrl }).catch(() => {});
         }
         return {
           id: account.id,

@@ -229,6 +229,12 @@ async function migrate() {
   await pool.query(`ALTER TABLE project_mappings ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
   await pool.query(`ALTER TABLE automations ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id)`);
 
+  // The site's public URL (custom domain or <shortName>.webflow.io),
+  // captured alongside accounts.name at login/redemption/Environments
+  // listing (see store.setAccountSiteInfo) -- the account switcher and
+  // site picker show it instead of ever surfacing a raw webflow_site_id.
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS site_url TEXT`);
+
   // Teams: per-member read/write gating, independent of `role` (which only
   // governs who can manage the team itself, below). Webflow's own API has
   // no way to tell this app a collaborator's site role (confirmed live

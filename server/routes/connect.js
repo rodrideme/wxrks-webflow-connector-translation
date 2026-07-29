@@ -184,11 +184,14 @@ router.post("/redeem", redeemLimiter, async (req, res) => {
       primaryAccount = null;
       for (const site of sites) {
         const siteName = site.displayName || site.shortName || null;
+        const siteUrl =
+          (site.customDomains?.[0]?.url && `https://${site.customDomains[0].url}`) ||
+          (site.shortName ? `https://${site.shortName}.webflow.io` : null);
         let account = await store.getAccountByWebflowSiteId(site.id);
         if (!account) {
-          account = await store.createAccount({ webflowSiteId: site.id, name: siteName });
-        } else if (siteName && siteName !== account.name) {
-          await store.setAccountName(account.id, siteName);
+          account = await store.createAccount({ webflowSiteId: site.id, name: siteName, siteUrl });
+        } else if ((siteName && siteName !== account.name) || (siteUrl && siteUrl !== account.siteUrl)) {
+          await store.setAccountSiteInfo(account.id, { name: siteName, siteUrl });
         }
         // Owner of any account you're the FIRST member of (per-account, same
         // fix as the OAuth callback) -- not "is this your first account ever".

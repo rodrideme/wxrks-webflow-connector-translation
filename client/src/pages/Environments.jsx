@@ -249,7 +249,11 @@ export default function Environments() {
                       </span>
                     )}
                   </div>
-                  <div className="truncate font-mono text-xs text-ink-faint">{env.webflowSiteId}</div>
+                  {env.siteUrl ? (
+                    <div className="truncate text-xs text-ink-faint">{env.siteUrl.replace(/^https?:\/\//, "")}</div>
+                  ) : (
+                    <div className="truncate font-mono text-xs text-ink-faint">{env.webflowSiteId}</div>
+                  )}
                 </div>
                 <Chip>{env.status === "active" ? "Connected" : env.status}</Chip>
                 <span className="w-36 flex-none text-right text-xs text-ink-faint">

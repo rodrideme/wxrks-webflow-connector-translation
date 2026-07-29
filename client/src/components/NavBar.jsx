@@ -52,7 +52,10 @@ export default function NavBar() {
     api.getWebflowLocales().then((res) => setSite(res?.site || null)).catch(() => setSite(null));
   }, []);
 
-  const siteUrl = site?.url;
+  // Prefer the live-fetched site URL, else the one captured on the account
+  // at login (store.setAccountSiteInfo). Raw webflow_site_id is never
+  // shown anywhere -- an account with no name/URL yet just shows a label.
+  const siteUrl = site?.url || account?.siteUrl || null;
   const siteHost = siteUrl ? siteUrl.replace(/^https?:\/\//, "") : null;
 
   return (
@@ -100,7 +103,7 @@ export default function NavBar() {
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name || a.webflowSiteId}
+                {a.name || (a.siteUrl ? a.siteUrl.replace(/^https?:\/\//, "") : "Unnamed site")}
               </option>
             ))}
           </select>
@@ -116,10 +119,10 @@ export default function NavBar() {
             <span className="w-[15px] flex-none text-center text-[13px] opacity-85">🌐</span>
             <span className="truncate">{siteHost}</span>
           </a>
-        ) : account?.name || account?.webflowSiteId ? (
-          <span className="flex items-center gap-2.5 truncate py-1 text-[12.5px] font-medium text-ink-soft" title={account.name || account.webflowSiteId}>
+        ) : account?.name ? (
+          <span className="flex items-center gap-2.5 truncate py-1 text-[12.5px] font-medium text-ink-soft" title={account.name}>
             <span className="w-[15px] flex-none text-center text-[13px] opacity-85">🌐</span>
-            {account.name || account.webflowSiteId}
+            {account.name}
           </span>
         ) : null}
         {user?.email && <span className="truncate px-0.5 text-[11px] text-ink-faint">{user.email}</span>}

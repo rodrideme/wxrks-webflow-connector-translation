@@ -100,10 +100,20 @@ router.get("/callback", async (req, res) => {
     const [introspection, authorizedUser, authorizedSites] = await Promise.all([
       webflowOAuth.introspectToken(accessToken),
       webflowOAuth.getAuthorizedUser(accessToken),
-      // Names only -- login must not fail because this listing did.
+      // Display info only -- login must not fail because this listing did.
       webflowOAuth.listAuthorizedSites(accessToken).catch(() => []),
     ]);
-    const siteNameById = new Map(authorizedSites.map((s) => [s.id, s.displayName || s.shortName || null]));
+    // Same URL preference as services/webflow.js's fetchSiteLocales():
+    // custom domain when one is bound, else the always-valid staging domain.
+    const siteInfoById = new Map(
+      authorizedSites.map((s) => [
+        s.id,
+        {
+          name: s.displayName || s.shortName || null,
+          url: (s.customDomains?.[0]?.url && `https://${s.customDomains[0].url}`) || (s.shortName ? `https://${s.shortName}.webflow.io` : null),
+        },
+      ])
+    );
 
     const siteIds = introspection?.authorization?.authorizedTo?.siteIds || [];
     if (siteIds.length === 0) {
@@ -128,15 +138,16 @@ router.get("/callback", async (req, res) => {
     const newlyLinkedAccounts = [];
     let primaryAccount = null;
     for (const siteId of siteIds) {
-      const siteName = siteNameById.get(siteId) || null;
+      const siteInfo = siteInfoById.get(siteId) || {};
       let account = await store.getAccountByWebflowSiteId(siteId);
       if (!account) {
-        account = await store.createAccount({ webflowSiteId: siteId, name: siteName });
-      } else if (siteName && siteName !== account.name) {
-        // Refresh on every login -- the site can be renamed on Webflow's
-        // side, and the switcher/picker read accounts.name.
-        await store.setAccountName(account.id, siteName);
-        account = { ...account, name: siteName };
+        account = await store.createAccount({ webflowSiteId: siteId, name: siteInfo.name, siteUrl: siteInfo.url });
+      } else if ((siteInfo.name && siteInfo.name !== account.name) || (siteInfo.url && siteInfo.url !== account.siteUrl)) {
+        // Refresh on every login -- the site can be renamed or gain a
+        // custom domain on Webflow's side, and the switcher/picker read
+        // accounts.name/site_url.
+        await store.setAccountSiteInfo(account.id, { name: siteInfo.name, siteUrl: siteInfo.url });
+        account = { ...account, name: siteInfo.name || account.name, siteUrl: siteInfo.url || account.siteUrl };
       }
       if (!membershipIdsBefore.has(account.id)) newlyLinkedAccounts.push(account);
       // Owner of any account you're the FIRST member of -- a per-account
@@ -172,23 +183,34 @@ router.get("/callback", async (req, res) => {
     // a re-auth Webflow may skip the consent screen entirely) -- so
     // siteIds order carries no intent signal at all; blindly landing on
     // siteIds[0] was the "logged into site B, landed back in site A" bug.
-    // What this callback CAN know: which sites became connected to this
-    // user during THIS login. Exactly one newly linked account is an
-    // unambiguous "this is what I came for" (first-time connects, a fresh
-    // reconnect after an environment reset, a reviewer's install) -- land
-    // straight on it. Anything else with multiple memberships is genuinely
-    // ambiguous: land provisionally on siteIds[0] (a verified membership
-    // either way) and send them to the in-app picker, whose
-    // switch-account call re-points the session. The session must exist
-    // before the redirect -- /select-site lists accounts via /api/auth/me.
-    const landingAccount = newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : primaryAccount;
+    // What this callback CAN know, in preference order:
+    //  1. Exactly one site became connected to this user during THIS
+    //     login -- an unambiguous "this is what I came for" (first-time
+    //     connects, a fresh reconnect after an environment reset, a
+    //     reviewer's install). Land straight on it, no picker.
+    //  2. Otherwise, where this browser was last logged in (read from the
+    //     old session before it's deleted below, if the new login is a
+    //     member of it) -- so the picker's "Current" means "where you were
+    //     last time" and dismissing it keeps you there.
+    //  3. Only then siteIds[0] (a verified membership either way).
+    // Cases 2/3 with multiple memberships still get the in-app picker,
+    // whose switch-account call re-points the session. The session must
+    // exist before the redirect -- /select-site lists accounts via
+    // /api/auth/me.
+    const previousCookieSessionId = parseCookies(req.headers.cookie)[SESSION_COOKIE_NAME];
+    const previousSession = previousCookieSessionId
+      ? await store.getSessionWithUserAndAccount(previousCookieSessionId)
+      : undefined;
+    const memberships = await store.listAccountsForUser(user.id);
+    const previousAccount = previousSession ? memberships.find((a) => a.id === previousSession.account.id) : undefined;
+    const landingAccount =
+      newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : previousAccount || primaryAccount;
 
     await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     const sessionId = await store.createSession(user.id, landingAccount.id, expiresAt);
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
 
-    const memberships = await store.listAccountsForUser(user.id);
     const needsPicker = newlyLinkedAccounts.length !== 1 && memberships.length > 1;
     res.redirect(needsPicker ? "/select-site" : "/");
   } catch (err) {

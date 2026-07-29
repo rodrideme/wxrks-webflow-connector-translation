@@ -65,24 +65,27 @@ export default function SelectSite() {
         {error && <p className="mt-3 text-center text-sm font-medium text-status-error-fg">Error: {error}</p>}
 
         <div className="mt-5 flex flex-col gap-2">
-          {sorted.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => choose(a)}
-              disabled={submittingId !== null}
-              className="flex w-full items-center gap-3 rounded-md border border-border-strong bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-medium text-ink">{a.name || a.webflowSiteId}</div>
-                <div className="truncate font-mono text-[11px] text-ink-faint">{a.webflowSiteId}</div>
-              </div>
-              {a.id === account.id && (
-                <span className="flex-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Current</span>
-              )}
-              {submittingId === a.id && <span className="flex-none text-[11px] text-ink-faint">Switching…</span>}
-            </button>
-          ))}
+          {sorted.map((a) => {
+            const host = a.siteUrl ? a.siteUrl.replace(/^https?:\/\//, "") : null;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => choose(a)}
+                disabled={submittingId !== null}
+                className="flex w-full items-center gap-3 rounded-md border border-border-strong bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium text-ink">{a.name || host || "Unnamed site"}</div>
+                  {host && <div className="truncate text-[11px] text-ink-faint">{host}</div>}
+                </div>
+                {a.id === account.id && (
+                  <span className="flex-none text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Current</span>
+                )}
+                {submittingId === a.id && <span className="flex-none text-[11px] text-ink-faint">Switching…</span>}
+              </button>
+            );
+          })}
         </div>
       </Card>
     </div>

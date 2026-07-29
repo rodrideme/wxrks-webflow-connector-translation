@@ -545,6 +545,7 @@ function accountRowToObject(row) {
   return {
     id: row.id,
     name: row.name,
+    siteUrl: row.site_url,
     webflowSiteId: row.webflow_site_id,
     status: row.status,
     createdAt: row.created_at.toISOString(),
@@ -572,10 +573,10 @@ async function getAccount(accountId) {
   return rows[0] ? accountRowToObject(rows[0]) : undefined;
 }
 
-async function createAccount({ webflowSiteId, name }) {
+async function createAccount({ webflowSiteId, name, siteUrl }) {
   const { rows } = await db.query(
-    `INSERT INTO accounts (id, webflow_site_id, name) VALUES ($1, $2, $3) RETURNING *`,
-    [crypto.randomUUID(), webflowSiteId, name || null]
+    `INSERT INTO accounts (id, webflow_site_id, name, site_url) VALUES ($1, $2, $3, $4) RETURNING *`,
+    [crypto.randomUUID(), webflowSiteId, name || null, siteUrl || null]
   );
   return accountRowToObject(rows[0]);
 }
@@ -601,15 +602,20 @@ async function setAccountStatus(accountId, status) {
   await db.query(`UPDATE accounts SET status = $1, updated_at = now() WHERE id = $2`, [status, accountId]);
 }
 
-// Keeps accounts.name in sync with the Webflow site's real displayName --
-// refreshed on every OAuth login / invite redemption (and lazily by the
-// Environments listing), since a site can be renamed on Webflow's side at
-// any time. Everything that shows an account to a human (the sidebar
-// switcher, /select-site, /api/auth/me) reads this column and was showing
-// raw site ids while it stayed NULL.
-async function setAccountName(accountId, name) {
-  if (!name) return;
-  await db.query(`UPDATE accounts SET name = $1, updated_at = now() WHERE id = $2`, [name, accountId]);
+// Keeps accounts.name/site_url in sync with the Webflow site's real
+// displayName and public URL -- refreshed on every OAuth login / invite
+// redemption (and lazily by the Environments listing), since a site can
+// be renamed or get a custom domain on Webflow's side at any time.
+// Everything that shows an account to a human (the sidebar switcher,
+// /select-site, /api/auth/me) reads these columns and was showing raw
+// site ids while they stayed NULL. Only overwrites what's provided --
+// a caller with just a name never blanks a previously-captured URL.
+async function setAccountSiteInfo(accountId, { name, siteUrl } = {}) {
+  if (!name && !siteUrl) return;
+  await db.query(
+    `UPDATE accounts SET name = COALESCE($1, name), site_url = COALESCE($2, site_url), updated_at = now() WHERE id = $3`,
+    [name || null, siteUrl || null, accountId]
+  );
 }
 
 /**
@@ -813,7 +819,7 @@ async function createSession(userId, accountId, expiresAt) {
 async function getSessionWithUserAndAccount(sessionId) {
   const { rows } = await db.query(
     `SELECT s.*, u.webflow_user_id, u.email, u.first_name, u.last_name,
-            a.name AS account_name, a.webflow_site_id, a.status AS account_status,
+            a.name AS account_name, a.site_url AS account_site_url, a.webflow_site_id, a.status AS account_status,
             (wc.account_id IS NOT NULL) AS has_wxrks_connection,
             au.role, au.access_level
      FROM sessions s
@@ -843,6 +849,7 @@ async function getSessionWithUserAndAccount(sessionId) {
     account: {
       id: row.account_id,
       name: row.account_name,
+      siteUrl: row.account_site_url,
       webflowSiteId: row.webflow_site_id,
       status: row.account_status,
       wxrksConnected: row.has_wxrks_connection || isOriginalAccount,
@@ -1454,7 +1461,7 @@ module.exports = {
   listAllAccounts,
   listEnvironmentAccounts,
   setAccountStatus,
-  setAccountName,
+  setAccountSiteInfo,
   purgeAccount,
   getUserByWebflowUserId,
   upsertUser,
