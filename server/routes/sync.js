@@ -450,7 +450,7 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
       const entityId = item.webflowItemId || item.webflowPageId || item.webflowComponentId;
 
       for (const locale of mapping.targetLocales) {
-        const delivery = latestUpdateByEntity[entityId]?.[locale];
+        const delivery = latestUpdateByEntity[entityId]?.[webflow.normalizeLocaleTag(locale)];
         let webflowUrl;
         let linkType;
 

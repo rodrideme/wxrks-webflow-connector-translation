@@ -206,11 +206,16 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
   // wxrks fires delivery per (work unit, locale) rather than once for the
   // whole batch, so there's no single "project done" signal to key off --
   // instead mark the batch completed once every (item, locale) pair has a
-  // recorded delivery.
+  // recorded delivery. Locale keys normalized: old entries recorded
+  // wxrks's raw spelling ("de_de") while mapping.targetLocales holds the
+  // site tag ("de-DE") -- unnormalized, those pairs never counted and the
+  // run never flipped to completed.
   const expectedPairs = mapping.items.length * mapping.targetLocales.length;
   const deliveredPairs = new Set(
     updatedMapping.updates.flatMap((u) =>
-      (u.resultsByItem || []).flatMap((r) => u.targetLocales.map((l) => `${r.webflowComponentId || r.webflowPageId || r.webflowItemId}:${l}`))
+      (u.resultsByItem || []).flatMap((r) =>
+        u.targetLocales.map((l) => `${r.webflowComponentId || r.webflowPageId || r.webflowItemId}:${webflow.normalizeLocaleTag(l)}`)
+      )
     )
   ).size;
   if (deliveredPairs >= expectedPairs) {
@@ -224,21 +229,52 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
  * Same dedup check the wxrks webhook handler applies before doing any work
  * -- true when this (item, locale) already has a successful push recorded,
  * so both the live webhook and the reconciliation safety net skip anything
- * already delivered instead of double-processing it.
+ * already delivered instead of double-processing it. Locale comparison is
+ * NORMALIZED (webflow.normalizeLocaleTag): wxrks spells locales its own
+ * way ("de_de") and older update entries recorded that raw form, while
+ * callers may pass the site's real tag ("de-DE") -- strict equality here
+ * would re-deliver (or fail to dedup) across the two spellings.
  */
 function alreadyDelivered(mapping, batchItem, locale) {
   const { entityType = "cmsItem", webflowItemId, webflowPageId, webflowComponentId } = batchItem;
   const isPage = entityType === "page";
   const isComponent = entityType === "component";
+  const wanted = webflow.normalizeLocaleTag(locale);
   return mapping.updates.some(
     (u) =>
-      u.targetLocales.includes(locale) &&
+      (u.targetLocales || []).some((l) => webflow.normalizeLocaleTag(l) === wanted) &&
       (u.resultsByItem || []).some(
         (r) =>
           (isComponent ? r.webflowComponentId === webflowComponentId : isPage ? r.webflowPageId === webflowPageId : r.webflowItemId === webflowItemId) &&
-          (r.resultsByLocale || []).some((rl) => rl.locale === locale && rl.fieldsUpdated > 0)
+          (r.resultsByLocale || []).some((rl) => webflow.normalizeLocaleTag(rl.locale) === wanted && rl.fieldsUpdated > 0)
       )
   );
 }
 
-module.exports = { deliverWorkUnitToWebflow, alreadyDelivered, findBatchItemForFileName };
+/**
+ * Persists a delivery attempt that failed BEFORE any Webflow write could
+ * record its own result (e.g. downloading the translated file from wxrks
+ * failed) -- without this the only trace was a server log line, and the
+ * run showed the work unit "Pending" forever with no visible reason. Same
+ * updates[] entry shape as a normal delivery, so the Runs/History UI
+ * renders it as a failed attempt with no special handling.
+ */
+async function recordDeliveryFailure({ mapping, batchItem, locale, error }) {
+  const { entityType = "cmsItem", webflowCollectionId, webflowItemId, webflowPageId, webflowComponentId } = batchItem;
+  const resultsByLocale = [{ locale, error }];
+  const resultEntry =
+    entityType === "component"
+      ? { webflowComponentId, resultsByLocale }
+      : entityType === "page"
+      ? { webflowPageId, resultsByLocale }
+      : { webflowCollectionId, webflowItemId, resultsByLocale };
+  return store.addWebflowUpdateToProjectMapping(mapping.wxrksProjectUUID, {
+    targetLocales: [locale],
+    itemsUpdated: 0,
+    wordCount: 0,
+    autoPublish: false,
+    resultsByItem: [resultEntry],
+  });
+}
+
+module.exports = { deliverWorkUnitToWebflow, alreadyDelivered, recordDeliveryFailure, findBatchItemForFileName };

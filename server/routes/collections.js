@@ -139,7 +139,7 @@ router.get("/:id/items", async (req, res) => {
       targetLocales.forEach((locale, idx) => {
         const localeItem = localeItemLists[idx].find((it) => it.id === sourceItem.id);
         const { status, error } = store.computeLocaleStatus({
-          delivery: deliveryStatus[sourceItem.id]?.[locale],
+          delivery: deliveryStatus[sourceItem.id]?.[webflow.normalizeLocaleTag(locale)],
           sourceLastUpdated: sourceItem.lastPublished,
           localeExists: Boolean(localeItem),
           localeIsDraft: localeItem?.isDraft,

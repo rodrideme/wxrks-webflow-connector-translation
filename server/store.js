@@ -22,6 +22,7 @@ const {
   DEFAULT_WORK_UNIT_NAME_PATTERN,
   DEFAULT_PAGE_WORK_UNIT_NAME_PATTERN,
   DEFAULT_COMPONENT_WORK_UNIT_NAME_PATTERN,
+  normalizeLocaleTag,
 } = require("./services/webflow");
 const { evaluateCondition } = require("./services/autoSyncRules");
 
@@ -356,6 +357,11 @@ async function listActiveProjects(accountId) {
  * since an earlier failure followed by a later success should read as
  * synced, not failed.
  */
+// Keyed by NORMALIZED locale (normalizeLocaleTag) -- update entries have
+// historically recorded wxrks's own locale spelling ("de_de") while every
+// caller looks up by the site's real tag ("de-DE"); strict keys made those
+// deliveries invisible (work units stuck "Pending" with the content live
+// in Webflow). Callers must normalize their lookup key the same way.
 async function getDeliveryStatusByEntity(accountId, idField) {
   const mappings = await listProjectMappings(accountId);
   const statusMap = {};
@@ -365,9 +371,10 @@ async function getDeliveryStatusByEntity(accountId, idField) {
         const entityId = resultEntry[idField];
         if (!entityId) continue;
         for (const rl of resultEntry.resultsByLocale || []) {
-          const existing = statusMap[entityId]?.[rl.locale];
+          const localeKey = normalizeLocaleTag(rl.locale);
+          const existing = statusMap[entityId]?.[localeKey];
           if (!existing || new Date(update.updatedAt) > new Date(existing.updatedAt)) {
-            statusMap[entityId] = { ...statusMap[entityId], [rl.locale]: { error: rl.error || null, updatedAt: update.updatedAt } };
+            statusMap[entityId] = { ...statusMap[entityId], [localeKey]: { error: rl.error || null, updatedAt: update.updatedAt } };
           }
         }
       }
@@ -393,9 +400,11 @@ function latestUpdateByEntityAndLocale(mapping) {
       const entityId = resultEntry.webflowItemId || resultEntry.webflowPageId || resultEntry.webflowComponentId;
       if (!entityId) continue;
       for (const rl of resultEntry.resultsByLocale || []) {
-        const existing = result[entityId]?.[rl.locale];
+        // Normalized key -- same reasoning as getDeliveryStatusByEntity.
+        const localeKey = normalizeLocaleTag(rl.locale);
+        const existing = result[entityId]?.[localeKey];
         if (!existing || new Date(update.updatedAt) > new Date(existing.updatedAt)) {
-          result[entityId] = { ...result[entityId], [rl.locale]: { error: rl.error || null, updatedAt: update.updatedAt } };
+          result[entityId] = { ...result[entityId], [localeKey]: { error: rl.error || null, updatedAt: update.updatedAt } };
         }
       }
     }
@@ -800,7 +809,7 @@ async function listActivity(accountId, { limit = 50, offset = 0 } = {}) {
   }));
 }
 
-async function createSession(userId, accountId, expiresAt) {
+async function createSession(userId, accountId, expiresAt, { recordLastUsed = true } = {}) {
   const id = crypto.randomBytes(32).toString("hex");
   await db.query(`INSERT INTO sessions (id, user_id, account_id, expires_at) VALUES ($1, $2, $3, $4)`, [
     id,
@@ -808,12 +817,16 @@ async function createSession(userId, accountId, expiresAt) {
     accountId,
     expiresAt,
   ]);
-  // Remembered PAST logout (which deletes the session rows themselves) --
-  // every session-issuing path funnels through here (OAuth callback,
-  // password login, invite redemption, switch-account), so this is the
-  // one write that keeps users.last_account_id meaning "where this user
-  // actually was last".
-  await db.query(`UPDATE users SET last_account_id = $1, updated_at = now() WHERE id = $2`, [accountId, userId]);
+  // Remembered PAST logout (which deletes the session rows themselves) so
+  // the picker's "Last used" tag means "the environment the user last
+  // DELIBERATELY landed in": picking on /select-site (switch-account),
+  // the sidebar switcher, or a login that lands directly. The one caller
+  // that passes false is the OAuth callback when it's about to show the
+  // picker -- that session is a provisional parking spot the user never
+  // chose, and stamping it made the tag drift to auto-landings.
+  if (recordLastUsed) {
+    await db.query(`UPDATE users SET last_account_id = $1, updated_at = now() WHERE id = $2`, [accountId, userId]);
+  }
   return id;
 }
 

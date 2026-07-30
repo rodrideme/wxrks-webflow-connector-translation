@@ -270,6 +270,31 @@ async function getRawSiteLocales() {
  * still worth a defensive client-side check (see updatePageDom) for a
  * faster, clearer error attributable to our own code.
  */
+/**
+ * Resolves any locale spelling to the site's REAL registered tag -- wxrks
+ * echoes locales in its own lowercase/underscore convention ("de_de" for
+ * Webflow's "de-DE", confirmed live), and that raw form used to be
+ * recorded verbatim in project mappings' updates[], where strict string
+ * comparison against the run's target locale ("de-DE") made every
+ * such delivery invisible to the Runs page (stuck "Pending" while the
+ * content was actually live in Webflow; "es" only worked because both
+ * sides happen to spell it identically). Falls back to the input tag when
+ * nothing matches (or the site can't be fetched) -- recording something is
+ * better than failing a delivery over a display concern.
+ */
+async function resolveSiteLocaleTag(tag) {
+  if (!tag) return tag;
+  try {
+    const locales = await getSiteLocales();
+    const normalized = normalizeLocaleTag(tag);
+    if (normalizeLocaleTag(locales.primary?.tag) === normalized) return locales.primary.tag;
+    const match = locales.secondary.find((l) => normalizeLocaleTag(l.tag) === normalized);
+    return match ? match.tag : tag;
+  } catch {
+    return tag;
+  }
+}
+
 async function resolvePageLocaleId(tag) {
   if (!tag) return undefined;
   const locales = await getRawSiteLocales();
@@ -1019,6 +1044,8 @@ module.exports = {
   listCollections,
   getCollection,
   getSiteLocales,
+  resolveSiteLocaleTag,
+  normalizeLocaleTag,
   listAllItems,
   listAllItemsCached,
   listItemsPage,

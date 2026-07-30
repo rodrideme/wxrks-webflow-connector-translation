@@ -130,16 +130,27 @@ router.post("/wxrks", async (req, res) => {
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
   accountContext.run(mapping.accountId, async () => {
+    // wxrks calls keep wxrks's own locale spelling ("de_de"); everything
+    // recorded on the mapping uses the site's REAL tag ("de-DE") so the
+    // Runs page's status matching sees it (see webflow.resolveSiteLocaleTag).
+    const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
     const translation = directTranslatedFileUrl
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, batchItem.resourceId, locale);
 
-    await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale, translation });
-  }).catch((err) => {
+    await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
+  }).catch(async (err) => {
+    const message = err.response?.data?.message || err.message;
     console.error(
       `wxrks webhook background processing failed for project ${wxrksProjectUUID}, work unit ${workUnitUuid}:`,
-      err.response?.data?.message || err.message
+      message
     );
+    // Persist the failure on the run -- wxrks said this file was ready, so
+    // a failure here is real, and a log line alone left the work unit
+    // showing "Pending" forever with no visible reason.
+    await wxrksDelivery
+      .recordDeliveryFailure({ mapping, batchItem, locale, error: `Fetching/delivering the translation failed: ${message}` })
+      .catch(() => {});
   });
 });
 

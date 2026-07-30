@@ -17,6 +17,7 @@
 
 const wxrks = require("./wxrks");
 const store = require("../store");
+const webflow = require("./webflow");
 const wxrksDelivery = require("./wxrksDelivery");
 
 async function reconcileWxrksDeliveriesForAccount(accountId) {
@@ -51,7 +52,10 @@ async function reconcileWxrksDeliveriesForAccount(accountId) {
           locale,
           { retries: 0, retryDelayMs: 0 }
         );
-        await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale, translation });
+        // Record under the site's real tag, same as the live webhook path
+        // (wxrks reports "de_de"; the Runs page matches on "de-DE").
+        const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
+        await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
       } catch (err) {
         // Not ready yet, or a real error either way -- try again next pass
         // rather than letting one stuck work unit block the rest of this

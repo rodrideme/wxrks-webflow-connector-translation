@@ -204,7 +204,7 @@ router.get("/list", async (req, res) => {
         const localeErrors = {};
         settings.targetLocales.forEach((locale) => {
           const { status, error } = store.computeLocaleStatus({
-            delivery: deliveryStatus[c.id]?.[locale],
+            delivery: deliveryStatus[c.id]?.[webflow.normalizeLocaleTag(locale)],
             localeExists: false,
           });
           localeStatus[locale] = status;
