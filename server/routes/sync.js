@@ -396,22 +396,25 @@ router.get("/history", async (req, res) => {
  * always sent to the Designer instead.
  */
 // This route recomputes real, non-trivial live Webflow work every call
-// (per-locale item reads, a pages/folders fetch -- see below). A run
-// older than an hour has almost certainly had every one of its
-// deliveries settle already (Webflow webhooks fire within seconds/
-// minutes, not hours) and its item/locale set never changes after
-// creation, so its result is safe to treat as effectively permanent --
-// most History rows are old runs, and redoing this work for them on
-// every single page load was pure waste. Young (possibly still-
-// delivering) runs get a short TTL instead, just enough to dedupe rapid
-// repeat requests for the same run. Keyed by wxrksProjectUUID alone
-// (globally unique) -- ownership is still checked fresh from the DB on
-// every request before this cache is ever consulted, so this isn't a
-// security shortcut. In-memory, not DB-persisted, matching every other
-// cache in this codebase (webflow.js's makeTtlCache/
-// siteLocalesCacheByAccount) -- fine for a process-lifetime performance
-// optimization, and this app restarts rarely outside active local dev.
-const WORK_UNITS_CACHE = new Map(); // uuid -> { rows, expiresAt }
+// (per-locale item reads, a pages/folders fetch -- see below), and
+// everything expensive derives from the mapping's items/targetLocales,
+// which never change after creation -- so rows are cacheable. The one
+// live input is the mapping's updates[] delivery log, and run AGE says
+// nothing about it: translators deliver through wxrks hours or days
+// after a run is created (an earlier age-only version of this cache
+// treated hour-old runs as settled and served rows missing freshly
+// delivered work units for up to 24h). The mapping is already fetched
+// fresh from the DB on every request for the ownership check, so a
+// cached entry is honored only while updates[] hasn't grown since it
+// was built -- any new delivery (or recorded failure) busts it for
+// free. The TTLs only bound Webflow-side drift (pages renamed/deleted
+// since caching): long for old runs, short for young ones, where the
+// item set itself may still be settling. Keyed by wxrksProjectUUID
+// alone (globally unique) -- ownership is still checked fresh before
+// this cache is ever consulted, so this isn't a security shortcut.
+// In-memory, not DB-persisted, matching every other cache in this
+// codebase (webflow.js's makeTtlCache/siteLocalesCacheByAccount).
+const WORK_UNITS_CACHE = new Map(); // uuid -> { rows, updatesCount, expiresAt }
 const OLD_RUN_THRESHOLD_MS = 60 * 60 * 1000;
 const OLD_RUN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const YOUNG_RUN_CACHE_TTL_MS = 30 * 1000;
@@ -426,8 +429,9 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
       return res.status(404).json({ error: "Run not found" });
     }
 
+    const updatesCount = (mapping.updates || []).length;
     const cached = WORK_UNITS_CACHE.get(req.params.wxrksProjectUUID);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached && cached.expiresAt > Date.now() && cached.updatesCount === updatesCount) {
       return res.json({ rows: cached.rows });
     }
 
@@ -507,6 +511,7 @@ router.get("/history/:wxrksProjectUUID/work-units", async (req, res) => {
     const isOldRun = Date.now() - new Date(mapping.createdAt).getTime() > OLD_RUN_THRESHOLD_MS;
     WORK_UNITS_CACHE.set(req.params.wxrksProjectUUID, {
       rows,
+      updatesCount,
       expiresAt: Date.now() + (isOldRun ? OLD_RUN_CACHE_TTL_MS : YOUNG_RUN_CACHE_TTL_MS),
     });
 
