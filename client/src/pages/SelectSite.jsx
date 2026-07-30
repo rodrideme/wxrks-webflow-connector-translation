@@ -46,9 +46,11 @@ export default function SelectSite() {
     setSubmittingId(target.id);
     setError(null);
     try {
-      if (target.id !== account.id) {
-        await api.switchAccount(target.id);
-      }
+      // Always through switch-account, even for the row the session is
+      // already provisionally parked on: the callback deliberately does
+      // NOT record a picker-bound landing as "last used" (it's not a
+      // choice), so THIS click is what stamps users.last_account_id.
+      await api.switchAccount(target.id);
       dataCache.clearAll();
       window.location.assign("/");
     } catch (err) {

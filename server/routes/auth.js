@@ -206,13 +206,16 @@ router.get("/callback", async (req, res) => {
     const lastUsedAccount = user.lastAccountId ? memberships.find((a) => a.id === user.lastAccountId) : undefined;
     const landingAccount =
       newlyLinkedAccounts.length === 1 ? newlyLinkedAccounts[0] : lastUsedAccount || primaryAccount;
+    const needsPicker = newlyLinkedAccounts.length !== 1 && memberships.length > 1;
 
     await deleteSessionFromRequestCookie(req);
     const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
-    const sessionId = await store.createSession(user.id, landingAccount.id, expiresAt);
+    // A picker-bound session is a provisional parking spot, not a choice
+    // the user made -- it must NOT overwrite users.last_account_id, or the
+    // "Last used" tag drifts to whatever the auto-landing happened to be.
+    const sessionId = await store.createSession(user.id, landingAccount.id, expiresAt, { recordLastUsed: !needsPicker });
     setCookie(res, SESSION_COOKIE_NAME, sessionId, { maxAgeMs: SESSION_MAX_AGE_MS });
 
-    const needsPicker = newlyLinkedAccounts.length !== 1 && memberships.length > 1;
     const pickerPath = lastUsedAccount ? "/select-site?last=1" : "/select-site";
     res.redirect(needsPicker ? pickerPath : "/");
   } catch (err) {
