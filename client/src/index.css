@@ -218,3 +218,40 @@ body {
     animation: none !important;
   }
 }
+
+/* "Project created" celebration (CelebrationOverlay.jsx) -- the confetti
+   itself is canvas-driven there; these only ease the veil and message in. */
+@keyframes celebration-veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes celebration-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(14px);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.celebration-veil {
+  animation: celebration-veil-in 0.25s ease-out;
+}
+.celebration-pop {
+  animation: celebration-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .celebration-veil,
+  .celebration-pop {
+    animation: none !important;
+  }
+}

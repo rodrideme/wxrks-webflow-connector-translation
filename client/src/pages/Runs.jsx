@@ -818,7 +818,7 @@ export default function Runs() {
           <span className="w-[30px] flex-none text-right">Docs</span>
           <span className="w-12 flex-none text-right">Words</span>
           <span className="w-[72px] flex-none">Langs</span>
-          <span className="w-[86px] flex-none">Works</span>
+          <span className="w-[86px] flex-none">wxrks</span>
           <span className="w-[86px] flex-none">Webflow</span>
           <span className="w-[66px] flex-none text-right">Status</span>
         </div>
@@ -1007,7 +1007,7 @@ export default function Runs() {
                               <th className="px-3 py-2">Document</th>
                               <th className="px-3 py-2">Language</th>
                               <th className="px-3 py-2 text-right">Words</th>
-                              <th className="px-3 py-2">Updated on Works</th>
+                              <th className="px-3 py-2">Updated on wxrks</th>
                               <th className="px-3 py-2">Updated on Webflow</th>
                               <th className="px-3 py-2">Status</th>
                               <th className="px-3 py-2" />

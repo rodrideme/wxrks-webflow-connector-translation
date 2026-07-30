@@ -365,10 +365,10 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       {step === 0 && (
         <div className="space-y-4">
           <div>
-            <div className="mb-1.5 flex items-baseline justify-between">
+            <div className="mb-1.5 flex items-baseline gap-3">
               <div className="text-sm font-medium text-ink-soft">Target languages · {targetLocales.length}</div>
               {secondaryLocales.length > 1 && (
-                <div className="flex gap-2.5 text-xs font-medium">
+                <div className="flex gap-2.5 text-[11px] font-medium">
                   {/* "Select all" deliberately includes not-yet-published locales --
                       unlike the pre-selection default (enabled-only, see the open
                       effect above), this is an explicit user action, and the Review
@@ -377,7 +377,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                     type="button"
                     onClick={() => setTargetLocales(secondaryLocales.map((l) => l.tag))}
                     disabled={targetLocales.length === secondaryLocales.length}
-                    className="text-accent-text enabled:hover:underline disabled:cursor-default disabled:opacity-40"
+                    className="text-ink-soft enabled:hover:text-ink disabled:cursor-default disabled:text-ink-faint disabled:opacity-60"
                   >
                     Select all
                   </button>
@@ -385,7 +385,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                     type="button"
                     onClick={() => setTargetLocales([])}
                     disabled={targetLocales.length === 0}
-                    className="text-accent-text enabled:hover:underline disabled:cursor-default disabled:opacity-40"
+                    className="text-ink-soft enabled:hover:text-ink disabled:cursor-default disabled:text-ink-faint disabled:opacity-60"
                   >
                     Deselect all
                   </button>

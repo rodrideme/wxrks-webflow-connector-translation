@@ -8,6 +8,7 @@ import ReferenceFilterValue from "../components/ReferenceFilterValue.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import TranslateActionBar from "../components/TranslateActionBar.jsx";
 import SendToWxrksModal from "../components/SendToWxrksModal.jsx";
+import CelebrationOverlay from "../components/CelebrationOverlay.jsx";
 import { itemMatchesFilters, computeWebflowStatus } from "../leafHelpers.js";
 import { formatDateOnly } from "../formatDate.js";
 import { webflowStatusPill } from "../statusHelpers.jsx";
@@ -122,6 +123,7 @@ export default function Translate() {
   const [jobs, setJobs] = useState([]); // active background sync jobs being polled
   const jobsPollRef = useRef(null);
   const [result, setResult] = useState(null);
+  const [celebrating, setCelebrating] = useState(false); // "project created" full-screen moment
   const [error, setError] = useState(null);
 
   // Deep-link support for Dashboard's "Sync entire website" card
@@ -782,6 +784,8 @@ export default function Translate() {
             wxrksProjectUUIDs: updated.map((j) => j.wxrksProjectUUID),
           });
           setPhase("done");
+          // An errored or all-skipped run is not a party.
+          if (errors === 0 && itemsSynced > 0) setCelebrating(true);
         }
       } catch (err) {
         setError(err.message);
@@ -1232,6 +1236,8 @@ export default function Translate() {
           }
         }}
       />
+
+      <CelebrationOverlay open={celebrating} onClose={() => setCelebrating(false)} />
     </div>
   );
 }
