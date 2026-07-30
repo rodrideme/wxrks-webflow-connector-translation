@@ -180,9 +180,10 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   const contentLabel = scope === "all" ? "All site content" : selection?.groups?.map((g) => g.label).join(", ") || "Content";
   const contentCount = scope === "all" ? allSummary?.totalItems ?? 0 : selection?.count ?? 0;
   const contentWords = scope === "all" ? allSummary?.totalWords ?? 0 : selection?.words ?? 0;
+  const secondaryLocales = webflowLocales?.secondary || [];
   // Surfaced at the Review step so opting into a not-yet-public locale is
   // visible right before confirming, not just at the picker.
-  const notEnabledSelected = (webflowLocales?.secondary || []).filter((l) => targetLocales.includes(l.tag) && !l.enabled);
+  const notEnabledSelected = secondaryLocales.filter((l) => targetLocales.includes(l.tag) && !l.enabled);
 
   async function handleNext() {
     if (step < 2) {
@@ -364,9 +365,35 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       {step === 0 && (
         <div className="space-y-4">
           <div>
-            <div className="mb-1.5 text-sm font-medium text-ink-soft">Target languages · {targetLocales.length}</div>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <div className="text-sm font-medium text-ink-soft">Target languages · {targetLocales.length}</div>
+              {secondaryLocales.length > 1 && (
+                <div className="flex gap-2.5 text-xs font-medium">
+                  {/* "Select all" deliberately includes not-yet-published locales --
+                      unlike the pre-selection default (enabled-only, see the open
+                      effect above), this is an explicit user action, and the Review
+                      step still calls those out before anything is sent. */}
+                  <button
+                    type="button"
+                    onClick={() => setTargetLocales(secondaryLocales.map((l) => l.tag))}
+                    disabled={targetLocales.length === secondaryLocales.length}
+                    className="text-accent-text enabled:hover:underline disabled:cursor-default disabled:opacity-40"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetLocales([])}
+                    disabled={targetLocales.length === 0}
+                    className="text-accent-text enabled:hover:underline disabled:cursor-default disabled:opacity-40"
+                  >
+                    Deselect all
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
-              {(webflowLocales?.secondary || []).map((l) => (
+              {secondaryLocales.map((l) => (
                 <button
                   key={l.tag}
                   type="button"
@@ -386,7 +413,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                 </button>
               ))}
             </div>
-            {(webflowLocales?.secondary || []).some((l) => !l.enabled) && (
+            {secondaryLocales.some((l) => !l.enabled) && (
               <p className="mt-1.5 text-[11px] text-ink-faint">
                 <span className="text-status-progress-fg" aria-hidden="true">●</span> not published in Webflow yet —
                 safe to translate ahead of time, but won't be publicly visible until enabled there.
