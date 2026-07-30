@@ -18,6 +18,39 @@ const autoSyncSelfWrites = require("./autoSyncSelfWrites");
 const transliterationLlm = require("./transliterationLlm");
 
 /**
+ * Resolves which of the mapping's items a wxrks-reported filename belongs
+ * to. An exact match against the resourceFileName we stored at send time
+ * is NOT enough: wxrks silently truncates long resource filenames
+ * (confirmed live -- a "blog-how-to-translate-a-webflow-...-website.json"
+ * upload came back in both the webhook payload and GET /project as
+ * "blog-how-to-translate-a-webflow.json", cut ~31 chars into the
+ * basename), which used to kill BOTH delivery paths for any item with a
+ * long slug: the webhook 404'd and the reconciliation poll skipped it.
+ * Fallbacks: case-insensitive, then their-truncated-basename-is-a-prefix
+ * of exactly ONE stored name -- ambiguity refuses to match rather than
+ * guessing, since a wrong match would deliver a translation into the
+ * wrong Webflow item.
+ */
+function findBatchItemForFileName(mapping, fileName) {
+  const items = mapping.items || [];
+  const exact = items.find((i) => i.resourceFileName === fileName);
+  if (exact) return exact;
+
+  const base = (name) =>
+    String(name || "")
+      .toLowerCase()
+      .replace(/\.json$/, "");
+  const target = base(fileName);
+  if (!target) return undefined;
+
+  const caseInsensitive = items.filter((i) => base(i.resourceFileName) === target);
+  if (caseInsensitive.length === 1) return caseInsensitive[0];
+
+  const prefixMatches = items.filter((i) => base(i.resourceFileName).startsWith(target));
+  return prefixMatches.length === 1 ? prefixMatches[0] : undefined;
+}
+
+/**
  * `batchItem` is the matching entry from `mapping.items` (see
  * routes/webhooks.js's docstring for its shape); `translation` is the
  * already-downloaded translated-field map for this (work unit, locale).
@@ -208,4 +241,4 @@ function alreadyDelivered(mapping, batchItem, locale) {
   );
 }
 
-module.exports = { deliverWorkUnitToWebflow, alreadyDelivered };
+module.exports = { deliverWorkUnitToWebflow, alreadyDelivered, findBatchItemForFileName };

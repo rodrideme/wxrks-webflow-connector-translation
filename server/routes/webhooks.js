@@ -104,8 +104,12 @@ router.post("/wxrks", async (req, res) => {
   // per-account webhook URLs).
   await store.updateWxrksWebhookState(mapping.accountId, { lastEventAt: new Date().toISOString() }).catch(() => {});
 
-  const batchItem = mapping.items.find((i) => i.resourceFileName === fileName);
+  // Tolerant lookup -- wxrks truncates long filenames, so exact equality
+  // against what we stored at send time isn't reliable (see
+  // wxrksDelivery.findBatchItemForFileName's docstring).
+  const batchItem = wxrksDelivery.findBatchItemForFileName(mapping, fileName);
   if (!batchItem) {
+    console.error(`wxrks webhook: no item matches file ${fileName} in project ${wxrksProjectUUID} -- stored names: ${(mapping.items || []).map((i) => i.resourceFileName).join(", ")}`);
     return res.status(404).json({ error: `No item found for file ${fileName} in project ${wxrksProjectUUID}` });
   }
 

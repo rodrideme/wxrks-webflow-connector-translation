@@ -35,7 +35,7 @@ async function reconcileWxrksDeliveriesForAccount(accountId) {
       // wxrks's own filename is the only stable link back to which of our
       // batch items (and which entity) this work unit is for, since we
       // never captured wxrks's work-unit uuid at send time.
-      const batchItem = mapping.items.find((i) => i.resourceFileName === workUnit.filename);
+      const batchItem = wxrksDelivery.findBatchItemForFileName(mapping, workUnit.filename);
       const locale = workUnit.targetLanguage;
       if (!batchItem || !locale) continue;
       if (wxrksDelivery.alreadyDelivered(mapping, batchItem, locale)) continue;
