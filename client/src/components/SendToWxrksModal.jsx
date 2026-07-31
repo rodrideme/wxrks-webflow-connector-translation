@@ -29,19 +29,83 @@ function cadenceSummary(cadence) {
   return `Runs every day at ${cadence.time}`;
 }
 
-// Real wxrks work-unit workflow values (POST /project/:uuid/work-unit?bulk=true's `workflows` array).
-// TRANSLATION is always first and can't be removed; the rest are optional add-on steps.
+// Real wxrks work-unit workflow values -- the full vocabulary the API's
+// POST /project/:uuid/work-unit?bulk=true `workflows` array accepts, per
+// the wxrks docs. TRANSLATION always first and non-removable is this
+// modal's own rule (wxrks itself doesn't require it); it's wxrks's
+// standard Translation step (AI pre-translation + TM/glossary, where a
+// human can also post-edit), NOT machine-only -- which is why it's
+// labeled plain "Translation" here, not "Automatic Translation".
 const WORKFLOW_LABELS = {
-  TRANSLATION: "Automatic Translation",
+  TRANSLATION: "Translation",
   PROOFREADING: "Proofreading",
   REVIEW: "Review",
   REVIEW_2: "Review 2",
   REVIEW_3: "Review 3",
   ICR: "ICR",
+  ICR_2: "ICR 2",
+  QA: "QA",
+  WEB_QA: "Web QA",
+  FEEDBACK_IMPLEMENTATION: "Feedback Implementation",
   REGIONAL_APPROVAL: "Regional Approval",
   DTP: "DTP",
+  TRANSCRIPTION: "Transcription",
+  SUBTITLING: "Subtitling",
+  VIDEO_EDITING: "Video Editing",
+  VOICEOVER: "Voiceover",
+  SWORN: "Sworn Translation",
+  INTERPRETATION: "Interpretation",
+  DEVELOPMENT: "Development",
+  // Seen live in real Project Routing configs but absent from the public
+  // docs enum -- these only ever surface via an org unit's
+  // availableWorkflows, never the fallback list below.
+  EDITING: "Editing",
+  FAP: "Fast Post-Editing",
+  FUP: "Full Post-Editing",
 };
-const WORKFLOW_ORDER = Object.keys(WORKFLOW_LABELS);
+// The fallback "+ Add step" list for org units with no routing config:
+// documented enum values only -- org-specific ones like FAP/FUP may not
+// be accepted for arbitrary org units.
+const WORKFLOW_ORDER = [
+  "TRANSLATION",
+  "PROOFREADING",
+  "REVIEW",
+  "REVIEW_2",
+  "REVIEW_3",
+  "ICR",
+  "ICR_2",
+  "QA",
+  "WEB_QA",
+  "FEEDBACK_IMPLEMENTATION",
+  "REGIONAL_APPROVAL",
+  "DTP",
+  "TRANSCRIPTION",
+  "SUBTITLING",
+  "VIDEO_EDITING",
+  "VOICEOVER",
+  "SWORN",
+  "INTERPRETATION",
+  "DEVELOPMENT",
+];
+
+// An org unit's routing config can carry a step value this map doesn't
+// know yet -- render it readably rather than as blank.
+function workflowLabel(step) {
+  return (
+    WORKFLOW_LABELS[step] ||
+    step
+      .split("_")
+      .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+      .join(" ")
+  );
+}
+
+// The modal's TRANSLATION-first invariant applied to whatever sequence an
+// org unit's routing config provides (a config could omit TRANSLATION).
+function seedWorkflows(orgWorkflows) {
+  if (!orgWorkflows?.length) return ["TRANSLATION"];
+  return orgWorkflows.includes("TRANSLATION") ? orgWorkflows : ["TRANSLATION", ...orgWorkflows];
+}
 
 /**
  * The redesign's single "Send to wxrks" flow -- Settings → Run → Review --
@@ -93,12 +157,21 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
       setError(null);
       return;
     }
-    api.getSettings().then((s) => {
+    // Settings + org units fetched together so the saved default org
+    // unit's routing-config workflows can seed the step chips right on
+    // open -- previously that seeding only happened when the user
+    // explicitly re-picked the org unit under Advanced, which read as
+    // "the org unit's workflows are ignored". An org-units failure
+    // degrades to the plain TRANSLATION default instead of blocking.
+    Promise.all([api.getSettings(), api.getOrgUnits().catch(() => ({ orgUnits: [] }))]).then(([s, res]) => {
+      const orgUnitList = res.orgUnits || [];
       setSettings(s);
+      setOrgUnits(orgUnitList);
       setOrgUnitUUID(s.orgUnitUUID || "");
       if (s.orgUnitUUID) loadOrgUnitResources(s.orgUnitUUID);
+      const defaultOrg = orgUnitList.find((o) => o.uuid === s.orgUnitUUID);
+      setWorkflowSteps(seedWorkflows(defaultOrg?.workflows));
     });
-    api.getOrgUnits().then((res) => setOrgUnits(res.orgUnits || [])).catch(() => {});
     // Default to every locale already published in Webflow -- most sends
     // target everything the site actually has live, so pre-checking those
     // (rather than starting empty) matches the common case. A locale that
@@ -164,7 +237,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
     // The user can still freely add/remove steps afterward via the
     // existing chips, same as locales.
     if (org) {
-      setWorkflowSteps(org.workflows?.length ? org.workflows : ["TRANSLATION"]);
+      setWorkflowSteps(seedWorkflows(org.workflows));
     }
     setOrgUnitResources(null);
     if (uuid) loadOrgUnitResources(uuid);
@@ -184,6 +257,14 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
   // Surfaced at the Review step so opting into a not-yet-public locale is
   // visible right before confirming, not just at the picker.
   const notEnabledSelected = secondaryLocales.filter((l) => targetLocales.includes(l.tag) && !l.enabled);
+  // "+ Add step" offers the org unit's own configured step vocabulary
+  // (union across its wxrks Project Routing configs) when it has one; the
+  // full API list is only the fallback for org units with no routing
+  // config at all.
+  const selectedOrg = orgUnits.find((o) => o.uuid === orgUnitUUID);
+  const addableSteps = (selectedOrg?.availableWorkflows?.length ? selectedOrg.availableWorkflows : WORKFLOW_ORDER).filter(
+    (s) => !workflowSteps.includes(s)
+  );
 
   async function handleNext() {
     if (step < 2) {
@@ -429,12 +510,12 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                   {i > 0 && <span className="text-ink-faint">→</span>}
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-accent bg-accent-subtle px-3 py-1 text-xs font-semibold text-accent-text">
                     <span className="font-mono text-[9px] opacity-60">{i + 1}</span>
-                    {WORKFLOW_LABELS[step]}
+                    {workflowLabel(step)}
                     {step !== "TRANSLATION" && (
                       <button
                         type="button"
                         onClick={() => removeWorkflowStep(step)}
-                        aria-label={`Remove ${WORKFLOW_LABELS[step]}`}
+                        aria-label={`Remove ${workflowLabel(step)}`}
                         className="ml-0.5 opacity-70 hover:opacity-100"
                       >
                         ✕
@@ -443,7 +524,7 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                   </span>
                 </div>
               ))}
-              {workflowSteps.length < WORKFLOW_ORDER.length && (
+              {addableSteps.length > 0 && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-ink-faint">→</span>
                   <button
@@ -461,14 +542,14 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
                 pushes the rest of the step content down instead. */}
             {addStepOpen && (
               <div className="mt-2 flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface-sunken p-2">
-                {WORKFLOW_ORDER.filter((s) => !workflowSteps.includes(s)).map((s) => (
+                {addableSteps.map((s) => (
                   <button
                     key={s}
                     type="button"
                     onClick={() => addWorkflowStep(s)}
                     className="rounded-full border border-border-strong bg-surface px-3 py-1 text-xs font-semibold text-ink hover:border-ink-faint"
                   >
-                    + {WORKFLOW_LABELS[s]}
+                    + {workflowLabel(s)}
                   </button>
                 ))}
               </div>
@@ -671,9 +752,9 @@ export default function SendToWxrksModal({ open, onClose, scope, selection, allS
           <div className="rounded-lg border border-border p-4">
             <div className="mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-wide text-ink-faint">Translation</div>
             <div className="text-[13.5px] font-semibold text-ink">
-              {orgUnits.find((o) => o.uuid === orgUnitUUID)?.name || "—"} · {targetLocales.length} languages
+              {selectedOrg?.name || "—"} · {targetLocales.length} languages
             </div>
-            <div className="mt-0.5 text-xs text-ink-soft">Workflow: {workflowSteps.map((s) => WORKFLOW_LABELS[s]).join(" → ")}</div>
+            <div className="mt-0.5 text-xs text-ink-soft">Workflow: {workflowSteps.map(workflowLabel).join(" → ")}</div>
             <div className="mt-0.5 text-xs text-ink-soft">Project name: {projectName || `${contentLabel} · ${new Date().toLocaleDateString()}`}</div>
             {notEnabledSelected.length > 0 && (
               <div className="mt-2 rounded-md bg-status-progress-bg px-2.5 py-1.5 text-xs text-status-progress-fg">

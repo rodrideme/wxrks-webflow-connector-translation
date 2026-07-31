@@ -202,28 +202,38 @@ async function getProjectRoutingConfigDetail(configUuid) {
 }
 
 /**
- * Maps each org unit to its default workflow steps. Confirmed live: the
+ * Maps each org unit to its workflow steps, two ways. Confirmed live: the
  * plain org unit endpoint (GET /client/:uuid) has no such field --
- * workflow defaults only live on configOrgUnits[] within a "Project
+ * workflow config only lives on configOrgUnits[] within a "Project
  * Routing" config (GET /multi-project/:uuid), alongside that same
  * org unit's own targetLanguages. An org unit can appear in more than
- * one routing config (confirmed live); first match wins, since nothing
- * in the API signals which should take precedence. An org unit with no
- * routing config at all simply has no entry in the returned Map.
+ * one routing config (confirmed live), hence the two maps:
+ * - defaults: first match wins (nothing in the API signals which config
+ *   should take precedence) -- the sequence pre-filled on a new send.
+ * - available: the union across every config mentioning the org unit,
+ *   first-seen order -- the org's full step vocabulary, feeding the
+ *   send wizard's "+ Add step" options.
+ * An org unit with no routing config at all has no entry in either Map.
  * TTL-cached (real N+1 API calls -- one per routing config -- not
  * something to redo on every listOrgUnits() call).
  */
 const getOrgUnitWorkflowsByUuid = makeTtlCache(async function fetchOrgUnitWorkflowsByUuid() {
   const configs = await listProjectRoutingConfigs();
   const details = await Promise.allSettled(configs.map((c) => getProjectRoutingConfigDetail(c.uuid)));
-  const map = new Map();
+  const defaults = new Map();
+  const available = new Map();
   for (const r of details) {
     if (r.status !== "fulfilled") continue;
     for (const ou of r.value?.configOrgUnits || []) {
-      if (!map.has(ou.uuid)) map.set(ou.uuid, ou.workflows || []);
+      if (!defaults.has(ou.uuid)) defaults.set(ou.uuid, ou.workflows || []);
+      const union = available.get(ou.uuid) || [];
+      for (const w of ou.workflows || []) {
+        if (!union.includes(w)) union.push(w);
+      }
+      available.set(ou.uuid, union);
     }
   }
-  return map;
+  return { defaults, available };
 });
 
 /**
@@ -235,7 +245,7 @@ const getOrgUnitWorkflowsByUuid = makeTtlCache(async function fetchOrgUnitWorkfl
  * routing config, so callers can apply their own default consistently.
  */
 async function listOrgUnits() {
-  const [{ data }, workflowsByUuid] = await Promise.all([
+  const [{ data }, { defaults, available }] = await Promise.all([
     request({ method: "GET", url: "/client?size=100" }),
     getOrgUnitWorkflowsByUuid(),
   ]);
@@ -247,7 +257,8 @@ async function listOrgUnits() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    workflows: workflowsByUuid.get(c.uuid) || [],
+    workflows: defaults.get(c.uuid) || [],
+    availableWorkflows: available.get(c.uuid) || [],
   }));
 }
 
