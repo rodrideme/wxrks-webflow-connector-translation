@@ -84,7 +84,10 @@ const api = {
       dataCache.invalidate("settings");
       return updated;
     }),
-  getOrgUnits: () => dataCache.getOrFetch("orgUnits", STRUCTURAL_TTL_MS, () => request("/config/org-units")),
+  // Key versioned to v2 when the response gained workflowCatalog + real
+  // per-org workflow seeds -- forces past the persisted 30-min cache so
+  // nobody sees the old shape after deploy.
+  getOrgUnits: () => dataCache.getOrFetch("orgUnits:v2", STRUCTURAL_TTL_MS, () => request("/config/org-units")),
   getOrgUnitResources: (orgUnitUUID) => request(`/config/org-units/${orgUnitUUID}/resources`),
   getWebflowLocales: () => dataCache.getOrFetch("webflowLocales", STRUCTURAL_TTL_MS, () => request("/config/webflow-locales")),
   // No params -> the full history (Dashboard's account-wide aggregates

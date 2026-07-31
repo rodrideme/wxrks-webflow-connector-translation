@@ -10,8 +10,11 @@ const router = express.Router();
  */
 router.get("/org-units", async (req, res) => {
   try {
-    const orgUnits = await wxrks.listOrgUnits();
-    res.json({ orgUnits });
+    // workflowCatalog: the account's real step list (code/title/sequence,
+    // from wxrks's GET /workflow) -- gives the send wizard wxrks's own
+    // titles and execution order for the workflow chips.
+    const [orgUnits, workflowCatalog] = await Promise.all([wxrks.listOrgUnits(), wxrks.getWorkflowCatalog()]);
+    res.json({ orgUnits, workflowCatalog });
   } catch (err) {
     if (err.code === "WXRKS_NOT_CONNECTED") {
       return res.status(409).json({ error: err.message, code: "wxrks_not_connected" });

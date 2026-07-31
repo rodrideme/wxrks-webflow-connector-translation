@@ -202,39 +202,93 @@ async function getProjectRoutingConfigDetail(configUuid) {
 }
 
 /**
- * Maps each org unit to its workflow steps, two ways. Confirmed live: the
- * plain org unit endpoint (GET /client/:uuid) has no such field --
- * workflow config only lives on configOrgUnits[] within a "Project
- * Routing" config (GET /multi-project/:uuid), alongside that same
- * org unit's own targetLanguages. An org unit can appear in more than
- * one routing config (confirmed live), hence the two maps:
- * - defaults: first match wins (nothing in the API signals which config
- *   should take precedence) -- the sequence pre-filled on a new send.
- * - available: the union across every config mentioning the org unit,
- *   first-seen order -- the org's full step vocabulary, feeding the
- *   send wizard's "+ Add step" options.
- * An org unit with no routing config at all has no entry in either Map.
- * TTL-cached (real N+1 API calls -- one per routing config -- not
- * something to redo on every listOrgUnits() call).
+ * "Project Routing" configs (GET /multi-project/:uuid -> configOrgUnits[]
+ * .workflows) map SOME org units to a default workflow sequence. An org
+ * unit can appear in more than one config; first match wins (nothing in
+ * the API signals precedence). Kept only as a FALLBACK seed source --
+ * confirmed live that most real org units have no routing config at all
+ * (only demo "Sample Unit" ones did), which is why the primary source is
+ * the extension-based rules in getWorkflowConfig() below.
  */
 const getOrgUnitWorkflowsByUuid = makeTtlCache(async function fetchOrgUnitWorkflowsByUuid() {
   const configs = await listProjectRoutingConfigs();
   const details = await Promise.allSettled(configs.map((c) => getProjectRoutingConfigDetail(c.uuid)));
   const defaults = new Map();
-  const available = new Map();
   for (const r of details) {
     if (r.status !== "fulfilled") continue;
     for (const ou of r.value?.configOrgUnits || []) {
       if (!defaults.has(ou.uuid)) defaults.set(ou.uuid, ou.workflows || []);
-      const union = available.get(ou.uuid) || [];
-      for (const w of ou.workflows || []) {
-        if (!union.includes(w)) union.push(w);
-      }
-      available.set(ou.uuid, union);
     }
   }
-  return { defaults, available };
+  return defaults;
 });
+
+/**
+ * The account's real workflow model, discovered live (2026-07-31, both
+ * endpoints absent from the public docs):
+ * - GET /workflow -- the account-wide workflow CATALOG: every step with
+ *   its code, human title ("Fast Post Editing", "Transcreation Final",
+ *   ...), execution `sequence` and an active flag. This is the list an
+ *   org unit's account shows in wxrks, and it feeds the send wizard's
+ *   "+ Add step" options and labels.
+ * - GET /client/:uuid/workflows -- named extension-based routing rules
+ *   ("website", "Full Translation Cycle", ...): each maps workflow codes
+ *   to the FILE EXTENSIONS they apply to. Rules with client:null are
+ *   account-wide (inherited by every org unit); rules with a client uuid
+ *   are org-specific. Only `active` rules count.
+ * This app uploads .json resources exclusively (see createResource /
+ * buildResourceFileName), so an org unit's effective default steps for
+ * our content are the JSON-scoped workflows of its active rules -- the
+ * same steps wxrks itself would route our files to. Sorted by catalog
+ * sequence so the seeded chips reflect real execution order.
+ * TTL-cached: one /workflow + one /client list + one rules call per org
+ * unit per account per TTL window.
+ */
+const getWorkflowConfig = makeTtlCache(async function fetchWorkflowConfig() {
+  const [{ data: catalogData }, { data: clientsData }] = await Promise.all([
+    request({ method: "GET", url: "/workflow" }),
+    request({ method: "GET", url: "/client?size=100" }),
+  ]);
+  const catalog = (catalogData || [])
+    .filter((w) => w.active)
+    .sort((a, b) => (a.sequence ?? 999) - (b.sequence ?? 999))
+    .map((w) => ({ code: w.code, title: w.title, sequence: w.sequence }));
+  const sequenceByCode = new Map(catalog.map((w) => [w.code, w.sequence]));
+  const bySequence = (a, b) => (sequenceByCode.get(a) ?? 999) - (sequenceByCode.get(b) ?? 999);
+
+  const orgUnits = clientsData?.content || [];
+  const [ruleResults, routingDefaults] = await Promise.all([
+    Promise.allSettled(orgUnits.map((c) => request({ method: "GET", url: `/client/${c.uuid}/workflows` }))),
+    getOrgUnitWorkflowsByUuid().catch(() => new Map()),
+  ]);
+
+  const seedByOrgUnit = new Map();
+  orgUnits.forEach((c, i) => {
+    const rules = ruleResults[i].status === "fulfilled" ? ruleResults[i].value.data || [] : [];
+    const jsonSteps = new Set();
+    for (const rule of rules) {
+      if (!rule.active || !rule.workflows) continue;
+      for (const [code, extensions] of Object.entries(rule.workflows)) {
+        if ((extensions || []).some((e) => String(e).toUpperCase() === "JSON")) jsonSteps.add(code);
+      }
+    }
+    const seed = [...jsonSteps].sort(bySequence);
+    seedByOrgUnit.set(c.uuid, seed.length ? seed : routingDefaults.get(c.uuid) || []);
+  });
+
+  return { catalog, seedByOrgUnit };
+});
+
+// The catalog alone, for the org-units route to ship titles/order to the
+// client. Empty array (not a throw) on failure -- labels degrade to the
+// client's own fallback map.
+async function getWorkflowCatalog() {
+  try {
+    return (await getWorkflowConfig()).catalog;
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Lists org units for the Settings UI dropdown and the Send to wxrks
@@ -245,9 +299,9 @@ const getOrgUnitWorkflowsByUuid = makeTtlCache(async function fetchOrgUnitWorkfl
  * routing config, so callers can apply their own default consistently.
  */
 async function listOrgUnits() {
-  const [{ data }, { defaults, available }] = await Promise.all([
+  const [{ data }, workflowConfig] = await Promise.all([
     request({ method: "GET", url: "/client?size=100" }),
-    getOrgUnitWorkflowsByUuid(),
+    getWorkflowConfig().catch(() => null),
   ]);
   return (data?.content || []).map((c) => ({
     uuid: c.uuid,
@@ -257,8 +311,10 @@ async function listOrgUnits() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    workflows: defaults.get(c.uuid) || [],
-    availableWorkflows: available.get(c.uuid) || [],
+    workflows: workflowConfig?.seedByOrgUnit.get(c.uuid) || [],
+    // The full account catalog -- org units share it; kept per-org so the
+    // client never has to special-case where options come from.
+    availableWorkflows: (workflowConfig?.catalog || []).map((w) => w.code),
   }));
 }
 
@@ -564,6 +620,7 @@ module.exports = {
   testCurrentConnection,
   getOrgUnit,
   listOrgUnits,
+  getWorkflowCatalog,
   getOrgUnitDetails,
   getOrgUnitResources,
   getProject,
