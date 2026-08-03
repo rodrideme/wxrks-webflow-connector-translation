@@ -163,6 +163,10 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
     }
   } else {
     try {
+      // TEMP DEBUG: the exact payload sent to Webflow's PATCH -- remove once resolved.
+      console.log(
+        `[TEMP DEBUG] patchItemLocale collectionId=${webflowCollectionId} itemId=${webflowItemId} locale=${locale} fieldData=${JSON.stringify(fieldData)}`
+      );
       await webflow.patchItemLocale(webflowCollectionId, webflowItemId, locale, fieldData);
       // Auto Sync loop-prevention: a live test proved the inbound Webflow
       // webhook's cmsLocaleId can't tell us which locale this write landed
