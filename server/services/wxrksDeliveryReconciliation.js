@@ -20,6 +20,14 @@ const store = require("../store");
 const webflow = require("./webflow");
 const wxrksDelivery = require("./wxrksDelivery");
 
+function workUnitUuidOf(workUnit) {
+  return workUnit.uuid || workUnit.id;
+}
+
+function isDeliveredWorkUnit(workUnit) {
+  return ["DELIVERED"].includes(workUnit.workStatus || workUnit.status || workUnit.taskStatus || workUnit.workUnitStatus);
+}
+
 async function reconcileWxrksDeliveriesForAccount(accountId) {
   const activeProjects = await store.listActiveProjects(accountId);
   for (const mapping of activeProjects) {
@@ -38,28 +46,31 @@ async function reconcileWxrksDeliveriesForAccount(accountId) {
       // never captured wxrks's work-unit uuid at send time.
       const batchItem = wxrksDelivery.findBatchItemForFileName(mapping, workUnit.filename);
       const locale = workUnit.targetLanguage;
-      if (!batchItem || !locale) continue;
+      const workUnitUuid = workUnitUuidOf(workUnit);
+      if (!batchItem || !locale || !workUnitUuid) continue;
       if (wxrksDelivery.alreadyDelivered(mapping, batchItem, locale)) continue;
 
       try {
-        // A single attempt (no retry wait) -- if it's not ready yet, the
-        // next hourly pass checks again. This is a periodic safety net, not
-        // a live wait, so there's no reason to block this pass on it.
-        const translation = await wxrks.waitForWorkUnitTranslation(
-          mapping.wxrksProjectUUID,
-          workUnit.uuid,
-          batchItem.resourceId,
-          locale,
-          { retries: 0, retryDelayMs: 0 }
-        );
-        // Record under the site's real tag, same as the live webhook path
-        // (wxrks reports "de_de"; the Runs page matches on "de-DE").
-        const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
-        await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
+        const info = await wxrks.getWorkUnitTranslation(mapping.wxrksProjectUUID, workUnitUuid);
+        if (info.translationStatus === "TRANSLATED" && info.translatedFileUrl) {
+          const translation = await wxrks.fetchTranslatedFile(info.translatedFileUrl);
+          // Record under the site's real tag, same as the live webhook path
+          // (wxrks reports "de_de"; the Runs page matches on "de-DE").
+          const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
+          await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
+          continue;
+        }
+
+        if (isDeliveredWorkUnit(workUnit) && info.translationStatus !== "PREPARING") {
+          await wxrks.requestWorkUnitTranslation(mapping.wxrksProjectUUID, workUnitUuid);
+        }
       } catch (err) {
-        // Not ready yet, or a real error either way -- try again next pass
-        // rather than letting one stuck work unit block the rest of this
-        // project's/account's reconciliation.
+        // Not ready yet, or a real error either way -- try again next pass.
+        // If the WU is delivered, make one best-effort request so a missed
+        // WORK_UNIT_STATUS_CHANGE webhook does not leave the file unbuilt.
+        if (isDeliveredWorkUnit(workUnit)) {
+          await wxrks.requestWorkUnitTranslation(mapping.wxrksProjectUUID, workUnitUuid).catch(() => {});
+        }
       }
     }
   }

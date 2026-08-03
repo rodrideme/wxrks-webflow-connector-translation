@@ -218,7 +218,9 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
   const deliveredPairs = new Set(
     updatedMapping.updates.flatMap((u) =>
       (u.resultsByItem || []).flatMap((r) =>
-        u.targetLocales.map((l) => `${r.webflowComponentId || r.webflowPageId || r.webflowItemId}:${webflow.normalizeLocaleTag(l)}`)
+        (r.resultsByLocale || [])
+          .filter((rl) => rl.fieldsUpdated > 0)
+          .map((rl) => `${r.webflowComponentId || r.webflowPageId || r.webflowItemId}:${webflow.normalizeLocaleTag(rl.locale)}`)
       )
     )
   ).size;
