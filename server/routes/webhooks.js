@@ -139,7 +139,13 @@ router.post("/wxrks", async (req, res) => {
     // recorded on the mapping uses the site's REAL tag ("de-DE") so the
     // Runs page's status matching sees it (see webflow.resolveSiteLocaleTag).
     const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
-    const translation = directTranslatedFileUrl
+    // Gated on the event type, not just the field's presence -- confirmed
+    // live that a WORK_UNIT_STATUS_CHANGE/DELIVERED payload can carry a
+    // `translated_file_url` that isn't a fetchable HTTP(S) URL at all (seen:
+    // "s3_//..."), unlike WORK_UNIT_TRANSLATION_FILE_READY's own URL, which
+    // is confirmed working. Trusting the field's mere presence made
+    // axios.get throw "Invalid URL" instead of falling back to polling.
+    const translation = isTranslationFileReady
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, batchItem.resourceId, locale);
 
