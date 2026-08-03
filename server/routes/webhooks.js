@@ -148,6 +148,9 @@ router.post("/wxrks", async (req, res) => {
     const translation = isTranslationFileReady
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, batchItem.resourceId, locale);
+    // TEMP DEBUG: tracking down stale-content deliveries on re-delivery --
+    // remove once resolved.
+    console.log(`[TEMP DEBUG] final translation for work unit ${workUnitUuid} (${locale}):`, JSON.stringify(translation));
 
     await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
   }).catch(async (err) => {

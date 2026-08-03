@@ -596,13 +596,22 @@ async function waitForWorkUnitTranslation(
   for (let attempt = 0; ; attempt++) {
     const info = await getWorkUnitTranslation(projectUuid, workUnitUuid);
     lastStatus = info.translationStatus;
+    // TEMP DEBUG: tracking down stale-content deliveries on re-delivery --
+    // remove once resolved.
+    console.log(
+      `[TEMP DEBUG] waitForWorkUnitTranslation attempt ${attempt} for work unit ${workUnitUuid}: status=${info.translationStatus}, translatedFileUrl=${info.translatedFileUrl}`
+    );
     if (info.translationStatus === "TRANSLATED" && info.translatedFileUrl) {
       const { data } = await axios.get(info.translatedFileUrl);
+      console.log(`[TEMP DEBUG] fetched via translatedFileUrl:`, JSON.stringify(data));
       return data;
     }
 
     const zipContent = await downloadResourceZip(projectUuid, resourceId, locale);
-    if (zipContent) return zipContent;
+    if (zipContent) {
+      console.log(`[TEMP DEBUG] fetched via ZIP download fallback:`, JSON.stringify(zipContent));
+      return zipContent;
+    }
 
     if (attempt >= retries) {
       throw new Error(
