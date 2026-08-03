@@ -13,18 +13,18 @@ const router = express.Router();
 
 /**
  * POST /api/webhooks/wxrks
- * Fired by wxrks on various events. We act on two of them, both meaning
- * "this work unit's translation is ready to push to Webflow":
- *  - "WORK_UNIT_TRANSLATION_FILE_READY": the reliable, preferred signal --
- *    its payload already includes a working `translated_file_url` (a
- *    presigned S3 link good for ~160 hours), confirmed live. No polling
- *    needed at all for this one.
- *  - "WORK_UNIT_STATUS_CHANGE" with new_status "DELIVERED": fires around the
- *    same time but does NOT carry a ready file URL -- falls back to
- *    wxrks.waitForWorkUnitTranslation's polling (see that function's docs).
- * Both webhooks are typically registered together and can both fire for the
- * same delivery, so this handler dedups against `mapping.updates` before
- * doing any work, keyed by (webflowItemId, locale).
+ * Fired by wxrks on various events. The delivery flow has two distinct
+ * phases:
+ *  - "WORK_UNIT_STATUS_CHANGE" with new_status "DELIVERED": requests wxrks
+ *    to build the translated file via POST /work-unit/:id/translation. The
+ *    status-change payload can include an internal "s3_//..." value, but
+ *    that is not a signed HTTP download URL.
+ *  - "WORK_UNIT_TRANSLATION_FILE_READY": follows details.download.url with a
+ *    GET to retrieve the current signed URL, then downloads the actual file
+ *    and writes it back to Webflow.
+ * Both webhooks are typically registered together. This handler dedups
+ * against `mapping.updates` before doing any write-back, keyed by
+ * (webflowItemId, locale).
  *
  * Not account-scoped by URL like the Webflow webhooks below -- wxrks has
  * one shared webhook regardless of account, and doesn't know about accounts
@@ -71,8 +71,10 @@ router.post("/wxrks", async (req, res) => {
     project_file_name: fileName,
     target_locale: locale,
     translated_file_url: directTranslatedFileUrl,
+    details: eventDetails,
     is_last_workflow: isLastWorkflow,
   } = req.body || {};
+  const readyDownloadUrl = eventDetails?.download?.url;
 
   if (eventType === "WEBHOOK_VALIDATION") {
     return res.status(200).json({ ok: true });
@@ -148,30 +150,32 @@ router.post("/wxrks", async (req, res) => {
   );
 
   // Respond immediately -- wxrks's own webhook client times out waiting for
-  // a response (confirmed live: a real delivery failed with "request timed
-  // out" from wxrks's Java HTTP client) if we make it wait on
-  // waitForWorkUnitTranslation's retry/poll loop plus the actual network
+  // a response if we make it wait on file generation, downloads, and Webflow
   // calls. The real work happens after the response is sent, matching the
   // same "respond fast, process in background" pattern already used by the
   // /api/sync/bulk endpoint.
   res.json({ received: true, wxrksProjectUUID, workUnitUuid });
 
   accountContext.run(mapping.accountId, async () => {
+    if (isDeliveredStatusChange) {
+      // DELIVERED means the work unit is complete; the translated file still
+      // has to be built asynchronously. wxrks will emit
+      // WORK_UNIT_TRANSLATION_FILE_READY when its signed download URL exists.
+      await wxrks.requestWorkUnitTranslation(wxrksProjectUUID, workUnitUuid);
+      console.log(`[TEMP DEBUG] requested translated file for work unit ${workUnitUuid}`);
+      return;
+    }
+
     // wxrks calls keep wxrks's own locale spelling ("de_de"); everything
     // recorded on the mapping uses the site's REAL tag ("de-DE") so the
     // Runs page's status matching sees it (see webflow.resolveSiteLocaleTag).
     const canonicalLocale = await webflow.resolveSiteLocaleTag(locale);
-    // Gated on the event type, not just the field's presence -- confirmed
-    // live that a WORK_UNIT_STATUS_CHANGE/DELIVERED payload can carry a
-    // `translated_file_url` that isn't a fetchable HTTP(S) URL at all (seen:
-    // "s3_//..."), unlike WORK_UNIT_TRANSLATION_FILE_READY's own URL, which
-    // is confirmed working. Trusting the field's mere presence made
-    // axios.get throw "Invalid URL" instead of falling back to polling.
-    // TEMP DEBUG: remove once resolved.
-    console.log(`[TEMP DEBUG] retrieval path for work unit ${workUnitUuid}: ${isTranslationFileReady ? "direct fetch (WORK_UNIT_TRANSLATION_FILE_READY payload URL)" : "polling (waitForWorkUnitTranslation)"}`);
-    const translation = isTranslationFileReady
-      ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
-      : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, batchItem.resourceId, locale);
+    // Prefer the ready event's details.download.url: it returns the current
+    // signed URL through wxrks. The direct payload URL is only a fallback.
+    const translation = await wxrks.fetchReadyWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, {
+      downloadUrl: readyDownloadUrl,
+      directTranslatedFileUrl,
+    });
     // TEMP DEBUG: tracking down stale-content deliveries on re-delivery --
     // remove once resolved.
     console.log(`[TEMP DEBUG] final translation for work unit ${workUnitUuid} (${locale}):`, JSON.stringify(translation));
@@ -187,11 +191,11 @@ router.post("/wxrks", async (req, res) => {
       `wxrks webhook background processing failed for project ${wxrksProjectUUID}, work unit ${workUnitUuid}:`,
       message
     );
-    // Persist the failure on the run -- wxrks said this file was ready, so
-    // a failure here is real, and a log line alone left the work unit
-    // showing "Pending" forever with no visible reason.
+    // Persist the failure on the run -- otherwise a request/download failure
+    // leaves the work unit showing "Pending" forever with no visible reason.
+    const action = isDeliveredStatusChange ? "Requesting the translated file failed" : "Fetching/delivering the translation failed";
     await wxrksDelivery
-      .recordDeliveryFailure({ mapping, batchItem, locale, error: `Fetching/delivering the translation failed: ${message}` })
+      .recordDeliveryFailure({ mapping, batchItem, locale, error: `${action}: ${message}` })
       .catch(() => {});
   });
 });

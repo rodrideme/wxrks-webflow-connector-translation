@@ -516,20 +516,31 @@ async function getProjectResources(projectUuid) {
 }
 
 /**
- * GET /project/:uuid/work-unit/:workUnitUuid/translation -- returns a
- * presigned `translatedFileUrl` (plain S3 URL, no wxrks auth needed) once
- * `translationStatus` is "TRANSLATED". Confirmed against a prior working
- * n8n automation and live-tested -- but ALSO confirmed live that this URL
- * can go back to null even once the work unit's overall status has advanced
- * to DELIVERED (observed on a real delivery: translationStatus stayed
- * "TRANSLATED" with translatedFileUrl/deliverableFileUrl both null well
- * after DELIVERED fired). So this alone isn't reliable -- see
- * waitForWorkUnitTranslation's ZIP-download fallback below.
+ * POST /project/:uuid/work-unit/:workUnitUuid/translation requests wxrks to
+ * build the translated output file. The generated file is asynchronous;
+ * wxrks publishes WORK_UNIT_TRANSLATION_FILE_READY when the signed download
+ * URL can be retrieved.
  */
-async function getWorkUnitTranslation(projectUuid, workUnitUuid) {
+async function requestWorkUnitTranslation(projectUuid, workUnitUuid) {
+  const { data } = await request({
+    method: "POST",
+    url: `/project/${projectUuid}/work-unit/${workUnitUuid}/translation`,
+    data: {},
+  });
+  return data;
+}
+
+/**
+ * GET /project/:uuid/work-unit/:workUnitUuid/translation -- returns the
+ * current translation status and a presigned `translatedFileUrl` once
+ * `translationStatus` is "TRANSLATED". `downloadUrl` is accepted from the
+ * WORK_UNIT_TRANSLATION_FILE_READY payload's details.download.url so the
+ * app follows the endpoint wxrks explicitly tells clients to call.
+ */
+async function getWorkUnitTranslation(projectUuid, workUnitUuid, { downloadUrl } = {}) {
   const { data } = await request({
     method: "GET",
-    url: `/project/${projectUuid}/work-unit/${workUnitUuid}/translation`,
+    url: downloadUrl || `/project/${projectUuid}/work-unit/${workUnitUuid}/translation`,
   });
   return data;
 }
@@ -567,8 +578,34 @@ async function downloadResourceZip(projectUuid, resourceId, locale) {
  * fires, there's no need to poll anything at all.
  */
 async function fetchTranslatedFile(url) {
+  if (!/^https?:\/\//i.test(String(url || ""))) {
+    throw new Error("wxrks did not return a valid HTTP(S) translated file URL");
+  }
   const { data } = await axios.get(url);
   return data;
+}
+
+/**
+ * Resolves the signed URL from wxrks via GET and downloads the actual JSON
+ * file from S3. The event's direct `translated_file_url` is only a fallback:
+ * the canonical path is details.download.url -> translatedFileUrl -> S3.
+ */
+async function fetchReadyWorkUnitTranslation(projectUuid, workUnitUuid, { downloadUrl, directTranslatedFileUrl } = {}) {
+  let info = null;
+  try {
+    info = await getWorkUnitTranslation(projectUuid, workUnitUuid, { downloadUrl });
+  } catch (err) {
+    if (!directTranslatedFileUrl) throw err;
+  }
+
+  const translatedFileUrl = info?.translatedFileUrl || directTranslatedFileUrl;
+  if (info && info.translationStatus !== "TRANSLATED") {
+    throw new Error(`wxrks work unit ${workUnitUuid} translated file is not ready (status: ${info.translationStatus})`);
+  }
+  if (!translatedFileUrl) {
+    throw new Error(`wxrks work unit ${workUnitUuid} did not return a translated file URL`);
+  }
+  return fetchTranslatedFile(translatedFileUrl);
 }
 
 /**
@@ -640,8 +677,10 @@ module.exports = {
   uploadResourceContent,
   createWorkUnitsBulk,
   getProjectResources,
+  requestWorkUnitTranslation,
   getWorkUnitTranslation,
   downloadResourceZip,
   fetchTranslatedFile,
+  fetchReadyWorkUnitTranslation,
   waitForWorkUnitTranslation,
 };
