@@ -115,8 +115,13 @@ router.post("/wxrks", async (req, res) => {
 
   // Dedup: WORK_UNIT_TRANSLATION_FILE_READY and WORK_UNIT_STATUS_CHANGE/
   // DELIVERED can both fire for the same delivery -- skip if this
-  // (item, locale) already has a successful push recorded.
-  if (wxrksDelivery.alreadyDelivered(mapping, batchItem, locale)) {
+  // (item, locale) already had a successful push recorded very recently.
+  // Bounded to a short window (not the item/locale's whole history) so a
+  // genuine re-delivery -- the Task going back to an earlier status, being
+  // re-translated, and reaching DELIVERED again -- is not mistaken for a
+  // duplicate of the original delivery and gets pushed to Webflow again.
+  const REDELIVERY_DEDUP_WINDOW_MS = 5 * 60 * 1000;
+  if (wxrksDelivery.alreadyDelivered(mapping, batchItem, locale, REDELIVERY_DEDUP_WINDOW_MS)) {
     return res.status(200).json({ ignored: true, reason: "already pushed to Webflow for this item/locale" });
   }
 

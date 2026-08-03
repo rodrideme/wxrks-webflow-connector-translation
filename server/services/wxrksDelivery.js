@@ -234,14 +234,24 @@ async function deliverWorkUnitToWebflow({ mapping, batchItem, locale, translatio
  * way ("de_de") and older update entries recorded that raw form, while
  * callers may pass the site's real tag ("de-DE") -- strict equality here
  * would re-deliver (or fail to dedup) across the two spellings.
+ *
+ * `withinMs` (optional) bounds the lookback to only that recent a window,
+ * instead of the item/locale's entire history -- the live webhook handler
+ * passes this to dedup the near-simultaneous WORK_UNIT_TRANSLATION_FILE_READY
+ * / WORK_UNIT_STATUS_CHANGE pair for ONE delivery without also permanently
+ * blocking a genuine re-delivery (the Task going back to an earlier status,
+ * getting re-translated, and reaching DELIVERED again). The reconciliation
+ * safety net omits it, since "ever delivered" is exactly what it wants.
  */
-function alreadyDelivered(mapping, batchItem, locale) {
+function alreadyDelivered(mapping, batchItem, locale, withinMs) {
   const { entityType = "cmsItem", webflowItemId, webflowPageId, webflowComponentId } = batchItem;
   const isPage = entityType === "page";
   const isComponent = entityType === "component";
   const wanted = webflow.normalizeLocaleTag(locale);
+  const cutoff = withinMs ? Date.now() - withinMs : 0;
   return mapping.updates.some(
     (u) =>
+      new Date(u.updatedAt).getTime() >= cutoff &&
       (u.targetLocales || []).some((l) => webflow.normalizeLocaleTag(l) === wanted) &&
       (u.resultsByItem || []).some(
         (r) =>
