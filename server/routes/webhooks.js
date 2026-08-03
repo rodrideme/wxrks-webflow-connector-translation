@@ -50,6 +50,20 @@ router.post("/wxrks", async (req, res) => {
   console.log("wxrks webhook payload:", JSON.stringify(req.body, null, 2));
 
   const {
+    id: __debugWorkUnitUuid,
+    event_type: __debugEventType,
+    new_status: __debugNewStatus,
+    previous_status: __debugPreviousStatus,
+    project_file_name: __debugFileName,
+    target_locale: __debugLocale,
+  } = req.body || {};
+  // TEMP DEBUG: one scannable summary line per event, to diff a from-scratch
+  // delivery against a re-delivery side by side -- remove once resolved.
+  console.log(
+    `[TEMP DEBUG] received event=${__debugEventType} workUnit=${__debugWorkUnitUuid} file=${__debugFileName} locale=${__debugLocale} status=${__debugPreviousStatus}->${__debugNewStatus}`
+  );
+
+  const {
     id: workUnitUuid,
     event_type: eventType,
     new_status: newStatus,
@@ -122,8 +136,16 @@ router.post("/wxrks", async (req, res) => {
   // duplicate of the original delivery and gets pushed to Webflow again.
   const REDELIVERY_DEDUP_WINDOW_MS = 5 * 60 * 1000;
   if (wxrksDelivery.alreadyDelivered(mapping, batchItem, locale, REDELIVERY_DEDUP_WINDOW_MS)) {
+    // TEMP DEBUG: remove once resolved.
+    console.log(`[TEMP DEBUG] ignored as dedup (already pushed within last ${REDELIVERY_DEDUP_WINDOW_MS / 1000}s) workUnit=${workUnitUuid}`);
     return res.status(200).json({ ignored: true, reason: "already pushed to Webflow for this item/locale" });
   }
+  // TEMP DEBUG: which Webflow entity this file/locale resolved to -- lets us
+  // rule out (or confirm) a wrong-item match across runs. Remove once
+  // resolved.
+  console.log(
+    `[TEMP DEBUG] matched batchItem workUnit=${workUnitUuid} entityType=${batchItem.entityType || "cmsItem"} webflowCollectionId=${batchItem.webflowCollectionId} webflowItemId=${batchItem.webflowItemId} webflowPageId=${batchItem.webflowPageId} webflowComponentId=${batchItem.webflowComponentId} fieldKeys=${JSON.stringify(batchItem.fieldKeys)}`
+  );
 
   // Respond immediately -- wxrks's own webhook client times out waiting for
   // a response (confirmed live: a real delivery failed with "request timed
@@ -145,6 +167,8 @@ router.post("/wxrks", async (req, res) => {
     // "s3_//..."), unlike WORK_UNIT_TRANSLATION_FILE_READY's own URL, which
     // is confirmed working. Trusting the field's mere presence made
     // axios.get throw "Invalid URL" instead of falling back to polling.
+    // TEMP DEBUG: remove once resolved.
+    console.log(`[TEMP DEBUG] retrieval path for work unit ${workUnitUuid}: ${isTranslationFileReady ? "direct fetch (WORK_UNIT_TRANSLATION_FILE_READY payload URL)" : "polling (waitForWorkUnitTranslation)"}`);
     const translation = isTranslationFileReady
       ? await wxrks.fetchTranslatedFile(directTranslatedFileUrl)
       : await wxrks.waitForWorkUnitTranslation(wxrksProjectUUID, workUnitUuid, batchItem.resourceId, locale);
@@ -152,7 +176,11 @@ router.post("/wxrks", async (req, res) => {
     // remove once resolved.
     console.log(`[TEMP DEBUG] final translation for work unit ${workUnitUuid} (${locale}):`, JSON.stringify(translation));
 
-    await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
+    const updatedMapping = await wxrksDelivery.deliverWorkUnitToWebflow({ mapping, batchItem, locale: canonicalLocale, translation });
+    // TEMP DEBUG: the actual result recorded for this push -- remove once resolved.
+    console.log(
+      `[TEMP DEBUG] delivered work unit ${workUnitUuid}: ${JSON.stringify((updatedMapping.updates[updatedMapping.updates.length - 1] || {}).resultsByItem)}`
+    );
   }).catch(async (err) => {
     const message = err.response?.data?.message || err.message;
     console.error(
